@@ -16,3 +16,4 @@ path = "src/compiler_driver/main.rs"
 [dependencies]
 clap = { version = "4.4.6", features = ["derive"] }
 utf8-chars = "3.0.1"
+indoc = "2.0.4"

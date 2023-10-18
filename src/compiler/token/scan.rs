@@ -2,11 +2,13 @@ use super::*;
 
 use crate::{Error, FileError, SyntaxError};
 
-use std::{io::BufReader, fs::File};
+use std::io::{BufRead, BufReader};
+use std::fs::File;
+
 use utf8_chars::BufReadCharsExt;
 
 #[derive(Debug)]
-pub struct Scanner<'a, T: BufReadCharsExt> {
+pub struct Scanner<'a, T: BufRead> {
     filename: &'a str,
     line: usize,
     source: T,
@@ -21,11 +23,11 @@ impl<'a> Scanner<'a, BufReader<File>> {
     }
 }
 
-impl<'a, T: BufReadCharsExt> Scanner<'a, T> {
+impl<'a, T: BufRead> Scanner<'a, T> {
     pub fn new(filename: &'a str, source: T) -> Self {
         Self {
             filename,
-            line: 0,
+            line: 1,
             source,
             put_backs: Vec::new(),
         }
@@ -90,7 +92,31 @@ impl<'a, T: BufReadCharsExt> Scanner<'a, T> {
             }
         }
 
-        Ok(Some(Token::Literal(Literal::Integer(raw_literal.parse().unwrap()))))
+        let mut value = 0;
+        for digit in raw_literal.chars() {
+            value = 10 * value + digit as u64 - '0' as u64;
+        }
+
+        Ok(Some(Token::Literal(Literal::Integer(value))))
+    }
+
+    fn scan_identifier_literal(&mut self) -> crate::Result<Option<Token>> {
+        let mut content = String::new();
+
+        while let Some(ch) = self.next_char()? {
+            if ch == '_' || ch.is_alphanumeric() {
+                content.push(ch);
+            } else {
+                self.put_back(ch);
+                break;
+            }
+        }
+
+        if let Some(keyword_token) = get_keyword_token(&content) {
+            Ok(Some(keyword_token.clone()))
+        } else {
+            Ok(Some(Token::Literal(Literal::Identifier(content))))
+        }
     }
 
     pub fn next_token(&mut self) -> crate::Result<Option<Token>> {
@@ -100,6 +126,9 @@ impl<'a, T: BufReadCharsExt> Scanner<'a, T> {
                 if ch.is_ascii_digit() {
                     self.put_back(ch);
                     self.scan_integer_literal()
+                } else if ch == '_' || ch.is_alphanumeric() {
+                    self.put_back(ch);
+                    self.scan_identifier_literal()
                 } else {
                     // temporary
                     Ok(None)
