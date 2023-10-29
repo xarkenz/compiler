@@ -10,8 +10,7 @@ use std::fmt;
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum ValueFormat {
-    Signed(usize),
-    Unsigned(usize),
+    Integer(usize),
     Pointer(Box<ValueFormat>),
 }
 
@@ -24,8 +23,7 @@ impl ValueFormat {
 impl fmt::Display for ValueFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Signed(bits) => write!(f, "i{bits}"),
-            Self::Unsigned(bits) => write!(f, "u{bits}"),
+            Self::Integer(bits) => write!(f, "i{bits}"),
             Self::Pointer(inner) => write!(f, "{inner}*")
         }
     }
@@ -40,8 +38,8 @@ pub enum ConstantValue {
 impl ConstantValue {
     pub fn format(&self) -> ValueFormat {
         match self {
-            Self::Signed32(_) => ValueFormat::Signed(32),
-            Self::Unsigned32(_) => ValueFormat::Unsigned(32),
+            Self::Signed32(_) => ValueFormat::Integer(32),
+            Self::Unsigned32(_) => ValueFormat::Integer(32),
         }
     }
 }
@@ -57,62 +55,56 @@ impl fmt::Display for ConstantValue {
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Register {
-    id: usize,
+    name: String,
     format: ValueFormat,
+    is_global: bool,
 }
 
 impl Register {
-    pub fn id(&self) -> usize {
-        self.id
+    pub fn name(&self) -> &str {
+        self.name.as_str()
     }
 
     pub fn format(&self) -> &ValueFormat {
         &self.format
+    }
+
+    pub fn is_global(&self) -> bool {
+        self.is_global
     }
 }
 
 impl fmt::Display for Register {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "%{}", self.id)
+        if self.is_global() {
+            write!(f, "@{}", self.name)
+        } else {
+            write!(f, "%{}", self.name)
+        }
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct StackEntry {
-    format: ValueFormat,
-    alignment: usize,
-    register: Register,
-    is_free: bool,
-    loaded_register: Option<Register>,
+#[derive(Clone, PartialEq, Debug)]
+pub enum RightValue {
+    Constant(ConstantValue),
+    Register(Register),
 }
 
-impl StackEntry {
-    pub fn format(&self) -> &ValueFormat {
-        &self.format
+impl RightValue {
+    pub fn format(&self) -> ValueFormat {
+        match self {
+            Self::Constant(value) => value.format(),
+            Self::Register(value) => value.format().clone(),
+        }
     }
+}
 
-    pub fn alignment(&self) -> usize {
-        self.alignment
-    }
-
-    pub fn register(&self) -> &Register {
-        &self.register
-    }
-
-    pub fn is_free(&self) -> bool {
-        self.is_free
-    }
-
-    pub fn set_free(&mut self, is_free: bool) {
-        self.is_free = is_free;
-    }
-
-    pub fn loaded_register(&self) -> Option<&Register> {
-        self.loaded_register.as_ref()
-    }
-
-    pub fn set_loaded_register(&mut self, register: Option<Register>) {
-        self.loaded_register = register;
+impl fmt::Display for RightValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Constant(value) => value.fmt(f),
+            Self::Register(value) => value.fmt(f),
+        }
     }
 }
 
@@ -120,8 +112,9 @@ impl StackEntry {
 pub struct Generator<'a, T: Write> {
     filename: &'a str,
     emitter: T,
-    next_register_id: usize,
-    stack_entries: Vec<StackEntry>,
+    next_anonymous_register_id: usize,
+    global_symbols: info::SymbolTable,
+    local_symbols: info::SymbolTable,
 }
 
 impl<'a> Generator<'a, std::fs::File> {
@@ -132,12 +125,15 @@ impl<'a> Generator<'a, std::fs::File> {
 }
 
 impl<'a, T: Write> Generator<'a, T> {
+    const DEFAULT_SYMBOL_TABLE_CAPACITY: usize = 256;
+
     pub fn new(filename: &'a str, emitter: T) -> Self {
         Self {
             filename,
             emitter,
-            next_register_id: 1,
-            stack_entries: Vec::new(),
+            next_anonymous_register_id: 1,
+            global_symbols: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY),
+            local_symbols: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY),
         }
     }
 
@@ -153,113 +149,139 @@ impl<'a, T: Write> Generator<'a, T> {
         RawError::new(message).into_boxed()
     }
 
-    fn new_register(&mut self, format: ValueFormat) -> Register {
-        let id = self.next_register_id;
-        self.next_register_id += 1;
+    pub fn next_anonymous_register(&mut self, format: ValueFormat) -> Register {
+        let id = self.next_anonymous_register_id;
+        self.next_anonymous_register_id += 1;
         Register {
-            id,
+            name: id.to_string(),
             format,
+            is_global: false,
         }
     }
 
-    fn next_free_stack_entry_index(&mut self, format: &ValueFormat) -> Option<usize> {
-        // Return the index of the next free stack entry which has the specified format
-        self.stack_entries.iter().position(|entry| entry.is_free() && entry.format() == format)
+    pub fn get_symbol(&self, name: &str) -> crate::Result<&info::Symbol> {
+        self.local_symbols.find(name)
+            .or_else(|| self.global_symbols.find(name))
+            .ok_or_else(|| self.error(format!("undefined symbol '{name}'")))
     }
 
-    fn allocate_stack_entries(&mut self, node: &ast::Node) -> crate::Result<()> {
+    pub fn generate_node_llvm(&mut self, node: &ast::Node) -> crate::Result<Option<RightValue>> {
         match node {
-            ast::Node::Unary { operand, .. } => {
-                self.allocate_stack_entries(operand.as_ref())?;
-            },
-            ast::Node::Binary { lhs, rhs, .. } => {
-                self.allocate_stack_entries(lhs.as_ref())?;
-                self.allocate_stack_entries(rhs.as_ref())?;
-            },
-            ast::Node::Literal(_) => {
-                let register = self.new_register(ValueFormat::Signed(32).pointer());
-                self.stack_entries.push(StackEntry {
-                    format: ValueFormat::Signed(32),
-                    alignment: 4,
-                    register,
-                    is_free: true,
-                    loaded_register: None,
-                });
-            },
-        }
-        Ok(())
-    }
+            ast::Node::Literal(literal) => {
+                match literal {
+                    token::Literal::Identifier(name) => {
+                        // If we don't clone here, with the way things are currently set up, we can't borrow self.emitter as mutable
+                        let symbol = self.get_symbol(name)?.clone();
+                        let output = self.next_anonymous_register(symbol.format().clone());
 
-    fn load_register_if_unloaded(&mut self, register: Register) -> crate::Result<Register> {
-        // Try finding the stack entry this register corresponds to
-        if let Some(index) = self.stack_entries.iter().position(|entry| entry.register() == &register) {
-            if self.stack_entries[index].loaded_register().is_none() {
-                // The entry hasn't been loaded; create a new register and load it
-                let register_to_load = self.new_register(self.stack_entries[index].format().clone());
-                llvm::emit_load_register(&mut self.emitter, &register_to_load, &self.stack_entries[index])
-                    .map_err(|cause| self.file_error(cause))?;
-                self.stack_entries[index].set_loaded_register(Some(register_to_load));
-                // Safe to unwrap because we just set it to Some
-            }
-            Ok(self.stack_entries[index].loaded_register().unwrap().clone())
-        } else {
-            // The register doesn't correspond to a stack entry; it is considered "loaded" for our purposes
-            Ok(register)
-        }
-    }
+                        llvm::emit_symbol_load(&mut self.emitter, &output, &symbol)
+                            .map_err(|cause| self.file_error(cause))?;
 
-    fn generate_ast_llvm(&mut self, node: &ast::Node) -> crate::Result<Register> {
-        match node {
+                        Ok(Some(RightValue::Register(output)))
+                    },
+                    token::Literal::Integer(value) => {
+                        Ok(Some(RightValue::Constant(ConstantValue::Signed32(*value as i32))))
+                    },
+                }
+            },
             ast::Node::Unary { operation, operand } => {
-                let operand_register = self.generate_ast_llvm(operand.as_ref())?;
-                let operand_register = self.load_register_if_unloaded(operand_register)?;
-                let output_register = self.new_register(ValueFormat::Signed(32));
+                let operand = self.generate_node_llvm(operand.as_ref())?
+                    .ok_or_else(|| self.error(format!("operation '{operation}x' expects a value for x")))?;
+                let output = self.next_anonymous_register(operand.format());
+                let _ = output; // temporary
 
                 match operation {
-                    _ => Err(self.error(format!("operation '{operation}x' not implemented yet")))
+                    _ => return Err(self.error(format!("operation '{operation}x' not yet implemented")))
+                }
+
+                // Ok(Some(RightValue::Register(output)))
+            },
+            ast::Node::Binary { operation: ast::BinaryOperation::Assign, lhs, rhs } => {
+                if let ast::Node::Literal(token::Literal::Identifier(name)) = lhs.as_ref() {
+                    let rhs = self.generate_node_llvm(rhs.as_ref())?
+                        .ok_or_else(|| self.error(format!("operation 'x = y' expects a value for y")))?;
+                    // If we don't clone here, with the way things are currently set up, we can't borrow self.emitter as mutable
+                    let symbol = self.get_symbol(name)?.clone();
+
+                    llvm::emit_symbol_store(&mut self.emitter, &rhs, &symbol)
+                        .map_err(|cause| self.file_error(cause))?;
+
+                    Ok(Some(rhs))
+                }
+                else {
+                    Err(self.error(String::from("invalid left-hand side for '='")))
                 }
             },
             ast::Node::Binary { operation, lhs, rhs } => {
-                let lhs_register = self.generate_ast_llvm(lhs.as_ref())?;
-                let rhs_register = self.generate_ast_llvm(rhs.as_ref())?;
-                let lhs_register = self.load_register_if_unloaded(lhs_register)?;
-                let rhs_register = self.load_register_if_unloaded(rhs_register)?;
-                let output_register = self.new_register(ValueFormat::Signed(32));
+                let lhs = self.generate_node_llvm(lhs.as_ref())?
+                    .ok_or_else(|| self.error(format!("operation 'x{operation}y' expects a value for x")))?;
+                let rhs = self.generate_node_llvm(rhs.as_ref())?
+                    .ok_or_else(|| self.error(format!("operation 'x{operation}y' expects a value for y")))?;
+                let output = self.next_anonymous_register(lhs.format());
 
                 match operation {
                     ast::BinaryOperation::Add => {
-                        llvm::emit_addition(&mut self.emitter, &output_register, &lhs_register, &rhs_register)
+                        llvm::emit_addition(&mut self.emitter, &output, &lhs, &rhs)
                             .map_err(|cause| self.file_error(cause))?;
                     },
                     ast::BinaryOperation::Subtract => {
-                        llvm::emit_subtraction(&mut self.emitter, &output_register, &lhs_register, &rhs_register)
+                        llvm::emit_subtraction(&mut self.emitter, &output, &lhs, &rhs)
                             .map_err(|cause| self.file_error(cause))?;
                     },
                     ast::BinaryOperation::Multiply => {
-                        llvm::emit_multiplication(&mut self.emitter, &output_register, &lhs_register, &rhs_register)
+                        llvm::emit_multiplication(&mut self.emitter, &output, &lhs, &rhs)
                             .map_err(|cause| self.file_error(cause))?;
                     },
                     ast::BinaryOperation::Divide => {
-                        llvm::emit_division(&mut self.emitter, &output_register, &lhs_register, &rhs_register)
+                        llvm::emit_division(&mut self.emitter, &output, &lhs, &rhs)
                             .map_err(|cause| self.file_error(cause))?;
                     },
-                    _ => return Err(self.error(format!("operation 'x{operation}y' not implemented yet")))
+                    _ => return Err(self.error(format!("operation 'x{operation}y' not yet implemented")))
                 }
-                Ok(output_register)
+
+                Ok(Some(RightValue::Register(output)))
             },
-            ast::Node::Literal(literal) => {
-                match literal {
-                    token::Literal::Integer(value) => {
-                        let value = ConstantValue::Signed32(*value as i32);
-                        let index = self.next_free_stack_entry_index(&value.format())
-                            .ok_or_else(|| self.error(format!("no suitable stack entry free for storing {value}")))?;
-                        llvm::emit_store_constant(&mut self.emitter, &value, &self.stack_entries[index])
+            ast::Node::Let { identifier, value_type, value } => {
+                if let ast::Node::Literal(token::Literal::Identifier(name)) = identifier.as_ref() {
+                    // TODO: parse value_type to get the format instead of just ignoring it lol
+                    let _ = value_type; // temporary
+                    let format = ValueFormat::Integer(32);
+                    let alignment = 4;
+                    let register = Register {
+                        name: name.clone(),
+                        format: format.clone().pointer(),
+                        is_global: false,
+                    };
+                    let symbol = info::Symbol::new(name.clone(), format, alignment, register);
+
+                    llvm::emit_symbol_declaration(&mut self.emitter, &symbol)
+                        .map_err(|cause| self.file_error(cause))?;
+
+                    if let Some(node) = value {
+                        let value = self.generate_node_llvm(node.as_ref())?
+                            .ok_or_else(|| self.error(String::from("'let' expects a value")))?;
+
+                        llvm::emit_symbol_store(&mut self.emitter, &value, &symbol)
                             .map_err(|cause| self.file_error(cause))?;
-                        self.stack_entries[index].set_free(false);
-                        Ok(self.stack_entries[index].register().clone())
-                    },
-                    _ => Err(self.error(String::from("only integer literals allowed for now")))
+                    }
+
+                    self.local_symbols.insert(symbol);
+
+                    Ok(None)
                 }
+                else {
+                    Err(self.error(String::from("invalid left-hand side for 'let'")))
+                }
+            },
+            ast::Node::Print { value } => {
+                let value_to_print = self.generate_node_llvm(value.as_ref())?
+                    .ok_or_else(|| self.error(String::from("'print' expects a value")))?;
+                let output_register = self.next_anonymous_register(ValueFormat::Integer(32));
+
+                llvm::emit_print_i32(&mut self.emitter, &output_register, &value_to_print)
+                    .map_err(|cause| self.file_error(cause))?;
+
+                Ok(None)
             },
         }
     }
@@ -269,18 +291,11 @@ impl<'a, T: Write> Generator<'a, T> {
             .map_err(|cause| self.file_error(cause))?;
         
         while let Some(statement) = parser.parse_statement()? {
-            self.allocate_stack_entries(statement.as_ref())?;
-            llvm::emit_stack_allocations(&mut self.emitter, &self.stack_entries)
-                .map_err(|cause| self.file_error(cause))?;
-
-            let print_register = self.generate_ast_llvm(statement.as_ref())?;
-            let print_register = self.load_register_if_unloaded(print_register)?;
-            let print_target_register = self.new_register(ValueFormat::Signed(32));
-            llvm::emit_print_i32(&mut self.emitter, &print_target_register, &print_register)
-                .map_err(|cause| self.file_error(cause))?;
-
-            self.stack_entries.clear(); // TODO: refactor...
+            self.generate_node_llvm(statement.as_ref())?;
         }
+
+        llvm::emit_return(&mut self.emitter, &RightValue::Constant(ConstantValue::Signed32(0)))
+            .map_err(|cause| self.file_error(cause))?;
 
         llvm::emit_postamble(&mut self.emitter)
             .map_err(|cause| self.file_error(cause))

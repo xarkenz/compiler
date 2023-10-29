@@ -12,47 +12,54 @@ pub fn emit_preamble<T: Write>(emitter: &mut T, source_filename: &str) -> std::i
         target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128\"
         target triple = \"x86_64-pc-linux-gnu\"
 
-        @print_int_fstring = private unnamed_addr constant
-            [4 x i8] c\"%d\\0A\\00\", align 1
+        @print_int_fstring = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1
 
-        define dso_local i32 @main () #0 {{
+        define dso_local i32 @main() #0 {{
     ")
 }
 
-pub fn emit_stack_allocations<T: Write>(emitter: &mut T, entries: &[StackEntry]) -> std::io::Result<()> {
-    for entry in entries {
+pub fn emit_symbol_declaration<T: Write>(emitter: &mut T, symbol: &info::Symbol) -> std::io::Result<()> {
+    if symbol.register().is_global() {
+        write!(
+            emitter,
+            "{register} = global {format}, align {alignment}\n",
+            register = symbol.register(),
+            format = symbol.format(),
+            alignment = symbol.alignment(),
+        )
+    }
+    else {
         write!(
             emitter,
             "    {register} = alloca {format}, align {alignment}\n",
-            register = entry.register(),
-            format = entry.format(),
-            alignment = entry.alignment(),
-        )?;
+            register = symbol.register(),
+            format = symbol.format(),
+            alignment = symbol.alignment(),
+        )
     }
-    Ok(())
 }
 
-pub fn emit_store_constant<T: Write>(emitter: &mut T, value: &ConstantValue, entry: &StackEntry) -> std::io::Result<()> {
+pub fn emit_symbol_store<T: Write>(emitter: &mut T, value: &RightValue, symbol: &info::Symbol) -> std::io::Result<()> {
     write!(
         emitter,
-        "    store {value_format} {value}, {entry_register_format} {entry_register}\n",
+        "    store {value_format} {value}, {symbol_register_format} {symbol_register}\n",
         value_format = value.format(),
-        entry_register_format = entry.register().format(),
-        entry_register = entry.register(),
+        symbol_register_format = symbol.register().format(),
+        symbol_register = symbol.register(),
     )
 }
 
-pub fn emit_load_register<T: Write>(emitter: &mut T, register: &Register, entry: &StackEntry) -> std::io::Result<()> {
+pub fn emit_symbol_load<T: Write>(emitter: &mut T, register: &Register, symbol: &info::Symbol) -> std::io::Result<()> {
     write!(
         emitter,
-        "    {register} = load {register_format}, {entry_register_format} {entry_register}\n",
+        "    {register} = load {register_format}, {symbol_register_format} {symbol_register}\n",
         register_format = register.format(),
-        entry_register_format = entry.register().format(),
-        entry_register = entry.register(),
+        symbol_register_format = symbol.register().format(),
+        symbol_register = symbol.register(),
     )
 }
 
-pub fn emit_addition<T: Write>(emitter: &mut T, output: &Register, lhs: &Register, rhs: &Register) -> std::io::Result<()> {
+pub fn emit_addition<T: Write>(emitter: &mut T, output: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
     write!(
         emitter,
         "    {output} = add nsw {format} {lhs}, {rhs}\n",
@@ -60,7 +67,7 @@ pub fn emit_addition<T: Write>(emitter: &mut T, output: &Register, lhs: &Registe
     )
 }
 
-pub fn emit_subtraction<T: Write>(emitter: &mut T, output: &Register, lhs: &Register, rhs: &Register) -> std::io::Result<()> {
+pub fn emit_subtraction<T: Write>(emitter: &mut T, output: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
     write!(
         emitter,
         "    {output} = sub nsw {format} {lhs}, {rhs}\n",
@@ -68,7 +75,7 @@ pub fn emit_subtraction<T: Write>(emitter: &mut T, output: &Register, lhs: &Regi
     )
 }
 
-pub fn emit_multiplication<T: Write>(emitter: &mut T, output: &Register, lhs: &Register, rhs: &Register) -> std::io::Result<()> {
+pub fn emit_multiplication<T: Write>(emitter: &mut T, output: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
     write!(
         emitter,
         "    {output} = mul nsw {format} {lhs}, {rhs}\n",
@@ -76,7 +83,7 @@ pub fn emit_multiplication<T: Write>(emitter: &mut T, output: &Register, lhs: &R
     )
 }
 
-pub fn emit_division<T: Write>(emitter: &mut T, output: &Register, lhs: &Register, rhs: &Register) -> std::io::Result<()> {
+pub fn emit_division<T: Write>(emitter: &mut T, output: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
     write!(
         emitter,
         "    {output} = sdiv {format} {lhs}, {rhs}\n",
@@ -84,7 +91,7 @@ pub fn emit_division<T: Write>(emitter: &mut T, output: &Register, lhs: &Registe
     )
 }
 
-pub fn emit_print_i32<T: Write>(emitter: &mut T, output: &Register, input: &Register) -> std::io::Result<()> {
+pub fn emit_print_i32<T: Write>(emitter: &mut T, output: &Register, input: &RightValue) -> std::io::Result<()> {
     write!(
         emitter,
         "    {output} = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @print_int_fstring, i32 0, i32 0), {input_format} {input})\n",
@@ -92,9 +99,16 @@ pub fn emit_print_i32<T: Write>(emitter: &mut T, output: &Register, input: &Regi
     )
 }
 
+pub fn emit_return<T: Write>(emitter: &mut T, value: &RightValue) -> std::io::Result<()> {
+    write!(
+        emitter,
+        "    ret {format} {value}\n",
+        format = value.format(),
+    )
+}
+
 pub fn emit_postamble<T: Write>(emitter: &mut T) -> std::io::Result<()> {
     writedoc!(emitter, "
-            ret i32 0
         }}
 
         declare i32 @printf(i8*, ...) #1

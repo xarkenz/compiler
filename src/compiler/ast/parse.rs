@@ -48,53 +48,78 @@ impl<'a, T: BufRead> Parser<'a, T> {
             .ok_or_else(|| self.scanner.syntax_error(expected_token_error_message(allowed, current_token)))
     }
 
-    pub fn parse_terminal_node(&mut self) -> crate::Result<Box<Node>> {
-        match self.get_token()? {
-            Token::Literal(literal) => {
-                let node = Box::new(Node::Literal(literal.clone()));
+    pub fn parse_operand(&mut self) -> crate::Result<Box<Node>> {
+        let token = self.get_token()?;
+
+        if let Some(operation) = UnaryOperation::from_prefix_token(token) {
+            self.scan_token()?;
+            let operand = self.parse_operand()?;
+
+            Ok(Box::new(Node::Unary {
+                operation,
+                operand,
+            }))
+        }
+        else {
+            let mut operand = match token {
+                Token::ParenLeft => {
+                    self.scan_token()?;
+                    self.parse_expression(None, &[Token::ParenRight])?
+                },
+                Token::Literal(literal) => {
+                    Box::new(Node::Literal(literal.clone()))
+                },
+                _ => return Err(self.scanner.syntax_error(format!("expected an operand, got {token}")))
+            };
+            self.scan_token()?;
+
+            while let Some(operation) = UnaryOperation::from_postfix_token(self.get_token()?) {
+                operand = Box::new(Node::Unary {
+                    operation,
+                    operand,
+                });
                 self.scan_token()?;
-                Ok(node)
-            },
-            token => Err(self.scanner.syntax_error(format!("expected a terminal token, got {token:?}")))
+            }
+
+            Ok(operand)
         }
     }
 
-    pub fn parse_binary_expression(&mut self, parent_operation: Option<BinaryOperation>, allowed_ends: &[Token]) -> crate::Result<Box<Node>> {
-        let parent_precedence = parent_operation.map(|operation| operation.precedence());
-
-        let mut lhs = self.parse_terminal_node()?;
+    pub fn parse_expression(&mut self, parent_precedence: Option<Precedence>, allowed_ends: &[Token]) -> crate::Result<Box<Node>> {
+        let mut lhs = self.parse_operand()?;
 
         while let Some(token) = self.current_token() {
-            let operation = match token {
-                Token::Plus => BinaryOperation::Add,
-                Token::Minus => BinaryOperation::Subtract,
-                Token::Star => BinaryOperation::Multiply,
-                Token::Slash => BinaryOperation::Divide,
-                _ => break
-            };
-            let precedence = operation.precedence();
-
-            if let Some(parent_precedence) = parent_precedence {
-                if parent_precedence > precedence || (
-                    parent_precedence == precedence && precedence.associativity() == Associativity::LeftToRight
-                ) {
-                    // Parent operation has a higher precedence and therefore must be made into a subtree of the next operation
-                    // If the parent operation has the same precedence, only make it a subtree when there is left-to-right associativity
-                    break;
-                }
+            if allowed_ends.contains(token) {
+                break;
             }
+            else if let Some(operation) = BinaryOperation::from_token(token) {
+                let precedence = operation.precedence();
 
-            self.scan_token()?;
-            let rhs = self.parse_binary_expression(Some(operation), allowed_ends)?;
+                if let Some(parent_precedence) = parent_precedence {
+                    if parent_precedence > precedence || (
+                        parent_precedence == precedence && precedence.associativity() == Associativity::LeftToRight
+                    ) {
+                        // Parent operation has a higher precedence and therefore must be made into a subtree of the next operation
+                        // If the parent operation has the same precedence, only make it a subtree when there is left-to-right associativity
+                        break;
+                    }
+                }
 
-            lhs = Box::new(Node::Binary {
-                operation,
-                lhs,
-                rhs,
-            });
+                self.scan_token()?;
+                let rhs = self.parse_expression(Some(precedence), allowed_ends)?;
+
+                lhs = Box::new(Node::Binary {
+                    operation,
+                    lhs,
+                    rhs,
+                });
+            }
+            else {
+                return Err(self.scanner.syntax_error(format!("expected an operation, got {token}")));
+            }
         }
 
-        if parent_operation.is_none() {
+        if parent_precedence.is_none() {
             self.expect_token(allowed_ends)?;
         }
 
@@ -102,14 +127,49 @@ impl<'a, T: BufRead> Parser<'a, T> {
     }
 
     pub fn parse_statement(&mut self) -> crate::Result<Option<Box<Node>>> {
-        if self.current_token().is_none() {
+        if let Some(token) = self.current_token() {
+            match token {
+                Token::Semicolon => {
+                    self.scan_token()?;
+                    self.parse_statement()
+                },
+                Token::Let => {
+                    self.scan_token()?;
+                    let identifier = self.parse_expression(None, &[Token::Colon])?;
+                    self.scan_token()?;
+                    let value_type = self.parse_expression(None, &[Token::Equal, Token::Semicolon])?;
+                    let value;
+                    if let Some(Token::Equal) = self.current_token() {
+                        self.scan_token()?;
+                        value = Some(self.parse_expression(None, &[Token::Semicolon])?);
+                    }
+                    else {
+                        value = None;
+                    }
+                    self.scan_token()?;
+                    Ok(Some(Box::new(Node::Let {
+                        identifier,
+                        value_type,
+                        value,
+                    })))
+                },
+                Token::Print => {
+                    self.scan_token()?;
+                    let value = self.parse_expression(None, &[Token::Semicolon])?;
+                    self.scan_token()?;
+                    Ok(Some(Box::new(Node::Print {
+                        value,
+                    })))
+                },
+                _ => {
+                    let expression = self.parse_expression(None, &[Token::Semicolon])?;
+                    self.scan_token()?;
+                    Ok(Some(expression))
+                }
+            }
+        }
+        else {
             Ok(None)
-        } else {
-            self.expect_token(&[Token::Print])?;
-            self.scan_token()?;
-            let print_expression = self.parse_binary_expression(None, &[Token::Semicolon])?;
-            self.scan_token()?;
-            Ok(Some(print_expression))
         }
     }
 }

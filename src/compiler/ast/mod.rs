@@ -79,6 +79,30 @@ impl UnaryOperation {
         self.precedence().associativity()
     }
 
+    pub fn from_prefix_token(token: &Token) -> Option<Self> {
+        match token {
+            Token::Plus => Some(Self::Positive),
+            Token::Plus2 => Some(Self::PreIncrement),
+            Token::Minus => Some(Self::Negative),
+            Token::Minus2 => Some(Self::PreDecrement),
+            Token::Star => Some(Self::Dereference),
+            Token::Ampersand => Some(Self::Reference),
+            Token::Tilde => Some(Self::BitwiseNot),
+            Token::Bang => Some(Self::LogicalNot),
+            Token::SizeOf => Some(Self::GetSize),
+            Token::AlignOf => Some(Self::GetAlign),
+            _ => None
+        }
+    }
+
+    pub fn from_postfix_token(token: &Token) -> Option<Self> {
+        match token {
+            Token::Plus2 => Some(Self::PostIncrement),
+            Token::Minus2 => Some(Self::PostDecrement),
+            _ => None
+        }
+    }
+
     pub fn notation(&self) -> &'static str {
         match self {
             Self::PostIncrement => "++", // FIXME
@@ -165,6 +189,44 @@ impl BinaryOperation {
         self.precedence().associativity()
     }
 
+    pub fn from_token(token: &Token) -> Option<Self> {
+        match token {
+            Token::Plus => Some(Self::Add),
+            Token::PlusEqual => Some(Self::AddAssign),
+            Token::Minus => Some(Self::Subtract),
+            Token::MinusEqual => Some(Self::SubtractAssign),
+            Token::Star => Some(Self::Multiply),
+            Token::StarEqual => Some(Self::MultiplyAssign),
+            Token::Slash => Some(Self::Divide),
+            Token::SlashEqual => Some(Self::DivideAssign),
+            Token::Percent => Some(Self::Remainder),
+            Token::PercentEqual => Some(Self::RemainderAssign),
+            Token::Ampersand => Some(Self::BitwiseAnd),
+            Token::AmpersandEqual => Some(Self::BitwiseAndAssign),
+            Token::Ampersand2 => Some(Self::LogicalAnd),
+            Token::Pipe => Some(Self::BitwiseOr),
+            Token::PipeEqual => Some(Self::BitwiseOrAssign),
+            Token::Pipe2 => Some(Self::LogicalOr),
+            Token::Caret => Some(Self::BitwiseXor),
+            Token::CaretEqual => Some(Self::BitwiseXorAssign),
+            Token::BangEqual => Some(Self::NotEqual),
+            Token::Equal => Some(Self::Assign),
+            Token::Equal2 => Some(Self::Equal),
+            Token::Dot => Some(Self::Access),
+            Token::SquareLeft => Some(Self::Subscript),
+            Token::AngleLeft => Some(Self::LessThan),
+            Token::AngleLeftEqual => Some(Self::LessEqual),
+            Token::AngleLeft2 => Some(Self::ShiftLeft),
+            Token::AngleLeft2Equal => Some(Self::ShiftLeftAssign),
+            Token::AngleRight => Some(Self::GreaterThan),
+            Token::AngleRightEqual => Some(Self::GreaterEqual),
+            Token::AngleRight2 => Some(Self::ShiftRight),
+            Token::AngleRight2Equal => Some(Self::ShiftRightAssign),
+            Token::As => Some(Self::Convert),
+            _ => None
+        }
+    }
+
     pub fn notation(&self) -> &'static str {
         match self {
             Self::Subscript => "[", // FIXME
@@ -232,6 +294,7 @@ impl Operation {
     }
 }
 
+#[derive(Debug)]
 pub enum Node {
     Literal(Literal),
     Unary {
@@ -243,14 +306,38 @@ pub enum Node {
         lhs: Box<Node>,
         rhs: Box<Node>,
     },
+    Let {
+        identifier: Box<Node>,
+        value_type: Box<Node>,
+        value: Option<Box<Node>>,
+    },
+    Print {
+        value: Box<Node>,
+    },
 }
 
-impl fmt::Debug for Node {
+impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Literal(literal) => write!(f, "{literal}"),
-            Self::Unary { operation, operand } => write!(f, "({operation}{operand:?})"),
-            Self::Binary { operation, lhs, rhs } => write!(f, "({lhs:?}{operation}{rhs:?})"),
+            Self::Literal(literal) => {
+                write!(f, "{literal}")
+            },
+            Self::Unary { operation, operand } => {
+                write!(f, "({operation}{operand})")
+            },
+            Self::Binary { operation, lhs, rhs } => {
+                write!(f, "({lhs}{operation}{rhs})")
+            },
+            Self::Let { identifier, value_type, value } => {
+                if let Some(value) = value {
+                    write!(f, "let {identifier}: {value_type} = {value};")
+                } else {
+                    write!(f, "let {identifier}: {value_type};")
+                }
+            },
+            Self::Print { value } => {
+                write!(f, "print {value};")
+            },
         }
     }
 }

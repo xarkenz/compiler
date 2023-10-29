@@ -81,11 +81,11 @@ impl<'a, T: BufRead> Scanner<'a, T> {
     }
 
     fn scan_integer_literal(&mut self) -> crate::Result<Option<Token>> {
-        let mut raw_literal = String::new();
+        let mut content = String::new();
 
         while let Some(ch) = self.next_char()? {
             if ch.is_ascii_digit() {
-                raw_literal.push(ch);
+                content.push(ch);
             } else {
                 self.put_back(ch);
                 break;
@@ -93,7 +93,7 @@ impl<'a, T: BufRead> Scanner<'a, T> {
         }
 
         let mut value = 0;
-        for digit in raw_literal.chars() {
+        for digit in content.chars() {
             value = 10 * value + digit as u64 - '0' as u64;
         }
 
@@ -104,7 +104,7 @@ impl<'a, T: BufRead> Scanner<'a, T> {
         let mut content = String::new();
 
         while let Some(ch) = self.next_char()? {
-            if ch == '_' || ch.is_alphanumeric() {
+            if ch == '_' || ch.is_ascii_alphanumeric() {
                 content.push(ch);
             } else {
                 self.put_back(ch);
@@ -112,30 +112,45 @@ impl<'a, T: BufRead> Scanner<'a, T> {
             }
         }
 
-        if let Some(keyword_token) = get_keyword_token(&content) {
+        if let Some(keyword_token) = get_keyword_token_match(&content) {
             Ok(Some(keyword_token.clone()))
         } else {
             Ok(Some(Token::Literal(Literal::Identifier(content))))
         }
     }
 
+    fn scan_symbolic_literal(&mut self) -> crate::Result<Option<Token>> {
+        let mut content = String::new();
+
+        while let Some(ch) = self.next_char()? {
+            content.push(ch);
+            let matches = get_symbolic_token_partial_matches(content.as_str());
+            if matches.is_empty() {
+                break;
+            }
+        }
+
+        while let Some(ch) = content.pop() {
+            self.put_back(ch);
+            if let Some(symbolic_token) = get_symbolic_token_match(content.as_str()) {
+                return Ok(Some(symbolic_token.clone()));
+            }
+        }
+
+        Err(self.syntax_error(String::from("unrecognized token")))
+    }
+
     pub fn next_token(&mut self) -> crate::Result<Option<Token>> {
         if let Some(ch) = self.next_non_space_char()? {
-            let possible_tokens = get_symbolic_token_matches(&String::from(ch));
-            if possible_tokens.is_empty() {
-                if ch.is_ascii_digit() {
-                    self.put_back(ch);
-                    self.scan_integer_literal()
-                } else if ch == '_' || ch.is_alphanumeric() {
-                    self.put_back(ch);
-                    self.scan_identifier_literal()
-                } else {
-                    // temporary
-                    Ok(None)
-                }
+            if ch.is_ascii_digit() {
+                self.put_back(ch);
+                self.scan_integer_literal()
+            } else if ch == '_' || ch.is_ascii_alphanumeric() {
+                self.put_back(ch);
+                self.scan_identifier_literal()
             } else {
-                // temporary
-                Ok(Some(possible_tokens[0].clone()))
+                self.put_back(ch);
+                self.scan_symbolic_literal()
             }
         } else {
             Ok(None)
