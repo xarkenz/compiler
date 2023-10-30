@@ -1,3 +1,4 @@
 let x: i32 = 5;
 x = 6;
-print x * 5;
+let y: u32 = x * x;
+print y * 5; // 180

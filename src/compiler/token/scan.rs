@@ -140,19 +140,81 @@ impl<'a, T: BufRead> Scanner<'a, T> {
         Err(self.syntax_error(String::from("unrecognized token")))
     }
 
+    fn skip_line_comment(&mut self) -> crate::Result<()> {
+        let mut escape_next_newline = false;
+
+        while let Some(ch) = self.next_char()? {
+            if ch == '\n' {
+                if escape_next_newline {
+                    escape_next_newline = false;
+                }
+                else {
+                    break;
+                }
+            }
+            else if ch == '\\' {
+                escape_next_newline = !escape_next_newline;
+            }
+            else if !ch.is_whitespace() {
+                escape_next_newline = false;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn skip_block_comment(&mut self) -> crate::Result<()> {
+        let mut escape_next_char = false;
+
+        while let Some(ch) = self.next_char()? {
+            if escape_next_char {
+                escape_next_char = false;
+            }
+            else if ch == '*' {
+                match self.next_char()? {
+                    Some('/') => break,
+                    Some(next_ch) => self.put_back(next_ch),
+                    None => {},
+                }
+            }
+            else if ch == '\\' {
+                escape_next_char = true;
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn next_token(&mut self) -> crate::Result<Option<Token>> {
         if let Some(ch) = self.next_non_space_char()? {
             if ch.is_ascii_digit() {
                 self.put_back(ch);
                 self.scan_integer_literal()
-            } else if ch == '_' || ch.is_ascii_alphanumeric() {
+            }
+            else if ch == '_' || ch.is_ascii_alphanumeric() {
                 self.put_back(ch);
                 self.scan_identifier_literal()
-            } else {
+            }
+            else {
+                if ch == '/' {
+                    match self.next_char()? {
+                        Some('/') => {
+                            self.skip_line_comment()?;
+                            return self.next_token();
+                        },
+                        Some('*') => {
+                            self.skip_block_comment()?;
+                            return self.next_token();
+                        },
+                        Some(next_ch) => self.put_back(next_ch),
+                        None => {},
+                    }
+                }
                 self.put_back(ch);
                 self.scan_symbolic_literal()
             }
-        } else {
+        }
+        else {
             Ok(None)
         }
     }

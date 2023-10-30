@@ -4,15 +4,23 @@
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-pc-linux-gnu"
 
-@print_int_fstring = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
+@print_i64_fstring = private unnamed_addr constant [6 x i8] c"%lld\0A\00", align 1
+@print_u64_fstring = private unnamed_addr constant [6 x i8] c"%llu\0A\00", align 1
+@print_ptr_fstring = private unnamed_addr constant [4 x i8] c"%p\0A\00", align 1
 
 define dso_local i32 @main() #0 {
     %x = alloca i32, align 4
     store i32 5, i32* %x
     store i32 6, i32* %x
+    %y = alloca i32, align 4
     %1 = load i32, i32* %x
-    %2 = mul nsw i32 %1, 5
-    %3 = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @print_int_fstring, i32 0, i32 0), i32 %2)
+    %2 = load i32, i32* %x
+    %3 = mul nsw i32 %1, %2
+    store i32 %3, i32* %y
+    %4 = load i32, i32* %y
+    %5 = mul nsw i32 %4, 5
+    %6 = sext i32 %5 to i64
+    %7 = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 %6)
     ret i32 0
 }
 

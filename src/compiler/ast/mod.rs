@@ -45,7 +45,7 @@ impl PartialOrd for Precedence {
         // Compare the internal values, then reverse the ordering because
         // the lowest internal value represents the highest precedence
         (*self as isize).partial_cmp(&(*other as isize))
-            .map(|cmp| cmp.reverse())
+            .map(std::cmp::Ordering::reverse)
     }
 }
 
@@ -294,6 +294,21 @@ impl Operation {
     }
 }
 
+#[derive(Clone, PartialEq, Debug)]
+pub enum ValueType {
+    Named(String),
+}
+
+impl std::fmt::Display for ValueType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Named(name) => {
+                write!(f, "{name}")
+            },
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Node {
     Literal(Literal),
@@ -308,7 +323,7 @@ pub enum Node {
     },
     Let {
         identifier: Box<Node>,
-        value_type: Box<Node>,
+        value_type: ValueType,
         value: Option<Box<Node>>,
     },
     Print {

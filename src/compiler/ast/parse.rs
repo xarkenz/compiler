@@ -4,11 +4,11 @@ use std::fmt::Write;
 use std::io::BufRead;
 
 fn expected_token_error_message(allowed: &[Token], got_token: &Token) -> String {
-    let mut message = format!("expected {}", &allowed[0]);
+    let mut message = format!("expected '{}'", &allowed[0]);
     for token in &allowed[1..] {
-        write!(&mut message, ", {token}").unwrap();
+        write!(&mut message, ", '{token}'").unwrap();
     }
-    write!(&mut message, "; got {got_token}").unwrap();
+    write!(&mut message, "; got '{got_token}'").unwrap();
     message
 }
 
@@ -126,50 +126,63 @@ impl<'a, T: BufRead> Parser<'a, T> {
         Ok(lhs)
     }
 
-    pub fn parse_statement(&mut self) -> crate::Result<Option<Box<Node>>> {
-        if let Some(token) = self.current_token() {
-            match token {
-                Token::Semicolon => {
-                    self.scan_token()?;
-                    self.parse_statement()
-                },
-                Token::Let => {
-                    self.scan_token()?;
-                    let identifier = self.parse_expression(None, &[Token::Colon])?;
-                    self.scan_token()?;
-                    let value_type = self.parse_expression(None, &[Token::Equal, Token::Semicolon])?;
-                    let value;
-                    if let Some(Token::Equal) = self.current_token() {
-                        self.scan_token()?;
-                        value = Some(self.parse_expression(None, &[Token::Semicolon])?);
-                    }
-                    else {
-                        value = None;
-                    }
-                    self.scan_token()?;
-                    Ok(Some(Box::new(Node::Let {
-                        identifier,
-                        value_type,
-                        value,
-                    })))
-                },
-                Token::Print => {
-                    self.scan_token()?;
-                    let value = self.parse_expression(None, &[Token::Semicolon])?;
-                    self.scan_token()?;
-                    Ok(Some(Box::new(Node::Print {
-                        value,
-                    })))
-                },
-                _ => {
-                    let expression = self.parse_expression(None, &[Token::Semicolon])?;
-                    self.scan_token()?;
-                    Ok(Some(expression))
-                }
+    pub fn parse_value_type(&mut self, allowed_ends: &[Token]) -> crate::Result<ValueType> {
+        let value_type = match self.get_token()? {
+            Token::Literal(Literal::Identifier(name)) => {
+                let name = name.clone();
+                self.scan_token()?;
+                ValueType::Named(name)
+            },
+            token => {
+                return Err(self.scanner.syntax_error(format!("expected a type, got {token}")));
             }
-        }
-        else {
-            Ok(None)
+        };
+
+        self.expect_token(allowed_ends)?;
+
+        Ok(value_type)
+    }
+
+    pub fn parse_statement(&mut self) -> crate::Result<Option<Box<Node>>> {
+        match self.current_token() {
+            Some(Token::Semicolon) => {
+                self.scan_token()?;
+                self.parse_statement()
+            },
+            Some(Token::Let) => {
+                self.scan_token()?;
+                let identifier = self.parse_expression(None, &[Token::Colon])?;
+                self.scan_token()?;
+                let value_type = self.parse_value_type(&[Token::Equal, Token::Semicolon])?;
+                let value;
+                if let Some(Token::Equal) = self.current_token() {
+                    self.scan_token()?;
+                    value = Some(self.parse_expression(None, &[Token::Semicolon])?);
+                }
+                else {
+                    value = None;
+                }
+                self.scan_token()?;
+                Ok(Some(Box::new(Node::Let {
+                    identifier,
+                    value_type,
+                    value,
+                })))
+            },
+            Some(Token::Print) => {
+                self.scan_token()?;
+                let value = self.parse_expression(None, &[Token::Semicolon])?;
+                self.scan_token()?;
+                Ok(Some(Box::new(Node::Print {
+                    value,
+                })))
+            },
+            Some(_) => {
+                let expression = self.parse_expression(None, &[Token::Semicolon])?;
+                self.scan_token()?;
+                Ok(Some(expression))
+            },
+            None => Ok(None),
         }
     }
 }

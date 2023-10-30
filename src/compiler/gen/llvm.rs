@@ -4,6 +4,8 @@ use std::io::Write;
 
 use indoc::writedoc;
 
+const INDENT: &str = "    ";
+
 pub fn emit_preamble<T: Write>(emitter: &mut T, source_filename: &str) -> std::io::Result<()> {
     writedoc!(emitter, "
         ; ModuleID = '{source_filename}'
@@ -12,7 +14,9 @@ pub fn emit_preamble<T: Write>(emitter: &mut T, source_filename: &str) -> std::i
         target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128\"
         target triple = \"x86_64-pc-linux-gnu\"
 
-        @print_int_fstring = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1
+        @print_i64_fstring = private unnamed_addr constant [6 x i8] c\"%lld\\0A\\00\", align 1
+        @print_u64_fstring = private unnamed_addr constant [6 x i8] c\"%llu\\0A\\00\", align 1
+        @print_ptr_fstring = private unnamed_addr constant [4 x i8] c\"%p\\0A\\00\", align 1
 
         define dso_local i32 @main() #0 {{
     ")
@@ -31,7 +35,7 @@ pub fn emit_symbol_declaration<T: Write>(emitter: &mut T, symbol: &info::Symbol)
     else {
         write!(
             emitter,
-            "    {register} = alloca {format}, align {alignment}\n",
+            "{INDENT}{register} = alloca {format}, align {alignment}\n",
             register = symbol.register(),
             format = symbol.format(),
             alignment = symbol.alignment(),
@@ -42,7 +46,7 @@ pub fn emit_symbol_declaration<T: Write>(emitter: &mut T, symbol: &info::Symbol)
 pub fn emit_symbol_store<T: Write>(emitter: &mut T, value: &RightValue, symbol: &info::Symbol) -> std::io::Result<()> {
     write!(
         emitter,
-        "    store {value_format} {value}, {symbol_register_format} {symbol_register}\n",
+        "{INDENT}store {value_format} {value}, {symbol_register_format} {symbol_register}\n",
         value_format = value.format(),
         symbol_register_format = symbol.register().format(),
         symbol_register = symbol.register(),
@@ -52,57 +56,168 @@ pub fn emit_symbol_store<T: Write>(emitter: &mut T, value: &RightValue, symbol: 
 pub fn emit_symbol_load<T: Write>(emitter: &mut T, register: &Register, symbol: &info::Symbol) -> std::io::Result<()> {
     write!(
         emitter,
-        "    {register} = load {register_format}, {symbol_register_format} {symbol_register}\n",
+        "{INDENT}{register} = load {register_format}, {symbol_register_format} {symbol_register}\n",
         register_format = register.format(),
         symbol_register_format = symbol.register().format(),
         symbol_register = symbol.register(),
     )
 }
 
-pub fn emit_addition<T: Write>(emitter: &mut T, output: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
+pub fn emit_truncation<T: Write>(emitter: &mut T, result: &Register, value: &RightValue) -> std::io::Result<()> {
     write!(
         emitter,
-        "    {output} = add nsw {format} {lhs}, {rhs}\n",
-        format = output.format(),
+        "{INDENT}{result} = trunc {from_format} {value} to {to_format}\n",
+        to_format = result.format(),
+        from_format = value.format(),
     )
 }
 
-pub fn emit_subtraction<T: Write>(emitter: &mut T, output: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
+pub fn emit_extension<T: Write>(emitter: &mut T, result: &Register, value: &RightValue) -> std::io::Result<()> {
+    match value.format() {
+        ValueFormat::Integer { semantics: IntegerSemantics::Signed, .. } => write!(
+            emitter,
+            "{INDENT}{result} = sext {from_format} {value} to {to_format}\n",
+            to_format = result.format(),
+            from_format = value.format(),
+        ),
+        _ => write!(
+            emitter,
+            "{INDENT}{result} = zext {from_format} {value} to {to_format}\n",
+            to_format = result.format(),
+            from_format = value.format(),
+        ),
+    }
+}
+
+pub fn emit_addition<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
     write!(
         emitter,
-        "    {output} = sub nsw {format} {lhs}, {rhs}\n",
-        format = output.format(),
+        "{INDENT}{result} = add nsw {format} {lhs}, {rhs}\n",
+        format = result.format(),
     )
 }
 
-pub fn emit_multiplication<T: Write>(emitter: &mut T, output: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
+pub fn emit_subtraction<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
     write!(
         emitter,
-        "    {output} = mul nsw {format} {lhs}, {rhs}\n",
-        format = output.format(),
+        "{INDENT}{result} = sub nsw {format} {lhs}, {rhs}\n",
+        format = result.format(),
     )
 }
 
-pub fn emit_division<T: Write>(emitter: &mut T, output: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
+pub fn emit_multiplication<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
     write!(
         emitter,
-        "    {output} = sdiv {format} {lhs}, {rhs}\n",
-        format = output.format(),
+        "{INDENT}{result} = mul nsw {format} {lhs}, {rhs}\n",
+        format = result.format(),
     )
 }
 
-pub fn emit_print_i32<T: Write>(emitter: &mut T, output: &Register, input: &RightValue) -> std::io::Result<()> {
+pub fn emit_division<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
     write!(
         emitter,
-        "    {output} = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @print_int_fstring, i32 0, i32 0), {input_format} {input})\n",
-        input_format = input.format(),
+        "{INDENT}{result} = sdiv {format} {lhs}, {rhs}\n",
+        format = result.format(),
     )
+}
+
+pub fn emit_cmp_equal<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
+    write!(
+        emitter,
+        "{INDENT}{result} = icmp eq {format} {lhs}, {rhs}\n",
+        format = lhs.format(),
+    )
+}
+
+pub fn emit_cmp_not_equal<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
+    write!(
+        emitter,
+        "{INDENT}{result} = icmp ne {format} {lhs}, {rhs}\n",
+        format = lhs.format(),
+    )
+}
+
+pub fn emit_cmp_less_than<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
+    match lhs.format() {
+        ValueFormat::Integer { semantics: IntegerSemantics::Signed, .. } => write!(
+            emitter,
+            "{INDENT}{result} = icmp slt {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        ),
+        _ => write!(
+            emitter,
+            "{INDENT}{result} = icmp ult {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        )
+    }
+}
+
+pub fn emit_cmp_less_equal<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
+    match lhs.format() {
+        ValueFormat::Integer { semantics: IntegerSemantics::Signed, .. } => write!(
+            emitter,
+            "{INDENT}{result} = icmp sle {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        ),
+        _ => write!(
+            emitter,
+            "{INDENT}{result} = icmp ule {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        )
+    }
+}
+
+pub fn emit_cmp_greater_than<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
+    match lhs.format() {
+        ValueFormat::Integer { semantics: IntegerSemantics::Signed, .. } => write!(
+            emitter,
+            "{INDENT}{result} = icmp sgt {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        ),
+        _ => write!(
+            emitter,
+            "{INDENT}{result} = icmp ugt {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        )
+    }
+}
+
+pub fn emit_cmp_greater_equal<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
+    match lhs.format() {
+        ValueFormat::Integer { semantics: IntegerSemantics::Signed, .. } => write!(
+            emitter,
+            "{INDENT}{result} = icmp sge {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        ),
+        _ => write!(
+            emitter,
+            "{INDENT}{result} = icmp uge {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        )
+    }
+}
+
+pub fn emit_print<T: Write>(emitter: &mut T, result: &Register, value: &RightValue) -> std::io::Result<()> {
+    match value.format() {
+        ValueFormat::Integer { semantics: IntegerSemantics::Signed, .. } => write!(
+            emitter,
+            "{INDENT}{result} = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 {value})\n",
+        ),
+        ValueFormat::Integer { .. } => write!(
+            emitter,
+            "{INDENT}{result} = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_u64_fstring, i32 0, i32 0), i64 {value})\n",
+        ),
+        ValueFormat::Pointer { .. } => write!(
+            emitter,
+            "{INDENT}{result} = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @print_ptr_fstring, i32 0, i32 0), ptr {value})\n",
+        ),
+    }
 }
 
 pub fn emit_return<T: Write>(emitter: &mut T, value: &RightValue) -> std::io::Result<()> {
     write!(
         emitter,
-        "    ret {format} {value}\n",
+        "{INDENT}ret {format} {value}\n",
         format = value.format(),
     )
 }
@@ -114,22 +229,22 @@ pub fn emit_postamble<T: Write>(emitter: &mut T) -> std::io::Result<()> {
         declare i32 @printf(i8*, ...) #1
 
         attributes #0 = {{
-            noinline nounwind optnone uwtable
-            \"frame-pointer\"=\"all\"
-            \"min-legal-vector-width\"=\"0\"
-            \"no-trapping-math\"=\"true\"
-            \"stack-protector-buffer-size\"=\"8\"
-            \"target-cpu\"=\"x86-64\"
-            \"target-features\"=\"+cx8,+fxsr,+mmx,+sse,+sse2,+x87\"
-            \"tune-cpu\"=\"generic\"
+        {INDENT}noinline nounwind optnone uwtable
+        {INDENT}\"frame-pointer\"=\"all\"
+        {INDENT}\"min-legal-vector-width\"=\"0\"
+        {INDENT}\"no-trapping-math\"=\"true\"
+        {INDENT}\"stack-protector-buffer-size\"=\"8\"
+        {INDENT}\"target-cpu\"=\"x86-64\"
+        {INDENT}\"target-features\"=\"+cx8,+fxsr,+mmx,+sse,+sse2,+x87\"
+        {INDENT}\"tune-cpu\"=\"generic\"
         }}
         attributes #1 = {{
-            \"frame-pointer\"=\"all\"
-            \"no-trapping-math\"=\"true\"
-            \"stack-protector-buffer-size\"=\"8\"
-            \"target-cpu\"=\"x86-64\"
-            \"target-features\"=\"+cx8,+fxsr,+mmx,+sse,+sse2,+x87\"
-            \"tune-cpu\"=\"generic\"
+        {INDENT}\"frame-pointer\"=\"all\"
+        {INDENT}\"no-trapping-math\"=\"true\"
+        {INDENT}\"stack-protector-buffer-size\"=\"8\"
+        {INDENT}\"target-cpu\"=\"x86-64\"
+        {INDENT}\"target-features\"=\"+cx8,+fxsr,+mmx,+sse,+sse2,+x87\"
+        {INDENT}\"tune-cpu\"=\"generic\"
         }}
 
         !llvm.module.flags = !{{!0, !1, !2, !3, !4}}
