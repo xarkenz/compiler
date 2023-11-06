@@ -114,7 +114,14 @@ impl<'a, T: BufRead> Scanner<'a, T> {
 
         if let Some(keyword_token) = get_keyword_token_match(&content) {
             Ok(Some(keyword_token.clone()))
-        } else {
+        }
+        else if &content == "true" {
+            Ok(Some(Token::Literal(Literal::Boolean(true))))
+        }
+        else if &content == "false" {
+            Ok(Some(Token::Literal(Literal::Boolean(false))))
+        }
+        else {
             Ok(Some(Token::Literal(Literal::Identifier(content))))
         }
     }

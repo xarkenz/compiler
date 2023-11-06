@@ -1,4 +1,5 @@
-let x: i32 = 5;
-x = 6;
-let y: u32 = x * x;
-print y * 5; // 180
+let x: i8 = 5 * 6 + 3;
+x = 6 * 3 + 5;
+let y: i16 = 9 + 2 * (x - 7) as i16;
+print x; // 23
+print y; // 41

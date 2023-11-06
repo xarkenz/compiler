@@ -9,18 +9,26 @@ target triple = "x86_64-pc-linux-gnu"
 @print_ptr_fstring = private unnamed_addr constant [4 x i8] c"%p\0A\00", align 1
 
 define dso_local i32 @main() #0 {
-    %x = alloca i32, align 4
-    store i32 5, i32* %x
-    store i32 6, i32* %x
-    %y = alloca i32, align 4
-    %1 = load i32, i32* %x
-    %2 = load i32, i32* %x
-    %3 = mul nsw i32 %1, %2
-    store i32 %3, i32* %y
-    %4 = load i32, i32* %y
-    %5 = mul nsw i32 %4, 5
-    %6 = sext i32 %5 to i64
-    %7 = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 %6)
+    %x = alloca i8, align 4
+    %1 = mul nsw i8 5, 6
+    %2 = add nsw i8 %1, 3
+    store i8 %2, i8* %x
+    %3 = mul nsw i8 6, 3
+    %4 = add nsw i8 %3, 5
+    store i8 %4, i8* %x
+    %y = alloca i16, align 4
+    %5 = load i8, i8* %x
+    %6 = sub nsw i8 %5, 7
+    %7 = sext i8 %6 to i16
+    %8 = mul nsw i16 2, %7
+    %9 = add nsw i16 9, %8
+    store i16 %9, i16* %y
+    %10 = load i8, i8* %x
+    %11 = sext i8 %10 to i64
+    %12 = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 %11)
+    %13 = load i16, i16* %y
+    %14 = sext i16 %13 to i64
+    %15 = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 %14)
     ret i32 0
 }
 

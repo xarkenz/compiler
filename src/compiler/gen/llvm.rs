@@ -74,7 +74,7 @@ pub fn emit_truncation<T: Write>(emitter: &mut T, result: &Register, value: &Rig
 
 pub fn emit_extension<T: Write>(emitter: &mut T, result: &Register, value: &RightValue) -> std::io::Result<()> {
     match value.format() {
-        ValueFormat::Integer { semantics: IntegerSemantics::Signed, .. } => write!(
+        ValueFormat::Integer { signed: true, .. } => write!(
             emitter,
             "{INDENT}{result} = sext {from_format} {value} to {to_format}\n",
             to_format = result.format(),
@@ -90,35 +90,63 @@ pub fn emit_extension<T: Write>(emitter: &mut T, result: &Register, value: &Righ
 }
 
 pub fn emit_addition<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
-    write!(
-        emitter,
-        "{INDENT}{result} = add nsw {format} {lhs}, {rhs}\n",
-        format = result.format(),
-    )
+    match lhs.format() {
+        ValueFormat::Integer { signed: true, .. } => write!(
+            emitter,
+            "{INDENT}{result} = add nsw {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        ),
+        _ => write!(
+            emitter,
+            "{INDENT}{result} = add nuw {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        )
+    }
 }
 
 pub fn emit_subtraction<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
-    write!(
-        emitter,
-        "{INDENT}{result} = sub nsw {format} {lhs}, {rhs}\n",
-        format = result.format(),
-    )
+    match lhs.format() {
+        ValueFormat::Integer { signed: true, .. } => write!(
+            emitter,
+            "{INDENT}{result} = sub nsw {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        ),
+        _ => write!(
+            emitter,
+            "{INDENT}{result} = sub nuw {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        )
+    }
 }
 
 pub fn emit_multiplication<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
-    write!(
-        emitter,
-        "{INDENT}{result} = mul nsw {format} {lhs}, {rhs}\n",
-        format = result.format(),
-    )
+    match lhs.format() {
+        ValueFormat::Integer { signed: true, .. } => write!(
+            emitter,
+            "{INDENT}{result} = mul nsw {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        ),
+        _ => write!(
+            emitter,
+            "{INDENT}{result} = mul nuw {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        )
+    }
 }
 
 pub fn emit_division<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
-    write!(
-        emitter,
-        "{INDENT}{result} = sdiv {format} {lhs}, {rhs}\n",
-        format = result.format(),
-    )
+    match lhs.format() {
+        ValueFormat::Integer { signed: true, .. } => write!(
+            emitter,
+            "{INDENT}{result} = sdiv {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        ),
+        _ => write!(
+            emitter,
+            "{INDENT}{result} = udiv {format} {lhs}, {rhs}\n",
+            format = lhs.format(),
+        )
+    }
 }
 
 pub fn emit_cmp_equal<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
@@ -139,7 +167,7 @@ pub fn emit_cmp_not_equal<T: Write>(emitter: &mut T, result: &Register, lhs: &Ri
 
 pub fn emit_cmp_less_than<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
     match lhs.format() {
-        ValueFormat::Integer { semantics: IntegerSemantics::Signed, .. } => write!(
+        ValueFormat::Integer { signed: true, .. } => write!(
             emitter,
             "{INDENT}{result} = icmp slt {format} {lhs}, {rhs}\n",
             format = lhs.format(),
@@ -154,7 +182,7 @@ pub fn emit_cmp_less_than<T: Write>(emitter: &mut T, result: &Register, lhs: &Ri
 
 pub fn emit_cmp_less_equal<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
     match lhs.format() {
-        ValueFormat::Integer { semantics: IntegerSemantics::Signed, .. } => write!(
+        ValueFormat::Integer { signed: true, .. } => write!(
             emitter,
             "{INDENT}{result} = icmp sle {format} {lhs}, {rhs}\n",
             format = lhs.format(),
@@ -169,7 +197,7 @@ pub fn emit_cmp_less_equal<T: Write>(emitter: &mut T, result: &Register, lhs: &R
 
 pub fn emit_cmp_greater_than<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
     match lhs.format() {
-        ValueFormat::Integer { semantics: IntegerSemantics::Signed, .. } => write!(
+        ValueFormat::Integer { signed: true, .. } => write!(
             emitter,
             "{INDENT}{result} = icmp sgt {format} {lhs}, {rhs}\n",
             format = lhs.format(),
@@ -184,7 +212,7 @@ pub fn emit_cmp_greater_than<T: Write>(emitter: &mut T, result: &Register, lhs: 
 
 pub fn emit_cmp_greater_equal<T: Write>(emitter: &mut T, result: &Register, lhs: &RightValue, rhs: &RightValue) -> std::io::Result<()> {
     match lhs.format() {
-        ValueFormat::Integer { semantics: IntegerSemantics::Signed, .. } => write!(
+        ValueFormat::Integer { signed: true, .. } => write!(
             emitter,
             "{INDENT}{result} = icmp sge {format} {lhs}, {rhs}\n",
             format = lhs.format(),
@@ -199,11 +227,12 @@ pub fn emit_cmp_greater_equal<T: Write>(emitter: &mut T, result: &Register, lhs:
 
 pub fn emit_print<T: Write>(emitter: &mut T, result: &Register, value: &RightValue) -> std::io::Result<()> {
     match value.format() {
-        ValueFormat::Integer { semantics: IntegerSemantics::Signed, .. } => write!(
+        ValueFormat::Boolean => todo!(),
+        ValueFormat::Integer { signed: true, .. } => write!(
             emitter,
             "{INDENT}{result} = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 {value})\n",
         ),
-        ValueFormat::Integer { .. } => write!(
+        ValueFormat::Integer { signed: false, .. } => write!(
             emitter,
             "{INDENT}{result} = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_u64_fstring, i32 0, i32 0), i64 {value})\n",
         ),

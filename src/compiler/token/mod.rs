@@ -6,6 +6,7 @@ use std::fmt;
 pub enum Literal {
     Identifier(String),
     Integer(u64),
+    Boolean(bool),
 }
 
 impl fmt::Display for Literal {
@@ -13,6 +14,7 @@ impl fmt::Display for Literal {
         match self {
             Self::Identifier(name) => write!(f, "{name}"),
             Self::Integer(value) => write!(f, "{value}"),
+            Self::Boolean(value) => write!(f, "{value}"),
         }
     }
 }

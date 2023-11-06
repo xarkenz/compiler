@@ -25,7 +25,7 @@ impl CompilerArgs {
     }
 }
 
-pub fn parse_cl_args() -> CompilerArgs {
+pub fn parse_command_line_args() -> CompilerArgs {
     CompilerArgs::parse()
 }
 
@@ -42,7 +42,7 @@ pub fn invoke(args: CompilerArgs) -> crate::Result<()> {
 
         let output_filename = args.output_path();
         crate::gen::Generator::from_filename(output_filename)?
-            .generate_llvm(&mut parser)?;
+            .generate(&mut parser)?;
         println!("LLVM successfully written to '{output_filename}'.");
     }
 
