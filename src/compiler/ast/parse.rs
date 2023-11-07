@@ -163,16 +163,47 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     value = None;
                 }
                 self.scan_token()?;
+
                 Ok(Some(Box::new(Node::Let {
                     identifier,
                     value_type,
                     value,
                 })))
             },
+            Some(Token::Break) => {
+                self.scan_token()?;
+                self.expect_token(&[Token::Semicolon])?;
+                self.scan_token()?;
+
+                Ok(Some(Box::new(Node::Break)))
+            },
+            Some(Token::Continue) => {
+                self.scan_token()?;
+                self.expect_token(&[Token::Semicolon])?;
+                self.scan_token()?;
+
+                Ok(Some(Box::new(Node::Continue)))
+            },
+            Some(Token::Return) => {
+                self.scan_token()?;
+                let value;
+                if let Some(Token::Semicolon) = self.current_token() {
+                    value = None;
+                }
+                else {
+                    value = Some(self.parse_expression(None, &[Token::Semicolon])?);
+                }
+                self.scan_token()?;
+
+                Ok(Some(Box::new(Node::Return {
+                    value,
+                })))
+            }
             Some(Token::Print) => {
                 self.scan_token()?;
                 let value = self.parse_expression(None, &[Token::Semicolon])?;
                 self.scan_token()?;
+
                 Ok(Some(Box::new(Node::Print {
                     value,
                 })))
@@ -180,6 +211,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
             Some(_) => {
                 let expression = self.parse_expression(None, &[Token::Semicolon])?;
                 self.scan_token()?;
+
                 Ok(Some(expression))
             },
             None => Ok(None),

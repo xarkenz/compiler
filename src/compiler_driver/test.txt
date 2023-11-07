@@ -3,3 +3,10 @@ x = 6 * 3 + 5;
 let y: i16 = 9 + 2 * (x - 7) as i16;
 print x; // 23
 print y; // 41
+let x0: i16 = x as i16;
+print x0 == y; // 0
+print x0 != y; // 1
+print x0 < y; // 1
+print x0 > y; // 0
+
+return 0;

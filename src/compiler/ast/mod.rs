@@ -326,6 +326,11 @@ pub enum Node {
         value_type: ValueType,
         value: Option<Box<Node>>,
     },
+    Break,
+    Continue,
+    Return {
+        value: Option<Box<Node>>,
+    },
     Print {
         value: Box<Node>,
     },
@@ -350,6 +355,19 @@ impl fmt::Display for Node {
                     write!(f, "let {identifier}: {value_type};")
                 }
             },
+            Self::Break => {
+                write!(f, "break;")
+            },
+            Self::Continue => {
+                write!(f, "continue;")
+            },
+            Self::Return { value } => {
+                if let Some(value) = value {
+                    write!(f, "return {value};")
+                } else {
+                    write!(f, "return;")
+                }
+            }
             Self::Print { value } => {
                 write!(f, "print {value};")
             },

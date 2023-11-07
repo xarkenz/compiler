@@ -29,6 +29,30 @@ define dso_local i32 @main() #0 {
     %13 = load i16, i16* %y
     %14 = sext i16 %13 to i64
     %15 = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 %14)
+    %x0 = alloca i16, align 4
+    %16 = load i8, i8* %x
+    %17 = sext i8 %16 to i16
+    store i16 %17, i16* %x0
+    %18 = load i16, i16* %x0
+    %19 = load i16, i16* %y
+    %20 = icmp eq i16 %18, %19
+    %21 = zext i1 %20 to i64
+    %22 = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_u64_fstring, i32 0, i32 0), i64 %21)
+    %23 = load i16, i16* %x0
+    %24 = load i16, i16* %y
+    %25 = icmp ne i16 %23, %24
+    %26 = zext i1 %25 to i64
+    %27 = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_u64_fstring, i32 0, i32 0), i64 %26)
+    %28 = load i16, i16* %x0
+    %29 = load i16, i16* %y
+    %30 = icmp slt i16 %28, %29
+    %31 = zext i1 %30 to i64
+    %32 = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_u64_fstring, i32 0, i32 0), i64 %31)
+    %33 = load i16, i16* %x0
+    %34 = load i16, i16* %y
+    %35 = icmp sgt i16 %33, %34
+    %36 = zext i1 %35 to i64
+    %37 = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_u64_fstring, i32 0, i32 0), i64 %36)
     ret i32 0
 }
 

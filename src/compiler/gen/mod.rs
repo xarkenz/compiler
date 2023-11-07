@@ -265,9 +265,9 @@ impl<'a, T: Write> Generator<'a, T> {
             Ok(value)
         }
         else if let (
-            ValueFormat::Integer { size: to_size, .. },
             ValueFormat::Integer { size: from_size, .. },
-        ) = (to_format, &from_format) {
+            ValueFormat::Integer { size: to_size, .. },
+        ) = (&from_format, to_format) {
             if to_size > from_size {
                 let result = self.next_anonymous_register(to_format.clone());
                 llvm::emit_extension(&mut self.emitter, &result, &value)
@@ -285,6 +285,26 @@ impl<'a, T: Write> Generator<'a, T> {
             else {
                 Ok(value)
             }
+        }
+        else if let (
+            ValueFormat::Integer { .. },
+            ValueFormat::Boolean,
+        ) = (&from_format, to_format) {
+            let result = self.next_anonymous_register(ValueFormat::Boolean);
+            llvm::emit_cmp_not_equal(&mut self.emitter, &result, &value, &RightValue::Constant(ConstantValue::Integer(0, from_format.clone())))
+                .map_err(|cause| self.file_error(cause))?;
+            
+            Ok(RightValue::Register(result))
+        }
+        else if let (
+            ValueFormat::Boolean,
+            ValueFormat::Integer { .. },
+        ) = (&from_format, to_format) {
+            let result = self.next_anonymous_register(to_format.clone());
+            llvm::emit_zero_extension(&mut self.emitter, &result, &value)
+                .map_err(|cause| self.file_error(cause))?;
+            
+            Ok(RightValue::Register(result))
         }
         else {
             Err(self.error(format!("cannot convert from {from_format} to {to_format}")))
@@ -470,10 +490,26 @@ impl<'a, T: Write> Generator<'a, T> {
                     return Err(self.error(String::from("invalid left-hand side for 'let'")));
                 }
             },
+            ast::Node::Return { value } => {
+                if let Some(value) = value {
+                    let value = self.generate_node(value.as_ref(), None)?
+                        .ok_or_else(|| self.error(String::from("'let' expects a value")))?;
+
+                    llvm::emit_return(&mut self.emitter, Some(&value))
+                        .map_err(|cause| self.file_error(cause))?;
+                }
+                else {
+                    llvm::emit_return(&mut self.emitter, None)
+                        .map_err(|cause| self.file_error(cause))?;
+                }
+
+                None
+            },
             ast::Node::Print { value } => {
                 let value_to_print = self.generate_node(value.as_ref(), None)?
                     .ok_or_else(|| self.error(String::from("'print' expects a value")))?;
                 let to_format = match value_to_print.format() {
+                    ValueFormat::Boolean => ValueFormat::Integer { size: 8, signed: false },
                     ValueFormat::Integer { signed, .. } => ValueFormat::Integer { size: 8, signed },
                     format => format
                 };
@@ -485,6 +521,7 @@ impl<'a, T: Write> Generator<'a, T> {
 
                 None
             },
+            _ => return Err(self.error(String::from("node type not yet implemented")))
         };
 
         if let (Some(expected_format), Some(result_value)) = (&expected_format, &result) {
@@ -501,9 +538,6 @@ impl<'a, T: Write> Generator<'a, T> {
         while let Some(statement) = parser.parse_statement()? {
             self.generate_node(statement.as_ref(), None)?;
         }
-
-        llvm::emit_return(&mut self.emitter, &RightValue::Constant(ConstantValue::Integer(0, ValueFormat::Integer { size: 4, signed: true })))
-            .map_err(|cause| self.file_error(cause))?;
 
         llvm::emit_postamble(&mut self.emitter)
             .map_err(|cause| self.file_error(cause))

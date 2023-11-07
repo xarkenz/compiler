@@ -72,20 +72,32 @@ pub fn emit_truncation<T: Write>(emitter: &mut T, result: &Register, value: &Rig
     )
 }
 
+pub fn emit_sign_extension<T: Write>(emitter: &mut T, result: &Register, value: &RightValue) -> std::io::Result<()> {
+    write!(
+        emitter,
+        "{INDENT}{result} = sext {from_format} {value} to {to_format}\n",
+        to_format = result.format(),
+        from_format = value.format(),
+    )
+}
+
+pub fn emit_zero_extension<T: Write>(emitter: &mut T, result: &Register, value: &RightValue) -> std::io::Result<()> {
+    write!(
+        emitter,
+        "{INDENT}{result} = zext {from_format} {value} to {to_format}\n",
+        to_format = result.format(),
+        from_format = value.format(),
+    )
+}
+
 pub fn emit_extension<T: Write>(emitter: &mut T, result: &Register, value: &RightValue) -> std::io::Result<()> {
     match value.format() {
-        ValueFormat::Integer { signed: true, .. } => write!(
-            emitter,
-            "{INDENT}{result} = sext {from_format} {value} to {to_format}\n",
-            to_format = result.format(),
-            from_format = value.format(),
-        ),
-        _ => write!(
-            emitter,
-            "{INDENT}{result} = zext {from_format} {value} to {to_format}\n",
-            to_format = result.format(),
-            from_format = value.format(),
-        ),
+        ValueFormat::Integer { signed: true, .. } => {
+            emit_sign_extension(emitter, result, value)
+        },
+        _ => {
+            emit_zero_extension(emitter, result, value)
+        }
     }
 }
 
@@ -227,7 +239,6 @@ pub fn emit_cmp_greater_equal<T: Write>(emitter: &mut T, result: &Register, lhs:
 
 pub fn emit_print<T: Write>(emitter: &mut T, result: &Register, value: &RightValue) -> std::io::Result<()> {
     match value.format() {
-        ValueFormat::Boolean => todo!(),
         ValueFormat::Integer { signed: true, .. } => write!(
             emitter,
             "{INDENT}{result} = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 {value})\n",
@@ -236,19 +247,26 @@ pub fn emit_print<T: Write>(emitter: &mut T, result: &Register, value: &RightVal
             emitter,
             "{INDENT}{result} = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_u64_fstring, i32 0, i32 0), i64 {value})\n",
         ),
-        ValueFormat::Pointer { .. } => write!(
+        _ => write!(
             emitter,
             "{INDENT}{result} = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @print_ptr_fstring, i32 0, i32 0), ptr {value})\n",
-        ),
+        )
     }
 }
 
-pub fn emit_return<T: Write>(emitter: &mut T, value: &RightValue) -> std::io::Result<()> {
-    write!(
-        emitter,
-        "{INDENT}ret {format} {value}\n",
-        format = value.format(),
-    )
+pub fn emit_return<T: Write>(emitter: &mut T, value: Option<&RightValue>) -> std::io::Result<()> {
+    if let Some(value) = value {
+        write!(
+            emitter,
+            "{INDENT}ret {format} {value}\n",
+            format = value.format(),
+        )
+    } else {
+        write!(
+            emitter,
+            "{INDENT}ret void\n",
+        )
+    }
 }
 
 pub fn emit_postamble<T: Write>(emitter: &mut T) -> std::io::Result<()> {
