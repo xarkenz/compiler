@@ -15,32 +15,29 @@ define dso_local i32 @main() #0 {
     store i32 1, i32* %b
     br label %-L1
 -L1:
-    %1 = load i32, i32* %b
-    %2 = icmp slt i32 %1, 1000
-    br i1 %2, label %-L2, label %-L3
+    br i1 true, label %-L2, label %-L3
 -L2:
-    %3 = load i32, i32* %b
-    %4 = sext i32 %3 to i64
-    %5 = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 %4)
-    %temp = alloca i32, align 4
-    %6 = load i32, i32* %a
-    %7 = load i32, i32* %b
-    %8 = add nsw i32 %6, %7
-    store i32 %8, i32* %temp
-    %9 = load i32, i32* %b
-    store i32 %9, i32* %a
-    %10 = load i32, i32* %temp
-    store i32 %10, i32* %b
-    br label %-L1
--L3:
-    %11 = load i32, i32* %b
-    %12 = icmp sgt i32 %11, 950
-    br i1 %12, label %-L4, label %-L5
+    %1 = load i32, i32* %b
+    %2 = icmp sge i32 %1, 1000
+    br i1 %2, label %-L4, label %-L5
 -L4:
-    %13 = sext i32 0 to i64
-    %14 = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 %13)
+    br label %-L3
     br label %-L5
 -L5:
+    %4 = load i32, i32* %b
+    %5 = sext i32 %4 to i64
+    %6 = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 %5)
+    %temp = alloca i32, align 4
+    %7 = load i32, i32* %a
+    %8 = load i32, i32* %b
+    %9 = add nsw i32 %7, %8
+    store i32 %9, i32* %temp
+    %10 = load i32, i32* %b
+    store i32 %10, i32* %a
+    %11 = load i32, i32* %temp
+    store i32 %11, i32* %b
+    br label %-L1
+-L3:
     ret i32 0
 }
 

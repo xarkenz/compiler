@@ -1,7 +1,11 @@
 let a: i32 = 0;
 let b: i32 = 1;
 
-while (b < 1000) {
+while (true) {
+    if (b >= 1000) {
+        break;
+    }
+    
     print b;
     let temp: i32 = a + b;
     a = b;

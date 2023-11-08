@@ -1,22 +1,18 @@
 #include <stdio.h>
 
 int main() {
-    int x = 5;
-    int y;
+    int a = 0;
+    int b = 1;
 
-    if (x > 0) {
-        y = 2;
-    }
-    else if (x < 0) {
-        y = 0;
-    }
-    else {
-        y = 1;
-    }
+    while (1) {
+        if (b >= 1000) {
+            break;
+        }
 
-    while (y < 10) {
-        printf("%d\n", y);
-        y = y + 1;
+        printf("%lld\n", (long long) b);
+        int temp = a + b;
+        a = b;
+        b = temp;
     }
 
     return 0;

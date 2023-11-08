@@ -185,7 +185,7 @@ pub fn expected_binary_lhs_format(operation: ast::BinaryOperation, expected_form
     }
 }
 
-pub fn expected_binary_rhs_format(operation: ast::BinaryOperation, expected_format: Option<ValueFormat>, lhs_format: Option<ValueFormat>) -> Option<ValueFormat> {
+pub fn expected_binary_rhs_format(operation: ast::BinaryOperation, _expected_format: Option<ValueFormat>, lhs_format: Option<ValueFormat>) -> Option<ValueFormat> {
     match operation {
         ast::BinaryOperation::Multiply => lhs_format,
         ast::BinaryOperation::Divide => lhs_format,
@@ -207,6 +207,35 @@ pub fn expected_binary_rhs_format(operation: ast::BinaryOperation, expected_form
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct ScopeContext {
+    break_label: Option<Label>,
+    continue_label: Option<Label>,
+}
+
+impl ScopeContext {
+    pub fn new() -> Self {
+        Self {
+            break_label: None,
+            continue_label: None,
+        }
+    }
+
+    pub fn break_label(&self) -> Option<&Label> {
+        self.break_label.as_ref()
+    }
+
+    pub fn continue_label(&self) -> Option<&Label> {
+        self.continue_label.as_ref()
+    }
+
+    pub fn enter_loop(mut self, break_label: Label, continue_label: Label) -> Self {
+        self.break_label = Some(break_label);
+        self.continue_label = Some(continue_label);
+        self
+    }
+}
+
 #[derive(Debug)]
 pub struct Generator<'a, T: Write> {
     filename: &'a str,
@@ -219,7 +248,8 @@ pub struct Generator<'a, T: Write> {
 
 impl<'a> Generator<'a, std::fs::File> {
     pub fn from_filename(filename: &'a str) -> crate::Result<Self> {
-        std::fs::File::create(filename).map(|file| Self::new(filename, file))
+        std::fs::File::create(filename)
+            .map(|file| Self::new(filename, file))
             .map_err(|cause| FileError::new(filename.to_owned(), None, cause).into_boxed())
     }
 }
@@ -338,7 +368,7 @@ impl<'a, T: Write> Generator<'a, T> {
         }
     }
 
-    pub fn generate_node(&mut self, node: &ast::Node, expected_format: Option<ValueFormat>) -> crate::Result<Option<RightValue>> {
+    pub fn generate_node(&mut self, node: &ast::Node, context: &ScopeContext, expected_format: Option<ValueFormat>) -> crate::Result<Option<RightValue>> {
         let result = match node {
             ast::Node::Literal(literal) => {
                 match literal {
@@ -361,7 +391,7 @@ impl<'a, T: Write> Generator<'a, T> {
                 }
             },
             ast::Node::Unary { operation, operand } => {
-                let operand = self.generate_node(operand.as_ref(), expected_unary_operand_format(*operation, expected_format))?
+                let _operand = self.generate_node(operand.as_ref(), context, expected_unary_operand_format(*operation, expected_format))?
                     .ok_or_else(|| self.error(format!("operation '{operation}x' expects a value for x")))?;
                 
                 match operation {
@@ -372,7 +402,7 @@ impl<'a, T: Write> Generator<'a, T> {
                 if let ast::Node::Literal(token::Literal::Identifier(name)) = lhs.as_ref() {
                     // If we don't clone here, with the way things are currently set up, we can't borrow self.emitter as mutable
                     let symbol = self.get_symbol(name)?.clone();
-                    let value = self.generate_node(rhs.as_ref(), Some(symbol.format().clone()))?
+                    let value = self.generate_node(rhs.as_ref(), context, Some(symbol.format().clone()))?
                         .ok_or_else(|| self.error(String::from("operation 'x = y' expects a value for y")))?;
 
                     llvm::emit_symbol_store(&mut self.emitter, &value, &symbol)
@@ -388,7 +418,7 @@ impl<'a, T: Write> Generator<'a, T> {
                 if let ast::Node::Literal(token::Literal::Identifier(name)) = rhs.as_ref() {
                     // TODO: this isn't great...
                     let to_format = ValueFormat::try_from(&ast::ValueType::Named(name.clone()))?;
-                    let value = self.generate_node(lhs.as_ref(), None)?
+                    let value = self.generate_node(lhs.as_ref(), context, None)?
                         .ok_or_else(|| self.error(String::from("operation 'x as y' expects a value for x")))?;
 
                     Some(self.change_format(value, &to_format)?)
@@ -398,9 +428,9 @@ impl<'a, T: Write> Generator<'a, T> {
                 }
             }
             ast::Node::Binary { operation, lhs, rhs } => {
-                let lhs = self.generate_node(lhs.as_ref(), expected_binary_lhs_format(*operation, expected_format.clone()))?
+                let lhs = self.generate_node(lhs.as_ref(), context, expected_binary_lhs_format(*operation, expected_format.clone()))?
                     .ok_or_else(|| self.error(format!("operation 'x{operation}y' expects a value for x")))?;
-                let rhs = self.generate_node(rhs.as_ref(), expected_binary_rhs_format(*operation, expected_format.clone(), Some(lhs.format())))?
+                let rhs = self.generate_node(rhs.as_ref(), context, expected_binary_rhs_format(*operation, expected_format.clone(), Some(lhs.format())))?
                     .ok_or_else(|| self.error(format!("operation 'x{operation}y' expects a value for y")))?;
 
                 match operation {
@@ -489,7 +519,7 @@ impl<'a, T: Write> Generator<'a, T> {
             },
             ast::Node::Scope { statements } => {
                 for statement in statements {
-                    self.generate_node(statement.as_ref(), None)?;
+                    self.generate_node(statement.as_ref(), context, None)?;
                 }
 
                 None
@@ -509,7 +539,7 @@ impl<'a, T: Write> Generator<'a, T> {
                         .map_err(|cause| self.file_error(cause))?;
 
                     if let Some(node) = value {
-                        let value = self.generate_node(node.as_ref(), Some(format))?
+                        let value = self.generate_node(node.as_ref(), context, Some(format))?
                             .ok_or_else(|| self.error(String::from("'let' expects a value")))?;
 
                         llvm::emit_symbol_store(&mut self.emitter, &value, &symbol)
@@ -525,7 +555,7 @@ impl<'a, T: Write> Generator<'a, T> {
                 }
             },
             ast::Node::Conditional { condition, consequent, alternative } => {
-                let condition = self.generate_node(condition.as_ref(), Some(ValueFormat::Boolean))?
+                let condition = self.generate_node(condition.as_ref(), context, Some(ValueFormat::Boolean))?
                     .ok_or_else(|| self.error(String::from("'if (<condition>)' expects a boolean value for <condition>")))?;
                 let consequent_label = self.new_anonymous_label();
                 let alternative_label = self.new_anonymous_label();
@@ -538,13 +568,13 @@ impl<'a, T: Write> Generator<'a, T> {
 
                     llvm::emit_label(&mut self.emitter, &consequent_label)
                         .map_err(|cause| self.file_error(cause))?;
-                    self.generate_node(consequent.as_ref(), None)?;
+                    self.generate_node(consequent.as_ref(), context, None)?;
                     llvm::emit_unconditional_branch(&mut self.emitter, &tail_label)
                         .map_err(|cause| self.file_error(cause))?;
 
                     llvm::emit_label(&mut self.emitter, &alternative_label)
                         .map_err(|cause| self.file_error(cause))?;
-                    self.generate_node(alternative.as_ref(), None)?;
+                    self.generate_node(alternative.as_ref(), context, None)?;
                     llvm::emit_unconditional_branch(&mut self.emitter, &tail_label)
                         .map_err(|cause| self.file_error(cause))?;
 
@@ -554,7 +584,7 @@ impl<'a, T: Write> Generator<'a, T> {
                 else {
                     llvm::emit_label(&mut self.emitter, &consequent_label)
                         .map_err(|cause| self.file_error(cause))?;
-                    self.generate_node(consequent.as_ref(), None)?;
+                    self.generate_node(consequent.as_ref(), context, None)?;
                     llvm::emit_unconditional_branch(&mut self.emitter, &alternative_label)
                         .map_err(|cause| self.file_error(cause))?;
 
@@ -573,17 +603,18 @@ impl<'a, T: Write> Generator<'a, T> {
                 llvm::emit_label(&mut self.emitter, &condition_label)
                     .map_err(|cause| self.file_error(cause))?;
 
-                let condition = self.generate_node(condition.as_ref(), Some(ValueFormat::Boolean))?
+                let condition = self.generate_node(condition.as_ref(), context, Some(ValueFormat::Boolean))?
                     .ok_or_else(|| self.error(String::from("'while (<condition>)' expects a boolean value for <condition>")))?;
                 let body_label = self.new_anonymous_label();
                 let tail_label = self.new_anonymous_label();
+                let loop_context = context.clone().enter_loop(tail_label.clone(), condition_label.clone());
 
                 llvm::emit_conditional_branch(&mut self.emitter, &condition, &body_label, &tail_label)
                     .map_err(|cause| self.file_error(cause))?;
 
                 llvm::emit_label(&mut self.emitter, &body_label)
                     .map_err(|cause| self.file_error(cause))?;
-                self.generate_node(body.as_ref(), None)?;
+                self.generate_node(body.as_ref(), &loop_context, None)?;
                 llvm::emit_unconditional_branch(&mut self.emitter, &condition_label)
                     .map_err(|cause| self.file_error(cause))?;
 
@@ -592,9 +623,33 @@ impl<'a, T: Write> Generator<'a, T> {
 
                 None
             },
+            ast::Node::Break => {
+                let break_label = context.break_label()
+                    .ok_or_else(|| self.error(String::from("unexpected 'break' outside loop")))?;
+
+                llvm::emit_unconditional_branch(&mut self.emitter, break_label)
+                    .map_err(|cause| self.file_error(cause))?;
+
+                // Consume an anonymous ID corresponding to the implicit label inserted after the terminator instruction
+                self.next_anonymous_register_id += 1;
+
+                None
+            },
+            ast::Node::Continue => {
+                let continue_label = context.continue_label()
+                    .ok_or_else(|| self.error(String::from("unexpected 'continue' outside loop")))?;
+
+                llvm::emit_unconditional_branch(&mut self.emitter, continue_label)
+                    .map_err(|cause| self.file_error(cause))?;
+
+                // Consume an anonymous ID corresponding to the implicit label inserted after the terminator instruction
+                self.next_anonymous_register_id += 1;
+
+                None
+            },
             ast::Node::Return { value } => {
                 if let Some(value) = value {
-                    let value = self.generate_node(value.as_ref(), None)?
+                    let value = self.generate_node(value.as_ref(), context, None)?
                         .ok_or_else(|| self.error(String::from("'return' expects a value")))?;
 
                     llvm::emit_return(&mut self.emitter, Some(&value))
@@ -605,10 +660,13 @@ impl<'a, T: Write> Generator<'a, T> {
                         .map_err(|cause| self.file_error(cause))?;
                 }
 
+                // Consume an anonymous ID corresponding to the implicit label inserted after the terminator instruction
+                self.next_anonymous_register_id += 1;
+
                 None
             },
             ast::Node::Print { value } => {
-                let value_to_print = self.generate_node(value.as_ref(), None)?
+                let value_to_print = self.generate_node(value.as_ref(), context, None)?
                     .ok_or_else(|| self.error(String::from("'print' expects a value")))?;
                 let to_format = match value_to_print.format() {
                     ValueFormat::Boolean => ValueFormat::Integer { size: 8, signed: false },
@@ -638,7 +696,7 @@ impl<'a, T: Write> Generator<'a, T> {
             .map_err(|cause| self.file_error(cause))?;
         
         while let Some(statement) = parser.parse_statement(false, true)? {
-            self.generate_node(statement.as_ref(), None)?;
+            self.generate_node(statement.as_ref(), &ScopeContext::new(), None)?;
         }
 
         llvm::emit_postamble(&mut self.emitter)
