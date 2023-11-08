@@ -321,10 +321,22 @@ pub enum Node {
         lhs: Box<Node>,
         rhs: Box<Node>,
     },
+    Scope {
+        statements: Vec<Box<Node>>,
+    },
     Let {
         identifier: Box<Node>,
         value_type: ValueType,
         value: Option<Box<Node>>,
+    },
+    Conditional {
+        condition: Box<Node>,
+        consequent: Box<Node>,
+        alternative: Option<Box<Node>>,
+    },
+    While {
+        condition: Box<Node>,
+        body: Box<Node>,
     },
     Break,
     Continue,
@@ -348,28 +360,45 @@ impl fmt::Display for Node {
             Self::Binary { operation, lhs, rhs } => {
                 write!(f, "({lhs}{operation}{rhs})")
             },
+            Self::Scope { statements } => {
+                write!(f, " {{")?;
+                for statement in statements {
+                    statement.fmt(f)?;
+                }
+                write!(f, " }}")
+            },
             Self::Let { identifier, value_type, value } => {
                 if let Some(value) = value {
-                    write!(f, "let {identifier}: {value_type} = {value};")
+                    write!(f, " let {identifier}: {value_type} = {value};")
                 } else {
-                    write!(f, "let {identifier}: {value_type};")
+                    write!(f, " let {identifier}: {value_type};")
                 }
             },
+            Self::Conditional { condition, consequent, alternative } => {
+                if let Some(alternative) = alternative {
+                    write!(f, " if ({condition}) {consequent} else {alternative}")
+                } else {
+                    write!(f, " if ({condition}) {consequent}")
+                }
+            },
+            Self::While { condition, body } => {
+                write!(f, " while ({condition}) {body}")
+            }
             Self::Break => {
-                write!(f, "break;")
+                write!(f, " break;")
             },
             Self::Continue => {
-                write!(f, "continue;")
+                write!(f, " continue;")
             },
             Self::Return { value } => {
                 if let Some(value) = value {
-                    write!(f, "return {value};")
+                    write!(f, " return {value};")
                 } else {
-                    write!(f, "return;")
+                    write!(f, " return;")
                 }
             }
             Self::Print { value } => {
-                write!(f, "print {value};")
+                write!(f, " print {value};")
             },
         }
     }

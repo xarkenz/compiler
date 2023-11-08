@@ -22,6 +22,28 @@ pub fn emit_preamble<T: Write>(emitter: &mut T, source_filename: &str) -> std::i
     ")
 }
 
+pub fn emit_label<T: Write>(emitter: &mut T, label: &Label) -> std::io::Result<()> {
+    write!(
+        emitter,
+        "{label_name}:\n",
+        label_name = label.name(),
+    )
+}
+
+pub fn emit_unconditional_branch<T: Write>(emitter: &mut T, label: &Label) -> std::io::Result<()> {
+    write!(
+        emitter,
+        "{INDENT}br label {label}\n",
+    )
+}
+
+pub fn emit_conditional_branch<T: Write>(emitter: &mut T, condition: &RightValue, consequent: &Label, alternative: &Label) -> std::io::Result<()> {
+    write!(
+        emitter,
+        "{INDENT}br i1 {condition}, label {consequent}, label {alternative}\n",
+    )
+}
+
 pub fn emit_symbol_declaration<T: Write>(emitter: &mut T, symbol: &info::Symbol) -> std::io::Result<()> {
     if symbol.register().is_global() {
         write!(

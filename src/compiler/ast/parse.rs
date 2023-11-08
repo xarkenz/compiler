@@ -143,11 +143,11 @@ impl<'a, T: BufRead> Parser<'a, T> {
         Ok(value_type)
     }
 
-    pub fn parse_statement(&mut self) -> crate::Result<Option<Box<Node>>> {
+    pub fn parse_statement(&mut self, is_global: bool, allow_empty: bool) -> crate::Result<Option<Box<Node>>> {
         match self.current_token() {
-            Some(Token::Semicolon) => {
+            Some(Token::Semicolon) if allow_empty => {
                 self.scan_token()?;
-                self.parse_statement()
+                self.parse_statement(is_global, allow_empty)
             },
             Some(Token::Let) => {
                 self.scan_token()?;
@@ -168,6 +168,83 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     identifier,
                     value_type,
                     value,
+                })))
+            },
+            Some(Token::Function) => {
+                todo!()
+            },
+            Some(got_token) if is_global => {
+                Err(self.scanner.syntax_error(expected_token_error_message(&[Token::Semicolon, Token::Let, Token::Function], got_token)))
+            },
+            Some(Token::CurlyLeft) => {
+                self.scan_token()?;
+                let mut statements = Vec::new();
+                loop {
+                    while let Some(Token::Semicolon) = self.current_token() {
+                        self.scan_token()?;
+                    }
+
+                    match self.current_token() {
+                        Some(Token::CurlyRight) => {
+                            self.scan_token()?;
+                            break;
+                        },
+                        None => {
+                            return Err(self.scanner.syntax_error(String::from("expected closing '}'")));
+                        },
+                        _ => {
+                            let statement = self.parse_statement(false, false)?
+                                .ok_or_else(|| self.scanner.syntax_error(String::from("expected closing '}'")))?;
+                            statements.push(statement);
+                        }
+                    }
+                }
+
+                Ok(Some(Box::new(Node::Scope {
+                    statements,
+                })))
+            },
+            Some(Token::If) => {
+                self.scan_token()?;
+                self.expect_token(&[Token::ParenLeft])?;
+                self.scan_token()?;
+                let condition = self.parse_expression(None, &[Token::ParenRight])?;
+                self.scan_token()?;
+                let consequent = self.parse_statement(is_global, false)?
+                    .ok_or_else(|| self.scanner.syntax_error(String::from("expected a statement after 'if (<condition>)'")))?;
+                let alternative;
+                if let Some(Token::Else) = self.current_token() {
+                    self.scan_token()?;
+                    alternative = self.parse_statement(is_global, false)?;
+                    if alternative.is_none() {
+                        return Err(self.scanner.syntax_error(String::from("expected a statement after 'else'")));
+                    }
+                }
+                else {
+                    alternative = None;
+                }
+
+                Ok(Some(Box::new(Node::Conditional {
+                    condition,
+                    consequent,
+                    alternative,
+                })))
+            },
+            Some(Token::Else) => {
+                Err(self.scanner.syntax_error(String::from("unexpected 'else' without previous 'if'")))
+            },
+            Some(Token::While) => {
+                self.scan_token()?;
+                self.expect_token(&[Token::ParenLeft])?;
+                self.scan_token()?;
+                let condition = self.parse_expression(None, &[Token::ParenRight])?;
+                self.scan_token()?;
+                let body = self.parse_statement(is_global, false)?
+                    .ok_or_else(|| self.scanner.syntax_error(String::from("expected a statement after 'if (<condition>)'")))?;
+
+                Ok(Some(Box::new(Node::While {
+                    condition,
+                    body,
                 })))
             },
             Some(Token::Break) => {
@@ -198,7 +275,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 Ok(Some(Box::new(Node::Return {
                     value,
                 })))
-            }
+            },
             Some(Token::Print) => {
                 self.scan_token()?;
                 let value = self.parse_expression(None, &[Token::Semicolon])?;

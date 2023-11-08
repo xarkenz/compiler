@@ -140,6 +140,23 @@ impl fmt::Display for RightValue {
     }
 }
 
+#[derive(Clone, PartialEq, Debug)]
+pub struct Label {
+    name: String,
+}
+
+impl Label {
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
+}
+
+impl fmt::Display for Label {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "%{}", self.name)
+    }
+}
+
 pub fn expected_unary_operand_format(operation: ast::UnaryOperation, expected_format: Option<ValueFormat>) -> Option<ValueFormat> {
     match operation {
         ast::UnaryOperation::Positive => expected_format,
@@ -195,6 +212,7 @@ pub struct Generator<'a, T: Write> {
     filename: &'a str,
     emitter: T,
     next_anonymous_register_id: usize,
+    next_anonymous_label_id: usize,
     global_symbols: info::SymbolTable,
     local_symbols: info::SymbolTable,
 }
@@ -214,6 +232,7 @@ impl<'a, T: Write> Generator<'a, T> {
             filename,
             emitter,
             next_anonymous_register_id: 1,
+            next_anonymous_label_id: 1,
             global_symbols: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY),
             local_symbols: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY),
         }
@@ -231,13 +250,21 @@ impl<'a, T: Write> Generator<'a, T> {
         RawError::new(message).into_boxed()
     }
 
-    pub fn next_anonymous_register(&mut self, format: ValueFormat) -> Register {
+    pub fn new_anonymous_register(&mut self, format: ValueFormat) -> Register {
         let id = self.next_anonymous_register_id;
         self.next_anonymous_register_id += 1;
         Register {
-            name: id.to_string(),
+            name: format!("{id}"),
             format,
             is_global: false,
+        }
+    }
+
+    pub fn new_anonymous_label(&mut self) -> Label {
+        let id = self.next_anonymous_label_id;
+        self.next_anonymous_label_id += 1;
+        Label {
+            name: format!("-L{id}"),
         }
     }
 
@@ -269,14 +296,14 @@ impl<'a, T: Write> Generator<'a, T> {
             ValueFormat::Integer { size: to_size, .. },
         ) = (&from_format, to_format) {
             if to_size > from_size {
-                let result = self.next_anonymous_register(to_format.clone());
+                let result = self.new_anonymous_register(to_format.clone());
                 llvm::emit_extension(&mut self.emitter, &result, &value)
                     .map_err(|cause| self.file_error(cause))?;
 
                 Ok(RightValue::Register(result))
             }
             else if to_size < from_size {
-                let result = self.next_anonymous_register(to_format.clone());
+                let result = self.new_anonymous_register(to_format.clone());
                 llvm::emit_truncation(&mut self.emitter, &result, &value)
                     .map_err(|cause| self.file_error(cause))?;
 
@@ -290,7 +317,7 @@ impl<'a, T: Write> Generator<'a, T> {
             ValueFormat::Integer { .. },
             ValueFormat::Boolean,
         ) = (&from_format, to_format) {
-            let result = self.next_anonymous_register(ValueFormat::Boolean);
+            let result = self.new_anonymous_register(ValueFormat::Boolean);
             llvm::emit_cmp_not_equal(&mut self.emitter, &result, &value, &RightValue::Constant(ConstantValue::Integer(0, from_format.clone())))
                 .map_err(|cause| self.file_error(cause))?;
             
@@ -300,7 +327,7 @@ impl<'a, T: Write> Generator<'a, T> {
             ValueFormat::Boolean,
             ValueFormat::Integer { .. },
         ) = (&from_format, to_format) {
-            let result = self.next_anonymous_register(to_format.clone());
+            let result = self.new_anonymous_register(to_format.clone());
             llvm::emit_zero_extension(&mut self.emitter, &result, &value)
                 .map_err(|cause| self.file_error(cause))?;
             
@@ -318,7 +345,7 @@ impl<'a, T: Write> Generator<'a, T> {
                     token::Literal::Identifier(name) => {
                         // If we don't clone here, with the way things are currently set up, we can't borrow self.emitter as mutable
                         let symbol = self.get_symbol(name)?.clone();
-                        let result = self.next_anonymous_register(symbol.format().clone());
+                        let result = self.new_anonymous_register(symbol.format().clone());
 
                         llvm::emit_symbol_load(&mut self.emitter, &result, &symbol)
                             .map_err(|cause| self.file_error(cause))?;
@@ -378,7 +405,7 @@ impl<'a, T: Write> Generator<'a, T> {
 
                 match operation {
                     ast::BinaryOperation::Add => {
-                        let result = self.next_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
 
                         llvm::emit_addition(&mut self.emitter, &result, &lhs, &rhs)
                             .map_err(|cause| self.file_error(cause))?;
@@ -386,7 +413,7 @@ impl<'a, T: Write> Generator<'a, T> {
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::Subtract => {
-                        let result = self.next_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
 
                         llvm::emit_subtraction(&mut self.emitter, &result, &lhs, &rhs)
                             .map_err(|cause| self.file_error(cause))?;
@@ -394,7 +421,7 @@ impl<'a, T: Write> Generator<'a, T> {
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::Multiply => {
-                        let result = self.next_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
 
                         llvm::emit_multiplication(&mut self.emitter, &result, &lhs, &rhs)
                             .map_err(|cause| self.file_error(cause))?;
@@ -402,7 +429,7 @@ impl<'a, T: Write> Generator<'a, T> {
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::Divide => {
-                        let result = self.next_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
 
                         llvm::emit_division(&mut self.emitter, &result, &lhs, &rhs)
                             .map_err(|cause| self.file_error(cause))?;
@@ -410,7 +437,7 @@ impl<'a, T: Write> Generator<'a, T> {
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::Equal => {
-                        let result = self.next_anonymous_register(ValueFormat::Boolean);
+                        let result = self.new_anonymous_register(ValueFormat::Boolean);
 
                         llvm::emit_cmp_equal(&mut self.emitter, &result, &lhs, &rhs)
                             .map_err(|cause| self.file_error(cause))?;
@@ -418,7 +445,7 @@ impl<'a, T: Write> Generator<'a, T> {
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::NotEqual => {
-                        let result = self.next_anonymous_register(ValueFormat::Boolean);
+                        let result = self.new_anonymous_register(ValueFormat::Boolean);
 
                         llvm::emit_cmp_not_equal(&mut self.emitter, &result, &lhs, &rhs)
                             .map_err(|cause| self.file_error(cause))?;
@@ -426,7 +453,7 @@ impl<'a, T: Write> Generator<'a, T> {
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::LessThan => {
-                        let result = self.next_anonymous_register(ValueFormat::Boolean);
+                        let result = self.new_anonymous_register(ValueFormat::Boolean);
 
                         llvm::emit_cmp_less_than(&mut self.emitter, &result, &lhs, &rhs)
                             .map_err(|cause| self.file_error(cause))?;
@@ -434,7 +461,7 @@ impl<'a, T: Write> Generator<'a, T> {
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::LessEqual => {
-                        let result = self.next_anonymous_register(ValueFormat::Boolean);
+                        let result = self.new_anonymous_register(ValueFormat::Boolean);
 
                         llvm::emit_cmp_less_equal(&mut self.emitter, &result, &lhs, &rhs)
                             .map_err(|cause| self.file_error(cause))?;
@@ -442,7 +469,7 @@ impl<'a, T: Write> Generator<'a, T> {
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::GreaterThan => {
-                        let result = self.next_anonymous_register(ValueFormat::Boolean);
+                        let result = self.new_anonymous_register(ValueFormat::Boolean);
 
                         llvm::emit_cmp_greater_than(&mut self.emitter, &result, &lhs, &rhs)
                             .map_err(|cause| self.file_error(cause))?;
@@ -450,7 +477,7 @@ impl<'a, T: Write> Generator<'a, T> {
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::GreaterEqual => {
-                        let result = self.next_anonymous_register(ValueFormat::Boolean);
+                        let result = self.new_anonymous_register(ValueFormat::Boolean);
 
                         llvm::emit_cmp_greater_equal(&mut self.emitter, &result, &lhs, &rhs)
                             .map_err(|cause| self.file_error(cause))?;
@@ -459,6 +486,13 @@ impl<'a, T: Write> Generator<'a, T> {
                     },
                     _ => return Err(self.error(format!("operation 'x{operation}y' not yet implemented")))
                 }
+            },
+            ast::Node::Scope { statements } => {
+                for statement in statements {
+                    self.generate_node(statement.as_ref(), None)?;
+                }
+
+                None
             },
             ast::Node::Let { identifier, value_type, value } => {
                 if let ast::Node::Literal(token::Literal::Identifier(name)) = identifier.as_ref() {
@@ -490,10 +524,78 @@ impl<'a, T: Write> Generator<'a, T> {
                     return Err(self.error(String::from("invalid left-hand side for 'let'")));
                 }
             },
+            ast::Node::Conditional { condition, consequent, alternative } => {
+                let condition = self.generate_node(condition.as_ref(), Some(ValueFormat::Boolean))?
+                    .ok_or_else(|| self.error(String::from("'if (<condition>)' expects a boolean value for <condition>")))?;
+                let consequent_label = self.new_anonymous_label();
+                let alternative_label = self.new_anonymous_label();
+
+                llvm::emit_conditional_branch(&mut self.emitter, &condition, &consequent_label, &alternative_label)
+                    .map_err(|cause| self.file_error(cause))?;
+                
+                if let Some(alternative) = alternative {
+                    let tail_label = self.new_anonymous_label();
+
+                    llvm::emit_label(&mut self.emitter, &consequent_label)
+                        .map_err(|cause| self.file_error(cause))?;
+                    self.generate_node(consequent.as_ref(), None)?;
+                    llvm::emit_unconditional_branch(&mut self.emitter, &tail_label)
+                        .map_err(|cause| self.file_error(cause))?;
+
+                    llvm::emit_label(&mut self.emitter, &alternative_label)
+                        .map_err(|cause| self.file_error(cause))?;
+                    self.generate_node(alternative.as_ref(), None)?;
+                    llvm::emit_unconditional_branch(&mut self.emitter, &tail_label)
+                        .map_err(|cause| self.file_error(cause))?;
+
+                    llvm::emit_label(&mut self.emitter, &tail_label)
+                        .map_err(|cause| self.file_error(cause))?;
+                }
+                else {
+                    llvm::emit_label(&mut self.emitter, &consequent_label)
+                        .map_err(|cause| self.file_error(cause))?;
+                    self.generate_node(consequent.as_ref(), None)?;
+                    llvm::emit_unconditional_branch(&mut self.emitter, &alternative_label)
+                        .map_err(|cause| self.file_error(cause))?;
+
+                    llvm::emit_label(&mut self.emitter, &alternative_label)
+                        .map_err(|cause| self.file_error(cause))?;
+                }
+
+                None
+            },
+            ast::Node::While { condition, body } => {
+                let condition_label = self.new_anonymous_label();
+
+                llvm::emit_unconditional_branch(&mut self.emitter, &condition_label)
+                    .map_err(|cause| self.file_error(cause))?;
+
+                llvm::emit_label(&mut self.emitter, &condition_label)
+                    .map_err(|cause| self.file_error(cause))?;
+
+                let condition = self.generate_node(condition.as_ref(), Some(ValueFormat::Boolean))?
+                    .ok_or_else(|| self.error(String::from("'while (<condition>)' expects a boolean value for <condition>")))?;
+                let body_label = self.new_anonymous_label();
+                let tail_label = self.new_anonymous_label();
+
+                llvm::emit_conditional_branch(&mut self.emitter, &condition, &body_label, &tail_label)
+                    .map_err(|cause| self.file_error(cause))?;
+
+                llvm::emit_label(&mut self.emitter, &body_label)
+                    .map_err(|cause| self.file_error(cause))?;
+                self.generate_node(body.as_ref(), None)?;
+                llvm::emit_unconditional_branch(&mut self.emitter, &condition_label)
+                    .map_err(|cause| self.file_error(cause))?;
+
+                llvm::emit_label(&mut self.emitter, &tail_label)
+                    .map_err(|cause| self.file_error(cause))?;
+
+                None
+            },
             ast::Node::Return { value } => {
                 if let Some(value) = value {
                     let value = self.generate_node(value.as_ref(), None)?
-                        .ok_or_else(|| self.error(String::from("'let' expects a value")))?;
+                        .ok_or_else(|| self.error(String::from("'return' expects a value")))?;
 
                     llvm::emit_return(&mut self.emitter, Some(&value))
                         .map_err(|cause| self.file_error(cause))?;
@@ -514,7 +616,7 @@ impl<'a, T: Write> Generator<'a, T> {
                     format => format
                 };
                 let value_to_print = self.change_format(value_to_print, &to_format)?;
-                let result_register = self.next_anonymous_register(ValueFormat::Integer { size: 4, signed: true });
+                let result_register = self.new_anonymous_register(ValueFormat::Integer { size: 4, signed: true });
 
                 llvm::emit_print(&mut self.emitter, &result_register, &value_to_print)
                     .map_err(|cause| self.file_error(cause))?;
@@ -535,7 +637,7 @@ impl<'a, T: Write> Generator<'a, T> {
         llvm::emit_preamble(&mut self.emitter, self.filename)
             .map_err(|cause| self.file_error(cause))?;
         
-        while let Some(statement) = parser.parse_statement()? {
+        while let Some(statement) = parser.parse_statement(false, true)? {
             self.generate_node(statement.as_ref(), None)?;
         }
 
