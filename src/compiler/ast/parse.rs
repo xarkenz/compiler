@@ -48,6 +48,13 @@ impl<'a, T: BufRead> Parser<'a, T> {
             .ok_or_else(|| self.scanner.syntax_error(expected_token_error_message(allowed, current_token)))
     }
 
+    pub fn expect_identifier(&self) -> crate::Result<String> {
+        match self.get_token()? {
+            Token::Literal(Literal::Identifier(name)) => Ok(name.clone()),
+            _ => Err(self.scanner.syntax_error(String::from("expected an identifier")))
+        }
+    }
+
     pub fn parse_operand(&mut self) -> crate::Result<Box<Node>> {
         let token = self.get_token()?;
 
@@ -106,7 +113,14 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 }
 
                 self.scan_token()?;
-                let rhs = self.parse_expression(Some(precedence), allowed_ends)?;
+                let rhs = match operation {
+                    BinaryOperation::Convert => {
+                        Box::new(Node::ValueType(self.parse_value_type(allowed_ends)?))
+                    },
+                    _ => {
+                        self.parse_expression(Some(precedence), allowed_ends)?
+                    }
+                };
 
                 lhs = Box::new(Node::Binary {
                     operation,
@@ -134,7 +148,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 ValueType::Named(name)
             },
             token => {
-                return Err(self.scanner.syntax_error(format!("expected a type, got {token}")));
+                return Err(self.scanner.syntax_error(format!("expected a type, got '{token}'")));
             }
         };
 
@@ -147,31 +161,67 @@ impl<'a, T: BufRead> Parser<'a, T> {
         match self.current_token() {
             Some(Token::Semicolon) if allow_empty => {
                 self.scan_token()?;
+                // Returning None implies that the end of the file is reached, so recursively try to parse a statement instead
                 self.parse_statement(is_global, allow_empty)
             },
             Some(Token::Let) => {
                 self.scan_token()?;
-                let identifier = self.parse_expression(None, &[Token::Colon])?;
+                let name = self.expect_identifier()?;
+                self.scan_token()?;
+                self.expect_token(&[Token::Colon])?;
                 self.scan_token()?;
                 let value_type = self.parse_value_type(&[Token::Equal, Token::Semicolon])?;
-                let value;
-                if let Some(Token::Equal) = self.current_token() {
+                let value = if let Some(Token::Equal) = self.current_token() {
                     self.scan_token()?;
-                    value = Some(self.parse_expression(None, &[Token::Semicolon])?);
-                }
-                else {
-                    value = None;
-                }
+                    Some(self.parse_expression(None, &[Token::Semicolon])?)
+                } else {
+                    None
+                };
                 self.scan_token()?;
 
                 Ok(Some(Box::new(Node::Let {
-                    identifier,
+                    name,
                     value_type,
                     value,
                 })))
             },
             Some(Token::Function) => {
-                todo!()
+                self.scan_token()?;
+                let name = self.expect_identifier()?;
+                self.scan_token()?;
+                self.expect_token(&[Token::ParenLeft])?;
+                self.scan_token()?;
+
+                let mut parameters = Vec::new();
+                while !(matches!(self.current_token(), Some(Token::ParenRight))) {
+                    let parameter_name = self.expect_identifier()?;
+                    self.scan_token()?;
+                    self.expect_token(&[Token::Colon])?;
+                    self.scan_token()?;
+                    let parameter_type = self.parse_value_type(&[Token::Comma, Token::ParenRight])?;
+                    parameters.push(FunctionParameter {
+                        name: parameter_name,
+                        value_type: parameter_type,
+                    });
+
+                    if let Some(Token::Comma) = self.current_token() {
+                        self.scan_token()?;
+                    }
+                }
+
+                self.scan_token()?;
+                self.expect_token(&[Token::RightArrow])?;
+                self.scan_token()?;
+                // The function body must be enclosed by a scope, so expect a '{' token following the return type
+                let return_type = self.parse_value_type(&[Token::CurlyLeft])?;
+                let body = self.parse_statement(false, false)?.unwrap();
+
+                Ok(Some(Box::new(Node::Function {
+                    name,
+                    parameters,
+                    return_type,
+                    body,
+                })))
             },
             Some(got_token) if is_global => {
                 Err(self.scanner.syntax_error(expected_token_error_message(&[Token::Semicolon, Token::Let, Token::Function], got_token)))

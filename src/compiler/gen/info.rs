@@ -1,23 +1,27 @@
 use super::*;
 
 #[derive(Clone, PartialEq, Debug)]
+pub struct Scope {
+    id: usize,
+}
+
+impl Scope {
+    pub fn id(&self) -> usize {
+        self.id
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct Symbol {
     identifier: String,
     format: ValueFormat,
     alignment: usize,
     register: Register,
+    scope: Scope,
+    version: usize,
 }
 
 impl Symbol {
-    pub fn new(identifier: String, format: ValueFormat, alignment: usize, register: Register) -> Self {
-        Self {
-            identifier,
-            format,
-            alignment,
-            register,
-        }
-    }
-
     pub fn identifier(&self) -> &str {
         self.identifier.as_str()
     }
@@ -33,6 +37,14 @@ impl Symbol {
     pub fn register(&self) -> &Register {
         &self.register
     }
+
+    pub fn scope(&self) -> &Scope {
+        &self.scope
+    }
+
+    pub fn version(&self) -> usize {
+        self.version
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -43,73 +55,141 @@ struct SymbolTableNode {
 
 #[derive(Debug)]
 pub struct SymbolTable {
+    is_global: bool,
     hash_table_bins: Vec<Option<SymbolTableNode>>,
+    active_scopes: Vec<Scope>,
+    next_scope_id: usize,
 }
 
 impl SymbolTable {
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize, is_global: bool) -> Self {
         let mut hash_table_bins = Vec::new();
         hash_table_bins.resize_with(capacity, Default::default);
         Self {
+            is_global,
             hash_table_bins,
+            active_scopes: vec![Scope { id: 0 }],
+            next_scope_id: 1,
         }
+    }
+
+    pub fn is_global(&self) -> bool {
+        self.is_global
     }
 
     pub fn capacity(&self) -> usize {
         self.hash_table_bins.len()
     }
 
+    pub fn clear(&mut self) {
+        for root_node in self.hash_table_bins.iter_mut() {
+            *root_node = None;
+        }
+    }
+
+    pub fn current_scope(&self) -> &Scope {
+        self.active_scopes.last().unwrap()
+    }
+
+    pub fn enter_scope(&mut self) {
+        let id = self.next_scope_id;
+        self.next_scope_id += 1;
+        self.active_scopes.push(Scope { id });
+    }
+
+    pub fn leave_scope(&mut self) {
+        if self.active_scopes.len() > 1 {
+            self.active_scopes.pop();
+        }
+        else {
+            panic!("attempted to leave outermost scope");
+        }
+    }
+
+    pub fn scope_is_active(&self, scope: &Scope) -> bool {
+        self.active_scopes.contains(scope)
+    }
+
     pub fn find(&self, identifier: &str) -> Option<&Symbol> {
         let index = self.hash_index(identifier);
 
-        self.find_in_bin(index, identifier)
+        self.find_in_bin(index, identifier, true)
     }
 
     pub fn find_mut(&mut self, identifier: &str) -> Option<&mut Symbol> {
         let index = self.hash_index(identifier);
 
-        self.find_in_bin_mut(index, identifier)
+        self.find_in_bin_mut(index, identifier, true)
     }
 
-    pub fn insert(&mut self, symbol: Symbol) -> Option<Symbol> {
-        let index = self.hash_index(symbol.identifier());
+    pub fn next_symbol_version(&self, identifier: &str) -> usize {
+        let index = self.hash_index(identifier);
 
-        if let Some(existing_symbol) = self.find_in_bin_mut(index, symbol.identifier()) {
-            return Some(std::mem::replace(existing_symbol, symbol));
+        self.find_in_bin(index, identifier, false)
+            .map_or(0, |symbol| symbol.version() + 1)
+    }
+
+    pub fn create_symbol(&self, identifier: String, format: ValueFormat, alignment: usize) -> Symbol {
+        let scope = self.current_scope().clone();
+        let version = self.next_symbol_version(&identifier);
+        let register_name = if version == 0 {
+            identifier.clone()
+        } else {
+            format!("{identifier}-{version}")
+        };
+        let register_format = if format.is_function() {
+            format.clone()
+        } else {
+            format.clone().into_pointer()
+        };
+        let register = Register {
+            name: register_name,
+            format: register_format,
+            is_global: self.is_global,
+        };
+
+        Symbol {
+            identifier,
+            format,
+            alignment,
+            register,
+            scope,
+            version,
         }
+    }
+
+    pub fn insert(&mut self, symbol: Symbol) {
+        let index = self.hash_index(symbol.identifier());
         
-        let root_node = self.hash_table_bins.get_mut(index)?;
+        let root_node = &mut self.hash_table_bins[index];
         let node_to_insert = SymbolTableNode {
             symbol,
             next_node: root_node.take().map(|node| Box::new(node)),
         };
         *root_node = Some(node_to_insert);
-
-        None
     }
 
-    #[allow(arithmetic_overflow)]
     fn hash_index(&self, key: &str) -> usize {
         // https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function#FNV_offset_basis
-        const FNV_OFFSET_BASIS: usize = 0xCBF29CE484222325;
+        const FNV_OFFSET_BASIS: u64 = 0xCBF29CE484222325;
         // Any large prime number will do
-        const FNV_PRIME: usize = 0x100000001B3;
+        const FNV_PRIME: u64 = 0x100000001B3;
 
         let mut hash = FNV_OFFSET_BASIS;
-        for char_value in key.chars() {
-            hash ^= char_value as usize;
-            hash %= self.capacity(); // FIXME: figure out how to disable overflow checking
-            hash *= FNV_PRIME;
+        for byte_value in key.bytes() {
+            hash ^= byte_value as u64;
+            hash = hash.wrapping_mul(FNV_PRIME);
         }
 
-        hash % self.capacity()
+        hash as usize % self.capacity()
     }
 
-    fn find_in_bin(&self, index: usize, identifier: &str) -> Option<&Symbol> {
+    fn find_in_bin(&self, index: usize, identifier: &str, check_scope: bool) -> Option<&Symbol> {
         let mut next_node = self.hash_table_bins.get(index)?.as_ref();
 
         while let Some(current_node) = next_node {
-            if current_node.symbol.identifier() == identifier {
+            let is_in_scope = !check_scope || self.active_scopes.contains(current_node.symbol.scope());
+            if current_node.symbol.identifier() == identifier && is_in_scope {
                 return Some(&current_node.symbol);
             }
             next_node = current_node.next_node.as_deref();
@@ -118,11 +198,13 @@ impl SymbolTable {
         None
     }
 
-    fn find_in_bin_mut(&mut self, index: usize, identifier: &str) -> Option<&mut Symbol> {
+    fn find_in_bin_mut(&mut self, index: usize, identifier: &str, check_scope: bool) -> Option<&mut Symbol> {
         let mut next_node = self.hash_table_bins.get_mut(index)?.as_mut();
 
         while let Some(current_node) = next_node {
-            if current_node.symbol.identifier() == identifier {
+            // I would use self.scope_is_active() here, but that requires an immutable borrow of *self, not just self.active_scopes
+            let is_in_scope = !check_scope || self.active_scopes.contains(current_node.symbol.scope());
+            if current_node.symbol.identifier() == identifier && is_in_scope {
                 return Some(&mut current_node.symbol);
             }
             next_node = current_node.next_node.as_deref_mut();

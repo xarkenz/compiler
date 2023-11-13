@@ -18,10 +18,28 @@ pub enum ValueFormat {
     Pointer {
         to: Box<ValueFormat>,
     },
+    Function {
+        returned: Box<ValueFormat>,
+        parameters: Vec<ValueFormat>,
+        is_varargs: bool,
+    },
 }
 
 impl ValueFormat {
-    pub fn pointer(self) -> Self {
+    pub fn size(&self) -> usize {
+        match self {
+            Self::Boolean => 1,
+            Self::Integer { size, .. } => *size,
+            Self::Pointer { .. } => 8,
+            Self::Function { .. } => 8,
+        }
+    }
+
+    pub fn is_function(&self) -> bool {
+        matches!(self, ValueFormat::Function { .. })
+    }
+
+    pub fn into_pointer(self) -> Self {
         Self::Pointer {
             to: Box::new(self),
         }
@@ -57,6 +75,23 @@ impl fmt::Display for ValueFormat {
             Self::Boolean => write!(f, "i1"),
             Self::Integer { size, .. } => write!(f, "i{bits}", bits = size * 8),
             Self::Pointer { to } => write!(f, "{to}*"),
+            Self::Function { returned, parameters, is_varargs } => {
+                write!(f, "{returned}(")?;
+                let mut parameters_iter = parameters.iter();
+                if let Some(first) = parameters_iter.next() {
+                    write!(f, "{first}")?;
+                    for parameter in parameters_iter {
+                        write!(f, ", {parameter}")?;
+                    }
+                    if *is_varargs {
+                        write!(f, ", ...")?;
+                    }
+                }
+                else if *is_varargs {
+                    write!(f, "...")?;
+                }
+                write!(f, ")")
+            },
         }
     }
 }
@@ -209,6 +244,7 @@ pub fn expected_binary_rhs_format(operation: ast::BinaryOperation, _expected_for
 
 #[derive(Clone, Debug)]
 pub struct ScopeContext {
+    is_global: bool,
     break_label: Option<Label>,
     continue_label: Option<Label>,
 }
@@ -216,9 +252,14 @@ pub struct ScopeContext {
 impl ScopeContext {
     pub fn new() -> Self {
         Self {
+            is_global: true,
             break_label: None,
             continue_label: None,
         }
+    }
+
+    pub fn is_global(&self) -> bool {
+        self.is_global
     }
 
     pub fn break_label(&self) -> Option<&Label> {
@@ -229,9 +270,16 @@ impl ScopeContext {
         self.continue_label.as_ref()
     }
 
+    pub fn enter_function(mut self) -> Self {
+        self.is_global = false;
+
+        self
+    }
+
     pub fn enter_loop(mut self, break_label: Label, continue_label: Label) -> Self {
         self.break_label = Some(break_label);
         self.continue_label = Some(continue_label);
+
         self
     }
 }
@@ -263,8 +311,8 @@ impl<'a, T: Write> Generator<'a, T> {
             emitter,
             next_anonymous_register_id: 1,
             next_anonymous_label_id: 1,
-            global_symbols: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY),
-            local_symbols: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY),
+            global_symbols: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY, true),
+            local_symbols: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY, false),
         }
     }
 
@@ -295,6 +343,24 @@ impl<'a, T: Write> Generator<'a, T> {
         self.next_anonymous_label_id += 1;
         Label {
             name: format!("-L{id}"),
+        }
+    }
+
+    pub fn create_symbol(&self, context: &ScopeContext, identifier: String, format: ValueFormat, alignment: usize) -> info::Symbol {
+        if context.is_global() {
+            self.global_symbols.create_symbol(identifier, format, alignment)
+        }
+        else {
+            self.local_symbols.create_symbol(identifier, format, alignment)
+        }
+    }
+
+    pub fn define_symbol(&mut self, context: &ScopeContext, symbol: info::Symbol) {
+        if context.is_global() {
+            self.global_symbols.insert(symbol);
+        }
+        else {
+            self.local_symbols.insert(symbol);
         }
     }
 
@@ -403,7 +469,7 @@ impl<'a, T: Write> Generator<'a, T> {
                     // If we don't clone here, with the way things are currently set up, we can't borrow self.emitter as mutable
                     let symbol = self.get_symbol(name)?.clone();
                     let value = self.generate_node(rhs.as_ref(), context, Some(symbol.format().clone()))?
-                        .ok_or_else(|| self.error(String::from("operation 'x = y' expects a value for y")))?;
+                        .ok_or_else(|| self.error(String::from("operation '... = x' expects a value for x")))?;
 
                     llvm::emit_symbol_store(&mut self.emitter, &value, &symbol)
                         .map_err(|cause| self.file_error(cause))?;
@@ -415,11 +481,10 @@ impl<'a, T: Write> Generator<'a, T> {
                 }
             },
             ast::Node::Binary { operation: ast::BinaryOperation::Convert, lhs, rhs } => {
-                if let ast::Node::Literal(token::Literal::Identifier(name)) = rhs.as_ref() {
-                    // TODO: this isn't great...
-                    let to_format = ValueFormat::try_from(&ast::ValueType::Named(name.clone()))?;
+                if let ast::Node::ValueType(value_type) = rhs.as_ref() {
+                    let to_format = ValueFormat::try_from(value_type)?;
                     let value = self.generate_node(lhs.as_ref(), context, None)?
-                        .ok_or_else(|| self.error(String::from("operation 'x as y' expects a value for x")))?;
+                        .ok_or_else(|| self.error(String::from("operation 'x as ...' expects a value for x")))?;
 
                     Some(self.change_format(value, &to_format)?)
                 }
@@ -429,9 +494,9 @@ impl<'a, T: Write> Generator<'a, T> {
             }
             ast::Node::Binary { operation, lhs, rhs } => {
                 let lhs = self.generate_node(lhs.as_ref(), context, expected_binary_lhs_format(*operation, expected_format.clone()))?
-                    .ok_or_else(|| self.error(format!("operation 'x{operation}y' expects a value for x")))?;
+                    .ok_or_else(|| self.error(format!("operation 'x{operation}...' expects a value for x")))?;
                 let rhs = self.generate_node(rhs.as_ref(), context, expected_binary_rhs_format(*operation, expected_format.clone(), Some(lhs.format())))?
-                    .ok_or_else(|| self.error(format!("operation 'x{operation}y' expects a value for y")))?;
+                    .ok_or_else(|| self.error(format!("operation '...{operation}x' expects a value for x")))?;
 
                 match operation {
                     ast::BinaryOperation::Add => {
@@ -518,41 +583,13 @@ impl<'a, T: Write> Generator<'a, T> {
                 }
             },
             ast::Node::Scope { statements } => {
+                self.local_symbols.enter_scope();
                 for statement in statements {
                     self.generate_node(statement.as_ref(), context, None)?;
                 }
+                self.local_symbols.leave_scope();
 
                 None
-            },
-            ast::Node::Let { identifier, value_type, value } => {
-                if let ast::Node::Literal(token::Literal::Identifier(name)) = identifier.as_ref() {
-                    let format = ValueFormat::try_from(value_type)?;
-                    let alignment = 4;
-                    let register = Register {
-                        name: name.clone(),
-                        format: format.clone().pointer(),
-                        is_global: false,
-                    };
-                    let symbol = info::Symbol::new(name.clone(), format.clone(), alignment, register);
-
-                    llvm::emit_symbol_declaration(&mut self.emitter, &symbol)
-                        .map_err(|cause| self.file_error(cause))?;
-
-                    if let Some(node) = value {
-                        let value = self.generate_node(node.as_ref(), context, Some(format))?
-                            .ok_or_else(|| self.error(String::from("'let' expects a value")))?;
-
-                        llvm::emit_symbol_store(&mut self.emitter, &value, &symbol)
-                            .map_err(|cause| self.file_error(cause))?;
-                    }
-
-                    self.local_symbols.insert(symbol);
-
-                    None
-                }
-                else {
-                    return Err(self.error(String::from("invalid left-hand side for 'let'")));
-                }
             },
             ast::Node::Conditional { condition, consequent, alternative } => {
                 let condition = self.generate_node(condition.as_ref(), context, Some(ValueFormat::Boolean))?
@@ -681,7 +718,71 @@ impl<'a, T: Write> Generator<'a, T> {
 
                 None
             },
-            _ => return Err(self.error(String::from("node type not yet implemented")))
+            ast::Node::Let { name, value_type, value } => {
+                let format = ValueFormat::try_from(value_type)?;
+                let alignment = format.size();
+                let symbol = self.create_symbol(context, name.clone(), format.clone(), alignment);
+
+                llvm::emit_symbol_allocation(&mut self.emitter, &symbol)
+                    .map_err(|cause| self.file_error(cause))?;
+
+                if let Some(node) = value {
+                    let value = self.generate_node(node.as_ref(), context, Some(format))?
+                        .ok_or_else(|| self.error(String::from("'let' expects a value")))?;
+
+                    llvm::emit_symbol_store(&mut self.emitter, &value, &symbol)
+                        .map_err(|cause| self.file_error(cause))?;
+                }
+
+                self.define_symbol(context, symbol);
+
+                None
+            },
+            ast::Node::Function { name, parameters, return_type, body } => {
+                let returned = Box::new(ValueFormat::try_from(return_type)?);
+                let alignment = returned.size(); // TODO: what would this even mean
+                let parameter_formats = parameters.iter()
+                    .map(|parameter| ValueFormat::try_from(&parameter.value_type))
+                    // This looks ugly but just collects the iterator of Result<T, E> into a Result<Vec<T>, E>
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                // TODO: pretty much everything below this line is positively foul
+                self.local_symbols.clear();
+                self.next_anonymous_register_id = 1;
+                self.next_anonymous_label_id = 1;
+                let function_context = context.clone().enter_function();
+                parameters.iter()
+                    .map(|parameter| parameter.name.clone())
+                    .zip(parameter_formats.iter())
+                    .for_each(|(name, format)| {
+                        let alignment = format.size();
+                        let symbol = self.create_symbol(&function_context, name, format.clone(), alignment);
+                        self.define_symbol(&function_context, symbol);
+                    });
+
+                let format = ValueFormat::Function {
+                    returned,
+                    parameters: parameter_formats, 
+                    is_varargs: false, // TODO
+                };
+                let function_symbol = self.create_symbol(context, name.clone(), format, alignment);
+                let parameter_registers: Vec<_> = parameters.iter()
+                    .map(|parameter| self.local_symbols.find(&parameter.name).unwrap().register().clone())
+                    .collect();
+
+                llvm::emit_function_enter(&mut self.emitter, function_symbol.register(), &parameter_registers)
+                    .map_err(|cause| self.file_error(cause))?;
+                
+                self.define_symbol(context, function_symbol);
+
+                self.generate_node(body.as_ref(), &function_context, None)?;
+
+                llvm::emit_function_exit(&mut self.emitter)
+                    .map_err(|cause| self.file_error(cause))?;
+
+                None
+            },
+            _ => return Err(self.error(String::from("unexpected node type")))
         };
 
         if let (Some(expected_format), Some(result_value)) = (&expected_format, &result) {

@@ -8,6 +8,35 @@ target triple = "x86_64-pc-linux-gnu"
 @print_u64_fstring = private unnamed_addr constant [6 x i8] c"%llu\0A\00", align 1
 @print_ptr_fstring = private unnamed_addr constant [4 x i8] c"%p\0A\00", align 1
 
+; Function Attrs: noinline nounwind optnone uwtable
+define dso_local i32 @fibonacci(i32* %limit) #0 {
+    %a = alloca i32, align 4
+    store i32 0, i32* %a
+    %b = alloca i32, align 4
+    store i32 1, i32* %b
+    br label %-L1
+-L1:
+    %1 = load i32, i32* %b
+    %2 = load i32, i32* %limit
+    %3 = icmp slt i32 %1, %2
+    br i1 %3, label %-L2, label %-L3
+-L2:
+    %temp = alloca i32, align 4
+    %4 = load i32, i32* %a
+    %5 = load i32, i32* %b
+    %6 = add nsw i32 %4, %5
+    store i32 %6, i32* %temp
+    %7 = load i32, i32* %b
+    store i32 %7, i32* %a
+    %8 = load i32, i32* %temp
+    store i32 %8, i32* %b
+    br label %-L1
+-L3:
+    %9 = load i32, i32* %a
+    ret i32 %9
+}
+
+; Function Attrs: noinline nounwind optnone uwtable
 define dso_local i32 @main() #0 {
     %a = alloca i32, align 4
     store i32 0, i32* %a
@@ -41,7 +70,7 @@ define dso_local i32 @main() #0 {
     ret i32 0
 }
 
-declare i32 @printf(i8*, ...) #1
+declare i32 @printf(i8* noundef, ...) #1
 
 attributes #0 = {
     noinline nounwind optnone uwtable
@@ -69,4 +98,4 @@ attributes #1 = {
 !2 = !{i32 7, !"PIE Level", i32 2}
 !3 = !{i32 7, !"uwtable", i32 1}
 !4 = !{i32 7, !"frame-pointer", i32 2}
-!5 = !{!"Ubuntu clang version 10.0.0-4ubuntu1"}
+!5 = !{!"Ubuntu clang version 14.0.0-1ubuntu1.1"}

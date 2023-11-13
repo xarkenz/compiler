@@ -309,9 +309,22 @@ impl std::fmt::Display for ValueType {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct FunctionParameter {
+    pub name: String,
+    pub value_type: ValueType,
+}
+
+impl std::fmt::Display for FunctionParameter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.name, self.value_type)
+    }
+}
+
 #[derive(Debug)]
 pub enum Node {
     Literal(Literal),
+    ValueType(ValueType),
     Unary {
         operation: UnaryOperation,
         operand: Box<Node>,
@@ -323,11 +336,6 @@ pub enum Node {
     },
     Scope {
         statements: Vec<Box<Node>>,
-    },
-    Let {
-        identifier: Box<Node>,
-        value_type: ValueType,
-        value: Option<Box<Node>>,
     },
     Conditional {
         condition: Box<Node>,
@@ -346,6 +354,17 @@ pub enum Node {
     Print {
         value: Box<Node>,
     },
+    Let {
+        name: String,
+        value_type: ValueType,
+        value: Option<Box<Node>>,
+    },
+    Function {
+        name: String,
+        parameters: Vec<FunctionParameter>,
+        return_type: ValueType,
+        body: Box<Node>,
+    },
 }
 
 impl fmt::Display for Node {
@@ -353,6 +372,9 @@ impl fmt::Display for Node {
         match self {
             Self::Literal(literal) => {
                 write!(f, "{literal}")
+            },
+            Self::ValueType(value_type) => {
+                write!(f, "{value_type}")
             },
             Self::Unary { operation, operand } => {
                 write!(f, "({operation}{operand})")
@@ -367,22 +389,15 @@ impl fmt::Display for Node {
                 }
                 write!(f, " }}")
             },
-            Self::Let { identifier, value_type, value } => {
-                if let Some(value) = value {
-                    write!(f, " let {identifier}: {value_type} = {value};")
-                } else {
-                    write!(f, " let {identifier}: {value_type};")
-                }
-            },
             Self::Conditional { condition, consequent, alternative } => {
                 if let Some(alternative) = alternative {
-                    write!(f, " if ({condition}) {consequent} else {alternative}")
+                    write!(f, " if ({condition}){consequent} else{alternative}")
                 } else {
-                    write!(f, " if ({condition}) {consequent}")
+                    write!(f, " if ({condition}){consequent}")
                 }
             },
             Self::While { condition, body } => {
-                write!(f, " while ({condition}) {body}")
+                write!(f, " while ({condition}){body}")
             }
             Self::Break => {
                 write!(f, " break;")
@@ -396,9 +411,27 @@ impl fmt::Display for Node {
                 } else {
                     write!(f, " return;")
                 }
-            }
+            },
             Self::Print { value } => {
                 write!(f, " print {value};")
+            },
+            Self::Let { name: identifier, value_type, value } => {
+                if let Some(value) = value {
+                    write!(f, " let {identifier}: {value_type} = {value};")
+                } else {
+                    write!(f, " let {identifier}: {value_type};")
+                }
+            },
+            Self::Function { name: identifier, parameters, return_type, body } => {
+                write!(f, " function {identifier}(")?;
+                let mut parameters_iter = parameters.iter();
+                if let Some(first) = parameters_iter.next() {
+                    write!(f, "{first}")?;
+                }
+                for parameter in parameters_iter {
+                    write!(f, ", {parameter}")?;
+                }
+                write!(f, ") -> {return_type}{body}")
             },
         }
     }

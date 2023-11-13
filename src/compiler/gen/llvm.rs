@@ -18,8 +18,71 @@ pub fn emit_preamble<T: Write>(emitter: &mut T, source_filename: &str) -> std::i
         @print_u64_fstring = private unnamed_addr constant [6 x i8] c\"%llu\\0A\\00\", align 1
         @print_ptr_fstring = private unnamed_addr constant [4 x i8] c\"%p\\0A\\00\", align 1
 
-        define dso_local i32 @main() #0 {{
     ")
+}
+
+pub fn emit_postamble<T: Write>(emitter: &mut T) -> std::io::Result<()> {
+    writedoc!(emitter, "
+        declare i32 @printf(i8* noundef, ...) #1
+
+        attributes #0 = {{
+        {INDENT}noinline nounwind optnone uwtable
+        {INDENT}\"frame-pointer\"=\"all\"
+        {INDENT}\"min-legal-vector-width\"=\"0\"
+        {INDENT}\"no-trapping-math\"=\"true\"
+        {INDENT}\"stack-protector-buffer-size\"=\"8\"
+        {INDENT}\"target-cpu\"=\"x86-64\"
+        {INDENT}\"target-features\"=\"+cx8,+fxsr,+mmx,+sse,+sse2,+x87\"
+        {INDENT}\"tune-cpu\"=\"generic\"
+        }}
+        attributes #1 = {{
+        {INDENT}\"frame-pointer\"=\"all\"
+        {INDENT}\"no-trapping-math\"=\"true\"
+        {INDENT}\"stack-protector-buffer-size\"=\"8\"
+        {INDENT}\"target-cpu\"=\"x86-64\"
+        {INDENT}\"target-features\"=\"+cx8,+fxsr,+mmx,+sse,+sse2,+x87\"
+        {INDENT}\"tune-cpu\"=\"generic\"
+        }}
+
+        !llvm.module.flags = !{{!0, !1, !2, !3, !4}}
+        !llvm.ident = !{{!5}}
+        !0 = !{{i32 1, !\"wchar_size\", i32 4}}
+        !1 = !{{i32 7, !\"PIC Level\", i32 2}}
+        !2 = !{{i32 7, !\"PIE Level\", i32 2}}
+        !3 = !{{i32 7, !\"uwtable\", i32 1}}
+        !4 = !{{i32 7, !\"frame-pointer\", i32 2}}
+        !5 = !{{!\"Ubuntu clang version 14.0.0-1ubuntu1.1\"}}
+    ")
+}
+
+pub fn emit_function_enter<T: Write>(emitter: &mut T, function: &Register, parameters: &[Register]) -> std::io::Result<()> {
+    match function.format() {
+        ValueFormat::Function { returned, is_varargs, .. } => {
+            write!(
+                emitter,
+                "; Function Attrs: noinline nounwind optnone uwtable\ndefine dso_local {returned} {function}(",
+            )?;
+            let mut parameters = parameters.iter();
+            if let Some(first) = parameters.next() {
+                write!(emitter, "{format} {first}", format = first.format())?;
+                for parameter in parameters {
+                    write!(emitter, ", {format} {parameter}", format = parameter.format())?;
+                }
+                if *is_varargs {
+                    write!(emitter, ", ...")?;
+                }
+            }
+            else if *is_varargs {
+                write!(emitter, "...")?;
+            }
+            write!(emitter, ") #0 {{\n")
+        },
+        _ => panic!("unexpected function format")
+    }
+}
+
+pub fn emit_function_exit<T: Write>(emitter: &mut T) -> std::io::Result<()> {
+    write!(emitter, "}}\n\n")
 }
 
 pub fn emit_label<T: Write>(emitter: &mut T, label: &Label) -> std::io::Result<()> {
@@ -44,7 +107,7 @@ pub fn emit_conditional_branch<T: Write>(emitter: &mut T, condition: &RightValue
     )
 }
 
-pub fn emit_symbol_declaration<T: Write>(emitter: &mut T, symbol: &info::Symbol) -> std::io::Result<()> {
+pub fn emit_symbol_allocation<T: Write>(emitter: &mut T, symbol: &info::Symbol) -> std::io::Result<()> {
     if symbol.register().is_global() {
         write!(
             emitter,
@@ -289,40 +352,4 @@ pub fn emit_return<T: Write>(emitter: &mut T, value: Option<&RightValue>) -> std
             "{INDENT}ret void\n",
         )
     }
-}
-
-pub fn emit_postamble<T: Write>(emitter: &mut T) -> std::io::Result<()> {
-    writedoc!(emitter, "
-        }}
-
-        declare i32 @printf(i8*, ...) #1
-
-        attributes #0 = {{
-        {INDENT}noinline nounwind optnone uwtable
-        {INDENT}\"frame-pointer\"=\"all\"
-        {INDENT}\"min-legal-vector-width\"=\"0\"
-        {INDENT}\"no-trapping-math\"=\"true\"
-        {INDENT}\"stack-protector-buffer-size\"=\"8\"
-        {INDENT}\"target-cpu\"=\"x86-64\"
-        {INDENT}\"target-features\"=\"+cx8,+fxsr,+mmx,+sse,+sse2,+x87\"
-        {INDENT}\"tune-cpu\"=\"generic\"
-        }}
-        attributes #1 = {{
-        {INDENT}\"frame-pointer\"=\"all\"
-        {INDENT}\"no-trapping-math\"=\"true\"
-        {INDENT}\"stack-protector-buffer-size\"=\"8\"
-        {INDENT}\"target-cpu\"=\"x86-64\"
-        {INDENT}\"target-features\"=\"+cx8,+fxsr,+mmx,+sse,+sse2,+x87\"
-        {INDENT}\"tune-cpu\"=\"generic\"
-        }}
-
-        !llvm.module.flags = !{{!0, !1, !2, !3, !4}}
-        !llvm.ident = !{{!5}}
-        !0 = !{{i32 1, !\"wchar_size\", i32 4}}
-        !1 = !{{i32 7, !\"PIC Level\", i32 2}}
-        !2 = !{{i32 7, !\"PIE Level\", i32 2}}
-        !3 = !{{i32 7, !\"uwtable\", i32 1}}
-        !4 = !{{i32 7, !\"frame-pointer\", i32 2}}
-        !5 = !{{!\"Ubuntu clang version 10.0.0-4ubuntu1\"}}
-    ")
 }

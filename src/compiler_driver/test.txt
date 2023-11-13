@@ -1,15 +1,30 @@
-let a: i32 = 0;
-let b: i32 = 1;
+function fibonacci(limit: i32) -> i32 {
+    let a: i32 = 0;
+    let b: i32 = 1;
 
-while (true) {
-    if (b >= 1000) {
-        break;
+    while (b < limit) {
+        let temp: i32 = a + b;
+        a = b;
+        b = temp;
     }
-    
-    print b;
-    let temp: i32 = a + b;
-    a = b;
-    b = temp;
+
+    return a;
 }
 
-return 0;
+function main() -> i32 {
+    let a: i32 = 0;
+    let b: i32 = 1;
+
+    while (true) {
+        if (b >= 1000) {
+            break;
+        }
+        
+        print b;
+        let temp: i32 = a + b;
+        a = b;
+        b = temp;
+    }
+
+    return 0;
+}
