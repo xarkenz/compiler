@@ -14,18 +14,22 @@ fn expected_token_error_message(allowed: &[Token], got_token: &Token) -> String 
 
 #[derive(Debug)]
 pub struct Parser<'a, T: BufRead> {
-    scanner: &'a mut scan::Scanner<'a, T>,
+    scanner: &'a mut scan::Scanner<T>,
     current_token: Option<Token>,
 }
 
 impl<'a, T: BufRead> Parser<'a, T> {
-    pub fn new(scanner: &'a mut scan::Scanner<'a, T>) -> crate::Result<Self> {
+    pub fn new(scanner: &'a mut scan::Scanner<T>) -> crate::Result<Self> {
         let mut new_instance = Self {
             scanner,
             current_token: None,
         };
         new_instance.scan_token()?;
         Ok(new_instance)
+    }
+
+    pub fn filename(&'a self) -> &'a str {
+        self.scanner.filename()
     }
 
     pub fn scan_token(&mut self) -> crate::Result<()> {

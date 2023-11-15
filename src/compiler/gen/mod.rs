@@ -1,9 +1,9 @@
 pub mod info;
 pub mod llvm;
 
-use crate::{Error, FileError, RawError};
 use crate::token;
 use crate::ast;
+use crate::Error;
 
 use std::io::{Write, BufRead};
 use std::fmt;
@@ -47,7 +47,7 @@ impl ValueFormat {
 }
 
 impl TryFrom<&ast::ValueType> for ValueFormat {
-    type Error = Box<dyn Error>;
+    type Error = Box<dyn crate::Error>;
 
     fn try_from(value: &ast::ValueType) -> crate::Result<Self> {
         match value {
@@ -62,7 +62,7 @@ impl TryFrom<&ast::ValueType> for ValueFormat {
                     "u32" => Ok(ValueFormat::Integer { size: 4, signed: false }),
                     "i64" => Ok(ValueFormat::Integer { size: 8, signed: true }),
                     "u64" => Ok(ValueFormat::Integer { size: 8, signed: false }),
-                    _ => Err(RawError::new(format!("unrecognized type name 'name'")).into_boxed())
+                    _ => Err(crate::RawError::new(format!("unrecognized type name 'name'")).into_boxed())
                 }
             },
         }
@@ -284,48 +284,32 @@ impl ScopeContext {
     }
 }
 
-#[derive(Debug)]
-pub struct Generator<'a, T: Write> {
-    filename: &'a str,
-    emitter: T,
+pub struct Generator<W: Write> {
+    emitter: llvm::Emitter<W>,
     next_anonymous_register_id: usize,
     next_anonymous_label_id: usize,
     global_symbols: info::SymbolTable,
     local_symbols: info::SymbolTable,
 }
 
-impl<'a> Generator<'a, std::fs::File> {
-    pub fn from_filename(filename: &'a str) -> crate::Result<Self> {
-        std::fs::File::create(filename)
-            .map(|file| Self::new(filename, file))
-            .map_err(|cause| FileError::new(filename.to_owned(), None, cause).into_boxed())
+impl Generator<std::fs::File> {
+    pub fn from_filename(filename: String) -> crate::Result<Self> {
+        llvm::Emitter::from_filename(filename)
+            .map(|emitter| Self::new(emitter))
     }
 }
 
-impl<'a, T: Write> Generator<'a, T> {
+impl<W: Write> Generator<W> {
     const DEFAULT_SYMBOL_TABLE_CAPACITY: usize = 256;
 
-    pub fn new(filename: &'a str, emitter: T) -> Self {
+    pub fn new(emitter: llvm::Emitter<W>) -> Self {
         Self {
-            filename,
             emitter,
             next_anonymous_register_id: 1,
             next_anonymous_label_id: 1,
             global_symbols: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY, true),
             local_symbols: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY, false),
         }
-    }
-
-    pub fn filename(&self) -> &'a str {
-        self.filename
-    }
-
-    pub fn file_error(&self, cause: std::io::Error) -> Box<dyn Error> {
-        FileError::new(self.filename.to_owned(), None, cause).into_boxed()
-    }
-
-    pub fn error(&self, message: String) -> Box<dyn Error> {
-        RawError::new(message).into_boxed()
     }
 
     pub fn new_anonymous_register(&mut self, format: ValueFormat) -> Register {
@@ -367,7 +351,7 @@ impl<'a, T: Write> Generator<'a, T> {
     pub fn get_symbol(&self, name: &str) -> crate::Result<&info::Symbol> {
         self.local_symbols.find(name)
             .or_else(|| self.global_symbols.find(name))
-            .ok_or_else(|| self.error(format!("undefined symbol '{name}'")))
+            .ok_or_else(|| crate::RawError::new(format!("undefined symbol '{name}'")).into_boxed())
     }
 
     pub fn enforce_format(&self, value: &RightValue, format: &ValueFormat) -> crate::Result<()> {
@@ -377,7 +361,7 @@ impl<'a, T: Write> Generator<'a, T> {
             Ok(())
         }
         else {
-            Err(self.error(format!("expected a value of type {format}, got {got_format} instead")))
+            Err(crate::RawError::new(format!("expected a value of type {format}, got {got_format} instead")).into_boxed())
         }
     }
 
@@ -393,15 +377,13 @@ impl<'a, T: Write> Generator<'a, T> {
         ) = (&from_format, to_format) {
             if to_size > from_size {
                 let result = self.new_anonymous_register(to_format.clone());
-                llvm::emit_extension(&mut self.emitter, &result, &value)
-                    .map_err(|cause| self.file_error(cause))?;
+                self.emitter.emit_extension(&result, &value)?;
 
                 Ok(RightValue::Register(result))
             }
             else if to_size < from_size {
                 let result = self.new_anonymous_register(to_format.clone());
-                llvm::emit_truncation(&mut self.emitter, &result, &value)
-                    .map_err(|cause| self.file_error(cause))?;
+                self.emitter.emit_truncation(&result, &value)?;
 
                 Ok(RightValue::Register(result))
             }
@@ -414,8 +396,7 @@ impl<'a, T: Write> Generator<'a, T> {
             ValueFormat::Boolean,
         ) = (&from_format, to_format) {
             let result = self.new_anonymous_register(ValueFormat::Boolean);
-            llvm::emit_cmp_not_equal(&mut self.emitter, &result, &value, &RightValue::Constant(ConstantValue::Integer(0, from_format.clone())))
-                .map_err(|cause| self.file_error(cause))?;
+            self.emitter.emit_cmp_not_equal(&result, &value, &RightValue::Constant(ConstantValue::Integer(0, from_format.clone())))?;
             
             Ok(RightValue::Register(result))
         }
@@ -424,13 +405,12 @@ impl<'a, T: Write> Generator<'a, T> {
             ValueFormat::Integer { .. },
         ) = (&from_format, to_format) {
             let result = self.new_anonymous_register(to_format.clone());
-            llvm::emit_zero_extension(&mut self.emitter, &result, &value)
-                .map_err(|cause| self.file_error(cause))?;
+            self.emitter.emit_zero_extension(&result, &value)?;
             
             Ok(RightValue::Register(result))
         }
         else {
-            Err(self.error(format!("cannot convert from {from_format} to {to_format}")))
+            Err(crate::RawError::new(format!("cannot convert from {from_format} to {to_format}")).into_boxed())
         }
     }
 
@@ -443,8 +423,7 @@ impl<'a, T: Write> Generator<'a, T> {
                         let symbol = self.get_symbol(name)?.clone();
                         let result = self.new_anonymous_register(symbol.format().clone());
 
-                        llvm::emit_symbol_load(&mut self.emitter, &result, &symbol)
-                            .map_err(|cause| self.file_error(cause))?;
+                        self.emitter.emit_symbol_load(&result, &symbol)?;
 
                         Some(RightValue::Register(result))
                     },
@@ -458,10 +437,10 @@ impl<'a, T: Write> Generator<'a, T> {
             },
             ast::Node::Unary { operation, operand } => {
                 let _operand = self.generate_node(operand.as_ref(), context, expected_unary_operand_format(*operation, expected_format))?
-                    .ok_or_else(|| self.error(format!("operation '{operation}x' expects a value for x")))?;
+                    .ok_or_else(|| crate::RawError::new(format!("operation '{operation}x' expects a value for x")).into_boxed())?;
                 
                 match operation {
-                    _ => return Err(self.error(format!("operation '{operation}x' not yet implemented")))
+                    _ => return Err(crate::RawError::new(format!("operation '{operation}x' not yet implemented")).into_boxed())
                 }
             },
             ast::Node::Binary { operation: ast::BinaryOperation::Assign, lhs, rhs } => {
@@ -469,117 +448,106 @@ impl<'a, T: Write> Generator<'a, T> {
                     // If we don't clone here, with the way things are currently set up, we can't borrow self.emitter as mutable
                     let symbol = self.get_symbol(name)?.clone();
                     let value = self.generate_node(rhs.as_ref(), context, Some(symbol.format().clone()))?
-                        .ok_or_else(|| self.error(String::from("operation '... = x' expects a value for x")))?;
+                        .ok_or_else(|| crate::RawError::new(String::from("operation '... = x' expects a value for x")).into_boxed())?;
 
-                    llvm::emit_symbol_store(&mut self.emitter, &value, &symbol)
-                        .map_err(|cause| self.file_error(cause))?;
+                    self.emitter.emit_symbol_store(&value, &symbol)?;
 
                     Some(value)
                 }
                 else {
-                    return Err(self.error(String::from("invalid left-hand side for '='")));
+                    return Err(crate::RawError::new(String::from("invalid left-hand side for '='")).into_boxed());
                 }
             },
             ast::Node::Binary { operation: ast::BinaryOperation::Convert, lhs, rhs } => {
                 if let ast::Node::ValueType(value_type) = rhs.as_ref() {
                     let to_format = ValueFormat::try_from(value_type)?;
                     let value = self.generate_node(lhs.as_ref(), context, None)?
-                        .ok_or_else(|| self.error(String::from("operation 'x as ...' expects a value for x")))?;
+                        .ok_or_else(|| crate::RawError::new(String::from("operation 'x as ...' expects a value for x")).into_boxed())?;
 
                     Some(self.change_format(value, &to_format)?)
                 }
                 else {
-                    return Err(self.error(String::from("invalid right-hand side for 'as'")));
+                    return Err(crate::RawError::new(String::from("invalid right-hand side for 'as'")).into_boxed());
                 }
             }
             ast::Node::Binary { operation, lhs, rhs } => {
                 let lhs = self.generate_node(lhs.as_ref(), context, expected_binary_lhs_format(*operation, expected_format.clone()))?
-                    .ok_or_else(|| self.error(format!("operation 'x{operation}...' expects a value for x")))?;
+                    .ok_or_else(|| crate::RawError::new(format!("operation 'x{operation}...' expects a value for x")).into_boxed())?;
                 let rhs = self.generate_node(rhs.as_ref(), context, expected_binary_rhs_format(*operation, expected_format.clone(), Some(lhs.format())))?
-                    .ok_or_else(|| self.error(format!("operation '...{operation}x' expects a value for x")))?;
+                    .ok_or_else(|| crate::RawError::new(format!("operation '...{operation}x' expects a value for x")).into_boxed())?;
 
                 match operation {
                     ast::BinaryOperation::Add => {
                         let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
 
-                        llvm::emit_addition(&mut self.emitter, &result, &lhs, &rhs)
-                            .map_err(|cause| self.file_error(cause))?;
+                        self.emitter.emit_addition(&result, &lhs, &rhs)?;
 
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::Subtract => {
                         let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
 
-                        llvm::emit_subtraction(&mut self.emitter, &result, &lhs, &rhs)
-                            .map_err(|cause| self.file_error(cause))?;
+                        self.emitter.emit_subtraction(&result, &lhs, &rhs)?;
 
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::Multiply => {
                         let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
 
-                        llvm::emit_multiplication(&mut self.emitter, &result, &lhs, &rhs)
-                            .map_err(|cause| self.file_error(cause))?;
+                        self.emitter.emit_multiplication(&result, &lhs, &rhs)?;
 
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::Divide => {
                         let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
 
-                        llvm::emit_division(&mut self.emitter, &result, &lhs, &rhs)
-                            .map_err(|cause| self.file_error(cause))?;
+                        self.emitter.emit_division(&result, &lhs, &rhs)?;
 
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::Equal => {
                         let result = self.new_anonymous_register(ValueFormat::Boolean);
 
-                        llvm::emit_cmp_equal(&mut self.emitter, &result, &lhs, &rhs)
-                            .map_err(|cause| self.file_error(cause))?;
+                        self.emitter.emit_cmp_equal(&result, &lhs, &rhs)?;
 
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::NotEqual => {
                         let result = self.new_anonymous_register(ValueFormat::Boolean);
 
-                        llvm::emit_cmp_not_equal(&mut self.emitter, &result, &lhs, &rhs)
-                            .map_err(|cause| self.file_error(cause))?;
+                        self.emitter.emit_cmp_not_equal(&result, &lhs, &rhs)?;
 
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::LessThan => {
                         let result = self.new_anonymous_register(ValueFormat::Boolean);
 
-                        llvm::emit_cmp_less_than(&mut self.emitter, &result, &lhs, &rhs)
-                            .map_err(|cause| self.file_error(cause))?;
+                        self.emitter.emit_cmp_less_than(&result, &lhs, &rhs)?;
 
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::LessEqual => {
                         let result = self.new_anonymous_register(ValueFormat::Boolean);
 
-                        llvm::emit_cmp_less_equal(&mut self.emitter, &result, &lhs, &rhs)
-                            .map_err(|cause| self.file_error(cause))?;
+                        self.emitter.emit_cmp_less_equal(&result, &lhs, &rhs)?;
 
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::GreaterThan => {
                         let result = self.new_anonymous_register(ValueFormat::Boolean);
 
-                        llvm::emit_cmp_greater_than(&mut self.emitter, &result, &lhs, &rhs)
-                            .map_err(|cause| self.file_error(cause))?;
+                        self.emitter.emit_cmp_greater_than(&result, &lhs, &rhs)?;
 
                         Some(RightValue::Register(result))
                     },
                     ast::BinaryOperation::GreaterEqual => {
                         let result = self.new_anonymous_register(ValueFormat::Boolean);
 
-                        llvm::emit_cmp_greater_equal(&mut self.emitter, &result, &lhs, &rhs)
-                            .map_err(|cause| self.file_error(cause))?;
+                        self.emitter.emit_cmp_greater_equal(&result, &lhs, &rhs)?;
 
                         Some(RightValue::Register(result))
                     },
-                    _ => return Err(self.error(format!("operation 'x{operation}y' not yet implemented")))
+                    _ => return Err(crate::RawError::new(format!("operation 'x{operation}y' not yet implemented")).into_boxed())
                 }
             },
             ast::Node::Scope { statements } => {
@@ -593,40 +561,31 @@ impl<'a, T: Write> Generator<'a, T> {
             },
             ast::Node::Conditional { condition, consequent, alternative } => {
                 let condition = self.generate_node(condition.as_ref(), context, Some(ValueFormat::Boolean))?
-                    .ok_or_else(|| self.error(String::from("'if (<condition>)' expects a boolean value for <condition>")))?;
+                    .ok_or_else(|| crate::RawError::new(String::from("'if (<condition>)' expects a boolean value for <condition>")).into_boxed())?;
                 let consequent_label = self.new_anonymous_label();
                 let alternative_label = self.new_anonymous_label();
 
-                llvm::emit_conditional_branch(&mut self.emitter, &condition, &consequent_label, &alternative_label)
-                    .map_err(|cause| self.file_error(cause))?;
+                self.emitter.emit_conditional_branch(&condition, &consequent_label, &alternative_label)?;
                 
                 if let Some(alternative) = alternative {
                     let tail_label = self.new_anonymous_label();
 
-                    llvm::emit_label(&mut self.emitter, &consequent_label)
-                        .map_err(|cause| self.file_error(cause))?;
+                    self.emitter.emit_label(&consequent_label)?;
                     self.generate_node(consequent.as_ref(), context, None)?;
-                    llvm::emit_unconditional_branch(&mut self.emitter, &tail_label)
-                        .map_err(|cause| self.file_error(cause))?;
+                    self.emitter.emit_unconditional_branch(&tail_label)?;
 
-                    llvm::emit_label(&mut self.emitter, &alternative_label)
-                        .map_err(|cause| self.file_error(cause))?;
+                    self.emitter.emit_label(&alternative_label)?;
                     self.generate_node(alternative.as_ref(), context, None)?;
-                    llvm::emit_unconditional_branch(&mut self.emitter, &tail_label)
-                        .map_err(|cause| self.file_error(cause))?;
+                    self.emitter.emit_unconditional_branch(&tail_label)?;
 
-                    llvm::emit_label(&mut self.emitter, &tail_label)
-                        .map_err(|cause| self.file_error(cause))?;
+                    self.emitter.emit_label(&tail_label)?;
                 }
                 else {
-                    llvm::emit_label(&mut self.emitter, &consequent_label)
-                        .map_err(|cause| self.file_error(cause))?;
+                    self.emitter.emit_label(&consequent_label)?;
                     self.generate_node(consequent.as_ref(), context, None)?;
-                    llvm::emit_unconditional_branch(&mut self.emitter, &alternative_label)
-                        .map_err(|cause| self.file_error(cause))?;
+                    self.emitter.emit_unconditional_branch(&alternative_label)?;
 
-                    llvm::emit_label(&mut self.emitter, &alternative_label)
-                        .map_err(|cause| self.file_error(cause))?;
+                    self.emitter.emit_label(&alternative_label)?;
                 }
 
                 None
@@ -634,38 +593,31 @@ impl<'a, T: Write> Generator<'a, T> {
             ast::Node::While { condition, body } => {
                 let condition_label = self.new_anonymous_label();
 
-                llvm::emit_unconditional_branch(&mut self.emitter, &condition_label)
-                    .map_err(|cause| self.file_error(cause))?;
+                self.emitter.emit_unconditional_branch(&condition_label)?;
 
-                llvm::emit_label(&mut self.emitter, &condition_label)
-                    .map_err(|cause| self.file_error(cause))?;
+                self.emitter.emit_label(&condition_label)?;
 
                 let condition = self.generate_node(condition.as_ref(), context, Some(ValueFormat::Boolean))?
-                    .ok_or_else(|| self.error(String::from("'while (<condition>)' expects a boolean value for <condition>")))?;
+                    .ok_or_else(|| crate::RawError::new(String::from("'while (<condition>)' expects a boolean value for <condition>")).into_boxed())?;
                 let body_label = self.new_anonymous_label();
                 let tail_label = self.new_anonymous_label();
                 let loop_context = context.clone().enter_loop(tail_label.clone(), condition_label.clone());
 
-                llvm::emit_conditional_branch(&mut self.emitter, &condition, &body_label, &tail_label)
-                    .map_err(|cause| self.file_error(cause))?;
+                self.emitter.emit_conditional_branch(&condition, &body_label, &tail_label)?;
 
-                llvm::emit_label(&mut self.emitter, &body_label)
-                    .map_err(|cause| self.file_error(cause))?;
+                self.emitter.emit_label(&body_label)?;
                 self.generate_node(body.as_ref(), &loop_context, None)?;
-                llvm::emit_unconditional_branch(&mut self.emitter, &condition_label)
-                    .map_err(|cause| self.file_error(cause))?;
+                self.emitter.emit_unconditional_branch(&condition_label)?;
 
-                llvm::emit_label(&mut self.emitter, &tail_label)
-                    .map_err(|cause| self.file_error(cause))?;
+                self.emitter.emit_label(&tail_label)?;
 
                 None
             },
             ast::Node::Break => {
                 let break_label = context.break_label()
-                    .ok_or_else(|| self.error(String::from("unexpected 'break' outside loop")))?;
+                    .ok_or_else(|| crate::RawError::new(String::from("unexpected 'break' outside loop")).into_boxed())?;
 
-                llvm::emit_unconditional_branch(&mut self.emitter, break_label)
-                    .map_err(|cause| self.file_error(cause))?;
+                self.emitter.emit_unconditional_branch(break_label)?;
 
                 // Consume an anonymous ID corresponding to the implicit label inserted after the terminator instruction
                 self.next_anonymous_register_id += 1;
@@ -674,10 +626,9 @@ impl<'a, T: Write> Generator<'a, T> {
             },
             ast::Node::Continue => {
                 let continue_label = context.continue_label()
-                    .ok_or_else(|| self.error(String::from("unexpected 'continue' outside loop")))?;
+                    .ok_or_else(|| crate::RawError::new(String::from("unexpected 'continue' outside loop")).into_boxed())?;
 
-                llvm::emit_unconditional_branch(&mut self.emitter, continue_label)
-                    .map_err(|cause| self.file_error(cause))?;
+                self.emitter.emit_unconditional_branch(continue_label)?;
 
                 // Consume an anonymous ID corresponding to the implicit label inserted after the terminator instruction
                 self.next_anonymous_register_id += 1;
@@ -687,14 +638,12 @@ impl<'a, T: Write> Generator<'a, T> {
             ast::Node::Return { value } => {
                 if let Some(value) = value {
                     let value = self.generate_node(value.as_ref(), context, None)?
-                        .ok_or_else(|| self.error(String::from("'return' expects a value")))?;
+                        .ok_or_else(|| crate::RawError::new(String::from("'return' expects a value")).into_boxed())?;
 
-                    llvm::emit_return(&mut self.emitter, Some(&value))
-                        .map_err(|cause| self.file_error(cause))?;
+                    self.emitter.emit_return(Some(&value))?;
                 }
                 else {
-                    llvm::emit_return(&mut self.emitter, None)
-                        .map_err(|cause| self.file_error(cause))?;
+                    self.emitter.emit_return(None)?;
                 }
 
                 // Consume an anonymous ID corresponding to the implicit label inserted after the terminator instruction
@@ -704,7 +653,7 @@ impl<'a, T: Write> Generator<'a, T> {
             },
             ast::Node::Print { value } => {
                 let value_to_print = self.generate_node(value.as_ref(), context, None)?
-                    .ok_or_else(|| self.error(String::from("'print' expects a value")))?;
+                    .ok_or_else(|| crate::RawError::new(String::from("'print' expects a value")).into_boxed())?;
                 let to_format = match value_to_print.format() {
                     ValueFormat::Boolean => ValueFormat::Integer { size: 8, signed: false },
                     ValueFormat::Integer { signed, .. } => ValueFormat::Integer { size: 8, signed },
@@ -713,8 +662,7 @@ impl<'a, T: Write> Generator<'a, T> {
                 let value_to_print = self.change_format(value_to_print, &to_format)?;
                 let result_register = self.new_anonymous_register(ValueFormat::Integer { size: 4, signed: true });
 
-                llvm::emit_print(&mut self.emitter, &result_register, &value_to_print)
-                    .map_err(|cause| self.file_error(cause))?;
+                self.emitter.emit_print(&result_register, &value_to_print)?;
 
                 None
             },
@@ -723,15 +671,13 @@ impl<'a, T: Write> Generator<'a, T> {
                 let alignment = format.size();
                 let symbol = self.create_symbol(context, name.clone(), format.clone(), alignment);
 
-                llvm::emit_symbol_allocation(&mut self.emitter, &symbol)
-                    .map_err(|cause| self.file_error(cause))?;
+                self.emitter.emit_symbol_allocation(&symbol)?;
 
                 if let Some(node) = value {
                     let value = self.generate_node(node.as_ref(), context, Some(format))?
-                        .ok_or_else(|| self.error(String::from("'let' expects a value")))?;
+                        .ok_or_else(|| crate::RawError::new(String::from("'let' expects a value")).into_boxed())?;
 
-                    llvm::emit_symbol_store(&mut self.emitter, &value, &symbol)
-                        .map_err(|cause| self.file_error(cause))?;
+                    self.emitter.emit_symbol_store(&value, &symbol)?;
                 }
 
                 self.define_symbol(context, symbol);
@@ -770,19 +716,17 @@ impl<'a, T: Write> Generator<'a, T> {
                     .map(|parameter| self.local_symbols.find(&parameter.name).unwrap().register().clone())
                     .collect();
 
-                llvm::emit_function_enter(&mut self.emitter, function_symbol.register(), &parameter_registers)
-                    .map_err(|cause| self.file_error(cause))?;
+                self.emitter.emit_function_enter(function_symbol.register(), &parameter_registers)?;
                 
                 self.define_symbol(context, function_symbol);
 
                 self.generate_node(body.as_ref(), &function_context, None)?;
 
-                llvm::emit_function_exit(&mut self.emitter)
-                    .map_err(|cause| self.file_error(cause))?;
+                self.emitter.emit_function_exit()?;
 
                 None
             },
-            _ => return Err(self.error(String::from("unexpected node type")))
+            _ => return Err(crate::RawError::new(String::from("unexpected node type")).into_boxed())
         };
 
         if let (Some(expected_format), Some(result_value)) = (&expected_format, &result) {
@@ -792,15 +736,15 @@ impl<'a, T: Write> Generator<'a, T> {
         Ok(result)
     }
 
-    pub fn generate(mut self, parser: &mut ast::parse::Parser<'a, impl BufRead>) -> crate::Result<()> {
-        llvm::emit_preamble(&mut self.emitter, self.filename)
-            .map_err(|cause| self.file_error(cause))?;
+    pub fn generate<T: BufRead>(mut self, parser: &mut ast::parse::Parser<T>) -> crate::Result<()> {
+        self.emitter.emit_preamble(parser.filename())?;
         
+        let global_context = ScopeContext::new();
+
         while let Some(statement) = parser.parse_statement(false, true)? {
-            self.generate_node(statement.as_ref(), &ScopeContext::new(), None)?;
+            self.generate_node(statement.as_ref(), &global_context, None)?;
         }
 
-        llvm::emit_postamble(&mut self.emitter)
-            .map_err(|cause| self.file_error(cause))
+        self.emitter.emit_postamble()
     }
 }

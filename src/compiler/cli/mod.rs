@@ -33,7 +33,7 @@ pub fn invoke(args: CompilerArgs) -> crate::Result<()> {
     for source_filename in args.source_paths() {
         println!("Compiling '{source_filename}':");
 
-        let mut scanner = crate::token::scan::Scanner::from_file(source_filename)?;
+        let mut scanner = crate::token::scan::Scanner::from_file(source_filename.clone())?;
         let mut parser = crate::ast::parse::Parser::new(&mut scanner)?;
 
         // while let Some(statement) = parser.parse_statement(true, true)? {
@@ -41,7 +41,7 @@ pub fn invoke(args: CompilerArgs) -> crate::Result<()> {
         // }
 
         let output_filename = args.output_path();
-        crate::gen::Generator::from_filename(output_filename)?
+        crate::gen::Generator::from_filename(output_filename.to_owned())?
             .generate(&mut parser)?;
         println!("LLVM successfully written to '{output_filename}'.");
     }

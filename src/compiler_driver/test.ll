@@ -1,5 +1,5 @@
-; ModuleID = './src/compiler_driver/test.ll'
-; source_filename = "./src/compiler_driver/test.ll"
+; ModuleID = './src/compiler_driver/test.txt'
+; source_filename = "./src/compiler_driver/test.txt"
 
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-pc-linux-gnu"
@@ -9,7 +9,7 @@ target triple = "x86_64-pc-linux-gnu"
 @print_ptr_fstring = private unnamed_addr constant [4 x i8] c"%p\0A\00", align 1
 
 ; Function Attrs: noinline nounwind optnone uwtable
-define dso_local i32 @fibonacci(i32* %limit) #0 {
+define dso_local i32 @fibonacci(i32* noundef %limit) #0 {
     %a = alloca i32, align 4
     store i32 0, i32* %a
     %b = alloca i32, align 4
@@ -55,7 +55,7 @@ define dso_local i32 @main() #0 {
 -L5:
     %4 = load i32, i32* %b
     %5 = sext i32 %4 to i64
-    %6 = call i32(i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 %5)
+    %6 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 noundef %5)
     %temp = alloca i32, align 4
     %7 = load i32, i32* %a
     %8 = load i32, i32* %b

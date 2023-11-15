@@ -8,32 +8,35 @@ target triple = "x86_64-pc-linux-gnu"
 @.str.2 = private unnamed_addr constant [4 x i8] c"%p\0A\00", align 1
 
 ; Function Attrs: noinline nounwind optnone uwtable
-define dso_local void @print_i64(i64 noundef %0) #0 {
+define dso_local i64 @print_i64(i64 noundef %0) #0 {
   %2 = alloca i64, align 8
   store i64 %0, i64* %2, align 8
   %3 = load i64, i64* %2, align 8
   %4 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @.str, i64 0, i64 0), i64 noundef %3)
-  ret void
+  %5 = load i64, i64* %2, align 8
+  ret i64 %5
 }
 
 declare i32 @printf(i8* noundef, ...) #1
 
 ; Function Attrs: noinline nounwind optnone uwtable
-define dso_local void @print_u64(i64 noundef %0) #0 {
+define dso_local i64 @print_u64(i64 noundef %0) #0 {
   %2 = alloca i64, align 8
   store i64 %0, i64* %2, align 8
   %3 = load i64, i64* %2, align 8
   %4 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @.str.1, i64 0, i64 0), i64 noundef %3)
-  ret void
+  %5 = load i64, i64* %2, align 8
+  ret i64 %5
 }
 
 ; Function Attrs: noinline nounwind optnone uwtable
-define dso_local void @print_ptr(i8* noundef %0) #0 {
+define dso_local i8* @print_ptr(i8* noundef %0) #0 {
   %2 = alloca i8*, align 8
   store i8* %0, i8** %2, align 8
   %3 = load i8*, i8** %2, align 8
   %4 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([4 x i8], [4 x i8]* @.str.2, i64 0, i64 0), i8* noundef %3)
-  ret void
+  %5 = load i8*, i8** %2, align 8
+  ret i8* %5
 }
 
 ; Function Attrs: noinline nounwind optnone uwtable
@@ -53,23 +56,23 @@ define dso_local i32 @main() #0 {
   br i1 %7, label %8, label %9
 
 8:                                                ; preds = %5
-  br label %17
+  br label %18
 
 9:                                                ; preds = %5
   %10 = load i32, i32* %3, align 4
   %11 = sext i32 %10 to i64
-  call void @print_i64(i64 noundef %11)
-  %12 = load i32, i32* %2, align 4
-  %13 = load i32, i32* %3, align 4
-  %14 = add nsw i32 %12, %13
-  store i32 %14, i32* %4, align 4
-  %15 = load i32, i32* %3, align 4
-  store i32 %15, i32* %2, align 4
-  %16 = load i32, i32* %4, align 4
-  store i32 %16, i32* %3, align 4
+  %12 = call i64 @print_i64(i64 noundef %11)
+  %13 = load i32, i32* %2, align 4
+  %14 = load i32, i32* %3, align 4
+  %15 = add nsw i32 %13, %14
+  store i32 %15, i32* %4, align 4
+  %16 = load i32, i32* %3, align 4
+  store i32 %16, i32* %2, align 4
+  %17 = load i32, i32* %4, align 4
+  store i32 %17, i32* %3, align 4
   br label %5
 
-17:                                               ; preds = %8
+18:                                               ; preds = %8
   ret i32 0
 }
 

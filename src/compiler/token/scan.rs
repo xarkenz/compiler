@@ -8,23 +8,23 @@ use std::fs::File;
 use utf8_chars::BufReadCharsExt;
 
 #[derive(Debug)]
-pub struct Scanner<'a, T: BufRead> {
-    filename: &'a str,
+pub struct Scanner<T: BufRead> {
+    filename: String,
     line: usize,
     source: T,
     put_backs: Vec<char>,
 }
 
-impl<'a> Scanner<'a, BufReader<File>> {
-    pub fn from_file(filename: &'a str) -> crate::Result<Self> {
-        let source = BufReader::new(File::open(filename)
-            .map_err(|cause| FileError::new(filename.to_owned(), None, cause).into_boxed())?);
-        Ok(Self::new(filename, source))
+impl Scanner<BufReader<File>> {
+    pub fn from_file(filename: String) -> crate::Result<Self> {
+        File::open(filename.clone())
+            .map(|file| Self::new(filename.clone(), BufReader::new(file)))
+            .map_err(|cause| FileError::new(filename.clone(), None, cause).into_boxed())
     }
 }
 
-impl<'a, T: BufRead> Scanner<'a, T> {
-    pub fn new(filename: &'a str, source: T) -> Self {
+impl<T: BufRead> Scanner<T> {
+    pub fn new(filename: String, source: T) -> Self {
         Self {
             filename,
             line: 1,
@@ -33,8 +33,8 @@ impl<'a, T: BufRead> Scanner<'a, T> {
         }
     }
 
-    pub fn filename(&self) -> &'a str {
-        self.filename
+    pub fn filename(&self) -> &str {
+        self.filename.as_str()
     }
 
     pub fn line(&self) -> usize {
