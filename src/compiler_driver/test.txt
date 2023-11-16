@@ -11,20 +11,14 @@ function fibonacci(limit: i32) -> i32 {
     return a;
 }
 
-function main() -> i32 {
-    let a: i32 = 0;
-    let b: i32 = 1;
+function my_print_fn(value: i32) -> i32 {
+    print value;
+    return 0;
+}
 
-    while (true) {
-        if (b >= 1000) {
-            break;
-        }
-        
-        print b;
-        let temp: i32 = a + b;
-        a = b;
-        b = temp;
-    }
+function main() -> i32 {
+    let my_fib: i32 = fibonacci(1000);
+    my_print_fn(my_fib);
 
     return 0;
 }

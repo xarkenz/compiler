@@ -100,6 +100,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
         let mut lhs = self.parse_operand()?;
 
         while let Some(token) = self.current_token() {
+            // Allowed ends are checked before operations, even if a valid operation can end the expression
             if allowed_ends.contains(token) {
                 break;
             }
@@ -130,6 +131,33 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     operation,
                     lhs,
                     rhs,
+                });
+            }
+            else if let Token::ParenLeft = token {
+                // Left parenthesis indicates the function call operation
+                if let Some(parent_precedence) = parent_precedence {
+                    if parent_precedence >= Precedence::Postfix {
+                        // Parent operation should be made into a subtree of the call operation (which has postfix precedence)
+                        // Usually the parent operation is some sort of member access, e.g. `a.b()`
+                        break;
+                    }
+                }
+
+                self.scan_token()?;
+                let mut arguments = Vec::new();
+                while !(matches!(self.current_token(), Some(Token::ParenRight))) {
+                    let argument = self.parse_expression(None, &[Token::Comma, Token::ParenRight])?;
+                    arguments.push(argument);
+
+                    if let Some(Token::Comma) = self.current_token() {
+                        self.scan_token()?;
+                    }
+                }
+                self.scan_token()?;
+
+                lhs = Box::new(Node::Call {
+                    callee: lhs,
+                    arguments,
                 });
             }
             else {

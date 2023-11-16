@@ -334,6 +334,10 @@ pub enum Node {
         lhs: Box<Node>,
         rhs: Box<Node>,
     },
+    Call {
+        callee: Box<Node>,
+        arguments: Vec<Box<Node>>,
+    },
     Scope {
         statements: Vec<Box<Node>>,
     },
@@ -382,10 +386,17 @@ impl fmt::Display for Node {
             Self::Binary { operation, lhs, rhs } => {
                 write!(f, "({lhs}{operation}{rhs})")
             },
+            Self::Call { callee, arguments } => {
+                write!(f, "({callee}(")?;
+                for argument in arguments {
+                    write!(f, "{argument}, ")?;
+                }
+                write!(f, "))")
+            },
             Self::Scope { statements } => {
                 write!(f, " {{")?;
                 for statement in statements {
-                    statement.fmt(f)?;
+                    write!(f, "{statement}")?;
                 }
                 write!(f, " }}")
             },

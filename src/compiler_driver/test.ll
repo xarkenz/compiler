@@ -9,7 +9,9 @@ target triple = "x86_64-pc-linux-gnu"
 @print_ptr_fstring = private unnamed_addr constant [4 x i8] c"%p\0A\00", align 1
 
 ; Function Attrs: noinline nounwind optnone uwtable
-define dso_local i32 @fibonacci(i32* noundef %limit) #0 {
+define dso_local i32 @fibonacci(i32 noundef %-arg-limit) #0 {
+    %limit = alloca i32, align 4
+    store i32 %-arg-limit, i32* %limit
     %a = alloca i32, align 4
     store i32 0, i32* %a
     %b = alloca i32, align 4
@@ -37,36 +39,22 @@ define dso_local i32 @fibonacci(i32* noundef %limit) #0 {
 }
 
 ; Function Attrs: noinline nounwind optnone uwtable
+define dso_local i32 @my_print_fn(i32 noundef %-arg-value) #0 {
+    %value = alloca i32, align 4
+    store i32 %-arg-value, i32* %value
+    %1 = load i32, i32* %value
+    %2 = sext i32 %1 to i64
+    %3 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 noundef %2)
+    ret i32 0
+}
+
+; Function Attrs: noinline nounwind optnone uwtable
 define dso_local i32 @main() #0 {
-    %a = alloca i32, align 4
-    store i32 0, i32* %a
-    %b = alloca i32, align 4
-    store i32 1, i32* %b
-    br label %-L1
--L1:
-    br i1 true, label %-L2, label %-L3
--L2:
-    %1 = load i32, i32* %b
-    %2 = icmp sge i32 %1, 1000
-    br i1 %2, label %-L4, label %-L5
--L4:
-    br label %-L3
-    br label %-L5
--L5:
-    %4 = load i32, i32* %b
-    %5 = sext i32 %4 to i64
-    %6 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 noundef %5)
-    %temp = alloca i32, align 4
-    %7 = load i32, i32* %a
-    %8 = load i32, i32* %b
-    %9 = add nsw i32 %7, %8
-    store i32 %9, i32* %temp
-    %10 = load i32, i32* %b
-    store i32 %10, i32* %a
-    %11 = load i32, i32* %temp
-    store i32 %11, i32* %b
-    br label %-L1
--L3:
+    %my_fib = alloca i32, align 4
+    %1 = call i32(i32) @fibonacci(i32 noundef 1000)
+    store i32 %1, i32* %my_fib
+    %2 = load i32, i32* %my_fib
+    %3 = call i32(i32) @my_print_fn(i32 noundef %2)
     ret i32 0
 }
 

@@ -419,13 +419,17 @@ impl<W: Write> Generator<W> {
             ast::Node::Literal(literal) => {
                 match literal {
                     token::Literal::Identifier(name) => {
-                        // If we don't clone here, with the way things are currently set up, we can't borrow self.emitter as mutable
+                        // If we don't clone here, with the way things are currently set up, we can't borrow *self as mutable
                         let symbol = self.get_symbol(name)?.clone();
-                        let result = self.new_anonymous_register(symbol.format().clone());
 
-                        self.emitter.emit_symbol_load(&result, &symbol)?;
-
-                        Some(RightValue::Register(result))
+                        if symbol.format().is_function() {
+                            Some(RightValue::Register(symbol.register().clone()))
+                        }
+                        else {
+                            let result = self.new_anonymous_register(symbol.format().clone());
+                            self.emitter.emit_symbol_load(&result, &symbol)?;
+                            Some(RightValue::Register(result))
+                        }
                     },
                     token::Literal::Integer(value) => {
                         Some(RightValue::Constant(ConstantValue::Integer(*value, expected_format.clone().unwrap_or(ValueFormat::Integer { size: 4, signed: true }))))
@@ -445,7 +449,7 @@ impl<W: Write> Generator<W> {
             },
             ast::Node::Binary { operation: ast::BinaryOperation::Assign, lhs, rhs } => {
                 if let ast::Node::Literal(token::Literal::Identifier(name)) = lhs.as_ref() {
-                    // If we don't clone here, with the way things are currently set up, we can't borrow self.emitter as mutable
+                    // If we don't clone here, with the way things are currently set up, we can't borrow *self as mutable
                     let symbol = self.get_symbol(name)?.clone();
                     let value = self.generate_node(rhs.as_ref(), context, Some(symbol.format().clone()))?
                         .ok_or_else(|| crate::RawError::new(String::from("operation '... = x' expects a value for x")).into_boxed())?;
@@ -548,6 +552,35 @@ impl<W: Write> Generator<W> {
                         Some(RightValue::Register(result))
                     },
                     _ => return Err(crate::RawError::new(format!("operation 'x{operation}y' not yet implemented")).into_boxed())
+                }
+            },
+            ast::Node::Call { callee, arguments } => {
+                let callee = self.generate_node(callee.as_ref(), context, None)?
+                    .ok_or_else(|| crate::RawError::new(format!("expected a function to call")).into_boxed())?;
+
+                if let ValueFormat::Function { returned, parameters, is_varargs } = callee.format() {
+                    let mut argument_results = Vec::new();
+                    for (argument, parameter_format) in arguments.iter().zip(parameters.iter()) {
+                        let argument_result = self.generate_node(argument.as_ref(), context, Some(parameter_format.clone()))?
+                            .ok_or_else(|| crate::RawError::new(format!("expected a value for argument")).into_boxed())?;
+                        argument_results.push(argument_result);
+                    }
+
+                    if !is_varargs && arguments.len() > parameters.len() {
+                        return Err(crate::RawError::new(format!("too many arguments; expected {} arguments, got {}", parameters.len(), arguments.len())).into_boxed());
+                    }
+                    else if arguments.len() < parameters.len() {
+                        return Err(crate::RawError::new(format!("too few arguments; expected {} arguments, got {}", parameters.len(), arguments.len())).into_boxed());
+                    }
+
+                    let result = self.new_anonymous_register(*returned);
+
+                    self.emitter.emit_function_call(Some(&result), &callee, &argument_results)?;
+
+                    Some(RightValue::Register(result))
+                }
+                else {
+                    return Err(crate::RawError::new(String::from("cannot call a non-function object")).into_boxed());
                 }
             },
             ast::Node::Scope { statements } => {
@@ -697,14 +730,21 @@ impl<W: Write> Generator<W> {
                 self.next_anonymous_register_id = 1;
                 self.next_anonymous_label_id = 1;
                 let function_context = context.clone().enter_function();
-                parameters.iter()
+
+                let parameter_handles: Vec<_> = parameters.iter()
                     .map(|parameter| parameter.name.clone())
                     .zip(parameter_formats.iter())
-                    .for_each(|(name, format)| {
+                    .map(|(name, format)| {
                         let alignment = format.size();
-                        let symbol = self.create_symbol(&function_context, name, format.clone(), alignment);
-                        self.define_symbol(&function_context, symbol);
-                    });
+                        let parameter_register = Register {
+                            name: format!("-arg-{name}"),
+                            format: format.clone(),
+                            is_global: false,
+                        };
+                        let parameter_symbol = self.create_symbol(&function_context, name, format.clone(), alignment);
+                        (parameter_symbol, parameter_register)
+                    })
+                    .collect();
 
                 let format = ValueFormat::Function {
                     returned,
@@ -712,13 +752,15 @@ impl<W: Write> Generator<W> {
                     is_varargs: false, // TODO
                 };
                 let function_symbol = self.create_symbol(context, name.clone(), format, alignment);
-                let parameter_registers: Vec<_> = parameters.iter()
-                    .map(|parameter| self.local_symbols.find(&parameter.name).unwrap().register().clone())
-                    .collect();
 
-                self.emitter.emit_function_enter(function_symbol.register(), &parameter_registers)?;
-                
+                self.emitter.emit_function_enter(function_symbol.register(), &parameter_handles)?;
                 self.define_symbol(context, function_symbol);
+
+                for (parameter_symbol, parameter_register) in parameter_handles {
+                    self.emitter.emit_symbol_allocation(&parameter_symbol)?;
+                    self.emitter.emit_symbol_store(&RightValue::Register(parameter_register), &parameter_symbol)?;
+                    self.define_symbol(&function_context, parameter_symbol);
+                }
 
                 self.generate_node(body.as_ref(), &function_context, None)?;
 

@@ -82,27 +82,34 @@ impl<W: Write> Emitter<W> {
         .map_err(|cause| self.error(cause))
     }
 
-    pub fn emit_function_enter(&mut self, function: &Register, parameters: &[Register]) -> crate::Result<()> {
+    pub fn emit_function_enter(&mut self, function: &Register, parameter_handles: &[(info::Symbol, Register)]) -> crate::Result<()> {
         match function.format() {
             ValueFormat::Function { returned, is_varargs, .. } => {
                 write!(
                     self.writer,
                     "; Function Attrs: noinline nounwind optnone uwtable\ndefine dso_local {returned} {function}(",
                 ).map_err(|cause| self.error(cause))?;
-                let mut parameters = parameters.iter();
+
+                let mut parameters = parameter_handles.iter().map(|(_, register)| register);
                 if let Some(first) = parameters.next() {
-                    write!(self.writer, "{format} noundef {first}", format = first.format()).map_err(|cause| self.error(cause))?;
+                    write!(self.writer, "{format} noundef {first}", format = first.format())
+                        .map_err(|cause| self.error(cause))?;
                     for parameter in parameters {
-                        write!(self.writer, ", {format} noundef {parameter}", format = parameter.format()).map_err(|cause| self.error(cause))?;
+                        write!(self.writer, ", {format} noundef {parameter}", format = parameter.format())
+                            .map_err(|cause| self.error(cause))?;
                     }
                     if *is_varargs {
-                        write!(self.writer, ", ...").map_err(|cause| self.error(cause))?;
+                        write!(self.writer, ", ...")
+                            .map_err(|cause| self.error(cause))?;
                     }
                 }
                 else if *is_varargs {
-                    write!(self.writer, "...").map_err(|cause| self.error(cause))?;
+                    write!(self.writer, "...")
+                        .map_err(|cause| self.error(cause))?;
                 }
-                write!(self.writer, ") #0 {{\n").map_err(|cause| self.error(cause))
+                
+                write!(self.writer, ") #0 {{\n")
+                    .map_err(|cause| self.error(cause))
             },
             _ => panic!("unexpected function format")
         }
@@ -366,6 +373,37 @@ impl<W: Write> Emitter<W> {
             )
         }
         .map_err(|cause| self.error(cause))
+    }
+
+    pub fn emit_function_call(&mut self, result: Option<&Register>, callee: &RightValue, arguments: &[RightValue]) -> crate::Result<()> {
+        if let Some(result) = result {
+            write!(
+                self.writer,
+                "{INDENT}{result} = call {callee_format} {callee}(",
+                callee_format = callee.format(),
+            )
+        }
+        else {
+            write!(
+                self.writer,
+                "{INDENT}call {callee_format} {callee}(",
+                callee_format = callee.format(),
+            )
+        }
+        .map_err(|cause| self.error(cause))?;
+
+        let mut arguments_iter = arguments.iter();
+        if let Some(first) = arguments_iter.next() {
+            write!(self.writer, "{format} noundef {first}", format = first.format())
+                .map_err(|cause| self.error(cause))?;
+            for argument in arguments_iter {
+                write!(self.writer, ", {format} noundef {argument}", format = argument.format())
+                    .map_err(|cause| self.error(cause))?;
+            }
+        }
+
+        write!(self.writer, ")\n")
+            .map_err(|cause| self.error(cause))
     }
 
     pub fn emit_print(&mut self, result: &Register, value: &RightValue) -> crate::Result<()> {
