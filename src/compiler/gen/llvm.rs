@@ -440,4 +440,12 @@ impl<W: Write> Emitter<W> {
         }
         .map_err(|cause| self.error(cause))
     }
+
+    pub fn emit_unreachable(&mut self) -> crate::Result<()> {
+        write!(
+            self.writer,
+            "{INDENT}unreachable\n",
+        )
+        .map_err(|cause| self.error(cause))
+    }
 }

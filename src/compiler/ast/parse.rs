@@ -242,10 +242,14 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 }
 
                 self.scan_token()?;
-                self.expect_token(&[Token::RightArrow])?;
-                self.scan_token()?;
-                // The function body must be enclosed by a scope, so expect a '{' token following the return type
-                let return_type = self.parse_value_type(&[Token::CurlyLeft])?;
+                self.expect_token(&[Token::RightArrow, Token::CurlyLeft])?;
+                // The function body must be enclosed by a scope, so expect a '{' token following the return type (if present)
+                let return_type = if let Some(Token::RightArrow) = self.current_token() {
+                    self.scan_token()?;
+                    self.parse_value_type(&[Token::CurlyLeft])?
+                } else {
+                    ValueType::Named(String::from("void"))
+                };
                 let body = self.parse_statement(false, false)?.unwrap();
 
                 Ok(Some(Box::new(Node::Function {

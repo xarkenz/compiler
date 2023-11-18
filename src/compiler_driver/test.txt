@@ -11,9 +11,8 @@ function fibonacci(limit: i32) -> i32 {
     return a;
 }
 
-function my_print_fn(value: i32) -> i32 {
+function my_print_fn(value: i32) {
     print value;
-    return 0;
 }
 
 function main() -> i32 {
