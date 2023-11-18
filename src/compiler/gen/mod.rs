@@ -112,30 +112,6 @@ impl fmt::Display for ValueFormat {
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub enum ConstantValue {
-    Boolean(bool),
-    Integer(u64, ValueFormat),
-}
-
-impl ConstantValue {
-    pub fn format(&self) -> ValueFormat {
-        match self {
-            Self::Boolean(_) => ValueFormat::Boolean,
-            Self::Integer(_, format) => format.clone(),
-        }
-    }
-}
-
-impl fmt::Display for ConstantValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Boolean(value) => value.fmt(f),
-            Self::Integer(value, _) => value.fmt(f),
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Debug)]
 pub struct Register {
     name: String,
     format: ValueFormat,
@@ -170,7 +146,8 @@ impl fmt::Display for Register {
 pub enum RightValue {
     Never,
     Void,
-    Constant(ConstantValue),
+    Boolean(bool),
+    Integer(u64, ValueFormat),
     Register(Register),
 }
 
@@ -179,7 +156,8 @@ impl RightValue {
         match self {
             Self::Never => ValueFormat::Never,
             Self::Void => ValueFormat::Void,
-            Self::Constant(value) => value.format(),
+            Self::Boolean(_) => ValueFormat::Boolean,
+            Self::Integer(_, format) => format.clone(),
             Self::Register(value) => value.format().clone(),
         }
     }
@@ -188,8 +166,9 @@ impl RightValue {
 impl fmt::Display for RightValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Never | Self::Void => write!(f, "???"),
-            Self::Constant(value) => value.fmt(f),
+            Self::Never | Self::Void => write!(f, "?"),
+            Self::Boolean(value) => value.fmt(f),
+            Self::Integer(value, _) => value.fmt(f),
             Self::Register(value) => value.fmt(f),
         }
     }
@@ -420,7 +399,7 @@ impl<W: Write> Generator<W> {
             ValueFormat::Boolean,
         ) = (&from_format, to_format) {
             let result = self.new_anonymous_register(ValueFormat::Boolean);
-            self.emitter.emit_cmp_not_equal(&result, &value, &RightValue::Constant(ConstantValue::Integer(0, from_format.clone())))?;
+            self.emitter.emit_cmp_not_equal(&result, &value, &RightValue::Integer(0, from_format.clone()))?;
             
             Ok(RightValue::Register(result))
         }
@@ -456,10 +435,10 @@ impl<W: Write> Generator<W> {
                         }
                     },
                     token::Literal::Integer(value) => {
-                        RightValue::Constant(ConstantValue::Integer(*value, expected_format.clone().unwrap_or(ValueFormat::Integer { size: 4, signed: true })))
+                        RightValue::Integer(*value, expected_format.clone().unwrap_or(ValueFormat::Integer { size: 4, signed: true }))
                     },
                     token::Literal::Boolean(value) => {
-                        RightValue::Constant(ConstantValue::Boolean(*value))
+                        RightValue::Boolean(*value)
                     }
                 }
             },
@@ -467,7 +446,18 @@ impl<W: Write> Generator<W> {
                 let _operand = self.generate_node(operand.as_ref(), context, expected_unary_operand_format(*operation, expected_format))?;
                 
                 match operation {
-                    _ => return Err(crate::RawError::new(format!("operation '{operation}x' not yet implemented")).into_boxed())
+                    ast::UnaryOperation::PostIncrement => todo!(),
+                    ast::UnaryOperation::PostDecrement => todo!(),
+                    ast::UnaryOperation::PreIncrement => todo!(),
+                    ast::UnaryOperation::PreDecrement => todo!(),
+                    ast::UnaryOperation::Positive => todo!(),
+                    ast::UnaryOperation::Negative => todo!(),
+                    ast::UnaryOperation::BitwiseNot => todo!(),
+                    ast::UnaryOperation::LogicalNot => todo!(),
+                    ast::UnaryOperation::Reference => todo!(),
+                    ast::UnaryOperation::Dereference => todo!(),
+                    ast::UnaryOperation::GetSize => todo!(),
+                    ast::UnaryOperation::GetAlign => todo!(),
                 }
             },
             ast::Node::Binary { operation: ast::BinaryOperation::Assign, lhs, rhs } => {
@@ -500,6 +490,10 @@ impl<W: Write> Generator<W> {
                 let rhs = self.generate_node(rhs.as_ref(), context, expected_binary_rhs_format(*operation, expected_format.clone(), Some(lhs.format())))?;
 
                 match operation {
+                    ast::BinaryOperation::Subscript => todo!(),
+                    ast::BinaryOperation::Access => todo!(),
+                    ast::BinaryOperation::DerefAccess => todo!(),
+                    ast::BinaryOperation::Convert => unreachable!(),
                     ast::BinaryOperation::Add => {
                         let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
 
@@ -528,6 +522,9 @@ impl<W: Write> Generator<W> {
 
                         RightValue::Register(result)
                     },
+                    ast::BinaryOperation::Remainder => todo!(),
+                    ast::BinaryOperation::ShiftLeft => todo!(),
+                    ast::BinaryOperation::ShiftRight => todo!(),
                     ast::BinaryOperation::Equal => {
                         let result = self.new_anonymous_register(ValueFormat::Boolean);
 
@@ -570,7 +567,22 @@ impl<W: Write> Generator<W> {
 
                         RightValue::Register(result)
                     },
-                    _ => return Err(crate::RawError::new(format!("operation 'x{operation}y' not yet implemented")).into_boxed())
+                    ast::BinaryOperation::BitwiseAnd => todo!(),
+                    ast::BinaryOperation::BitwiseXor => todo!(),
+                    ast::BinaryOperation::BitwiseOr => todo!(),
+                    ast::BinaryOperation::LogicalAnd => todo!(),
+                    ast::BinaryOperation::LogicalOr => todo!(),
+                    ast::BinaryOperation::Assign => unreachable!(),
+                    ast::BinaryOperation::MultiplyAssign => todo!(),
+                    ast::BinaryOperation::DivideAssign => todo!(),
+                    ast::BinaryOperation::RemainderAssign => todo!(),
+                    ast::BinaryOperation::AddAssign => todo!(),
+                    ast::BinaryOperation::SubtractAssign => todo!(),
+                    ast::BinaryOperation::ShiftLeftAssign => todo!(),
+                    ast::BinaryOperation::ShiftRightAssign => todo!(),
+                    ast::BinaryOperation::BitwiseAndAssign => todo!(),
+                    ast::BinaryOperation::BitwiseXorAssign => todo!(),
+                    ast::BinaryOperation::BitwiseOrAssign => todo!(),
                 }
             },
             ast::Node::Call { callee, arguments } => {

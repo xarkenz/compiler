@@ -108,7 +108,7 @@ impl<W: Write> Emitter<W> {
                         .map_err(|cause| self.error(cause))?;
                 }
                 
-                write!(self.writer, ") #0 {{\n")
+                writeln!(self.writer, ") #0 {{")
                     .map_err(|cause| self.error(cause))
             },
             _ => panic!("unexpected function format")
@@ -116,52 +116,52 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_function_exit(&mut self) -> crate::Result<()> {
-        write!(
+        writeln!(
             self.writer,
-            "}}\n\n",
+            "}}\n",
         )
         .map_err(|cause| self.error(cause))
     }
 
     pub fn emit_label(&mut self, label: &Label) -> crate::Result<()> {
-        write!(
+        writeln!(
             self.writer,
-            "{label_name}:\n",
+            "{label_name}:",
             label_name = label.name(),
         )
         .map_err(|cause| self.error(cause))
     }
 
     pub fn emit_unconditional_branch(&mut self, label: &Label) -> crate::Result<()> {
-        write!(
+        writeln!(
             self.writer,
-            "{INDENT}br label {label}\n",
+            "{INDENT}br label {label}",
         )
         .map_err(|cause| self.error(cause))
     }
 
     pub fn emit_conditional_branch(&mut self, condition: &RightValue, consequent: &Label, alternative: &Label) -> crate::Result<()> {
-        write!(
+        writeln!(
             self.writer,
-            "{INDENT}br i1 {condition}, label {consequent}, label {alternative}\n",
+            "{INDENT}br i1 {condition}, label {consequent}, label {alternative}",
         )
         .map_err(|cause| self.error(cause))
     }
 
     pub fn emit_symbol_allocation(&mut self, symbol: &info::Symbol) -> crate::Result<()> {
         if symbol.register().is_global() {
-            write!(
+            writeln!(
                 self.writer,
-                "{register} = global {format}, align {alignment}\n",
+                "{register} = global {format}, align {alignment}",
                 register = symbol.register(),
                 format = symbol.format(),
                 alignment = symbol.alignment(),
             )
         }
         else {
-            write!(
+            writeln!(
                 self.writer,
-                "{INDENT}{register} = alloca {format}, align {alignment}\n",
+                "{INDENT}{register} = alloca {format}, align {alignment}",
                 register = symbol.register(),
                 format = symbol.format(),
                 alignment = symbol.alignment(),
@@ -171,9 +171,9 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_symbol_store(&mut self, value: &RightValue, symbol: &info::Symbol) -> crate::Result<()> {
-        write!(
+        writeln!(
             self.writer,
-            "{INDENT}store {value_format} {value}, {symbol_register_format} {symbol_register}\n",
+            "{INDENT}store {value_format} {value}, {symbol_register_format} {symbol_register}",
             value_format = value.format(),
             symbol_register_format = symbol.register().format(),
             symbol_register = symbol.register(),
@@ -182,9 +182,9 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_symbol_load(&mut self, register: &Register, symbol: &info::Symbol) -> crate::Result<()> {
-        write!(
+        writeln!(
             self.writer,
-            "{INDENT}{register} = load {register_format}, {symbol_register_format} {symbol_register}\n",
+            "{INDENT}{register} = load {register_format}, {symbol_register_format} {symbol_register}",
             register_format = register.format(),
             symbol_register_format = symbol.register().format(),
             symbol_register = symbol.register(),
@@ -193,9 +193,9 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_truncation(&mut self, result: &Register, value: &RightValue) -> crate::Result<()> {
-        write!(
+        writeln!(
             self.writer,
-            "{INDENT}{result} = trunc {from_format} {value} to {to_format}\n",
+            "{INDENT}{result} = trunc {from_format} {value} to {to_format}",
             to_format = result.format(),
             from_format = value.format(),
         )
@@ -203,9 +203,9 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_sign_extension(&mut self, result: &Register, value: &RightValue) -> crate::Result<()> {
-        write!(
+        writeln!(
             self.writer,
-            "{INDENT}{result} = sext {from_format} {value} to {to_format}\n",
+            "{INDENT}{result} = sext {from_format} {value} to {to_format}",
             to_format = result.format(),
             from_format = value.format(),
         )
@@ -213,9 +213,9 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_zero_extension(&mut self, result: &Register, value: &RightValue) -> crate::Result<()> {
-        write!(
+        writeln!(
             self.writer,
-            "{INDENT}{result} = zext {from_format} {value} to {to_format}\n",
+            "{INDENT}{result} = zext {from_format} {value} to {to_format}",
             to_format = result.format(),
             from_format = value.format(),
         )
@@ -231,14 +231,14 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_addition(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => write!(
+            ValueFormat::Integer { signed: true, .. } => writeln!(
                 self.writer,
-                "{INDENT}{result} = add nsw {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = add nsw {format} {lhs}, {rhs}",
                 format = lhs.format(),
             ),
-            _ => write!(
+            _ => writeln!(
                 self.writer,
-                "{INDENT}{result} = add nuw {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = add nuw {format} {lhs}, {rhs}",
                 format = lhs.format(),
             )
         }
@@ -247,14 +247,14 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_subtraction(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => write!(
+            ValueFormat::Integer { signed: true, .. } => writeln!(
                 self.writer,
-                "{INDENT}{result} = sub nsw {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = sub nsw {format} {lhs}, {rhs}",
                 format = lhs.format(),
             ),
-            _ => write!(
+            _ => writeln!(
                 self.writer,
-                "{INDENT}{result} = sub nuw {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = sub nuw {format} {lhs}, {rhs}",
                 format = lhs.format(),
             )
         }
@@ -263,14 +263,14 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_multiplication(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => write!(
+            ValueFormat::Integer { signed: true, .. } => writeln!(
                 self.writer,
-                "{INDENT}{result} = mul nsw {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = mul nsw {format} {lhs}, {rhs}",
                 format = lhs.format(),
             ),
-            _ => write!(
+            _ => writeln!(
                 self.writer,
-                "{INDENT}{result} = mul nuw {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = mul nuw {format} {lhs}, {rhs}",
                 format = lhs.format(),
             )
         }
@@ -279,14 +279,14 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_division(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => write!(
+            ValueFormat::Integer { signed: true, .. } => writeln!(
                 self.writer,
-                "{INDENT}{result} = sdiv {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = sdiv {format} {lhs}, {rhs}",
                 format = lhs.format(),
             ),
-            _ => write!(
+            _ => writeln!(
                 self.writer,
-                "{INDENT}{result} = udiv {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = udiv {format} {lhs}, {rhs}",
                 format = lhs.format(),
             )
         }
@@ -294,18 +294,18 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_cmp_equal(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
-        write!(
+        writeln!(
             self.writer,
-            "{INDENT}{result} = icmp eq {format} {lhs}, {rhs}\n",
+            "{INDENT}{result} = icmp eq {format} {lhs}, {rhs}",
             format = lhs.format(),
         )
         .map_err(|cause| self.error(cause))
     }
 
     pub fn emit_cmp_not_equal(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
-        write!(
+        writeln!(
             self.writer,
-            "{INDENT}{result} = icmp ne {format} {lhs}, {rhs}\n",
+            "{INDENT}{result} = icmp ne {format} {lhs}, {rhs}",
             format = lhs.format(),
         )
         .map_err(|cause| self.error(cause))
@@ -313,14 +313,14 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_cmp_less_than(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => write!(
+            ValueFormat::Integer { signed: true, .. } => writeln!(
                 self.writer,
-                "{INDENT}{result} = icmp slt {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = icmp slt {format} {lhs}, {rhs}",
                 format = lhs.format(),
             ),
-            _ => write!(
+            _ => writeln!(
                 self.writer,
-                "{INDENT}{result} = icmp ult {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = icmp ult {format} {lhs}, {rhs}",
                 format = lhs.format(),
             )
         }
@@ -329,14 +329,14 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_cmp_less_equal(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => write!(
+            ValueFormat::Integer { signed: true, .. } => writeln!(
                 self.writer,
-                "{INDENT}{result} = icmp sle {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = icmp sle {format} {lhs}, {rhs}",
                 format = lhs.format(),
             ),
-            _ => write!(
+            _ => writeln!(
                 self.writer,
-                "{INDENT}{result} = icmp ule {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = icmp ule {format} {lhs}, {rhs}",
                 format = lhs.format(),
             )
         }
@@ -345,14 +345,14 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_cmp_greater_than(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => write!(
+            ValueFormat::Integer { signed: true, .. } => writeln!(
                 self.writer,
-                "{INDENT}{result} = icmp sgt {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = icmp sgt {format} {lhs}, {rhs}",
                 format = lhs.format(),
             ),
-            _ => write!(
+            _ => writeln!(
                 self.writer,
-                "{INDENT}{result} = icmp ugt {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = icmp ugt {format} {lhs}, {rhs}",
                 format = lhs.format(),
             )
         }
@@ -361,14 +361,14 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_cmp_greater_equal(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => write!(
+            ValueFormat::Integer { signed: true, .. } => writeln!(
                 self.writer,
-                "{INDENT}{result} = icmp sge {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = icmp sge {format} {lhs}, {rhs}",
                 format = lhs.format(),
             ),
-            _ => write!(
+            _ => writeln!(
                 self.writer,
-                "{INDENT}{result} = icmp uge {format} {lhs}, {rhs}\n",
+                "{INDENT}{result} = icmp uge {format} {lhs}, {rhs}",
                 format = lhs.format(),
             )
         }
@@ -402,23 +402,23 @@ impl<W: Write> Emitter<W> {
             }
         }
 
-        write!(self.writer, ")\n")
+        writeln!(self.writer, ")")
             .map_err(|cause| self.error(cause))
     }
 
     pub fn emit_print(&mut self, result: &Register, value: &RightValue) -> crate::Result<()> {
         match value.format() {
-            ValueFormat::Integer { signed: true, .. } => write!(
+            ValueFormat::Integer { signed: true, .. } => writeln!(
                 self.writer,
-                "{INDENT}{result} = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 noundef {value})\n",
+                "{INDENT}{result} = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 noundef {value})",
             ),
-            ValueFormat::Integer { signed: false, .. } => write!(
+            ValueFormat::Integer { signed: false, .. } => writeln!(
                 self.writer,
-                "{INDENT}{result} = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @print_u64_fstring, i32 0, i32 0), i64 noundef {value})\n",
+                "{INDENT}{result} = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @print_u64_fstring, i32 0, i32 0), i64 noundef {value})",
             ),
-            _ => write!(
+            _ => writeln!(
                 self.writer,
-                "{INDENT}{result} = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([4 x i8], [4 x i8]* @print_ptr_fstring, i32 0, i32 0), ptr noundef {value})\n",
+                "{INDENT}{result} = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([4 x i8], [4 x i8]* @print_ptr_fstring, i32 0, i32 0), ptr noundef {value})",
             )
         }
         .map_err(|cause| self.error(cause))
@@ -426,25 +426,25 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_return(&mut self, value: Option<&RightValue>) -> crate::Result<()> {
         if let Some(value) = value {
-            write!(
+            writeln!(
                 self.writer,
-                "{INDENT}ret {format} {value}\n",
+                "{INDENT}ret {format} {value}",
                 format = value.format(),
             )
         }
         else {
-            write!(
+            writeln!(
                 self.writer,
-                "{INDENT}ret void\n",
+                "{INDENT}ret void",
             )
         }
         .map_err(|cause| self.error(cause))
     }
 
     pub fn emit_unreachable(&mut self) -> crate::Result<()> {
-        write!(
+        writeln!(
             self.writer,
-            "{INDENT}unreachable\n",
+            "{INDENT}unreachable",
         )
         .map_err(|cause| self.error(cause))
     }
