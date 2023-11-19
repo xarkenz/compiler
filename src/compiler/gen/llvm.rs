@@ -173,10 +173,11 @@ impl<W: Write> Emitter<W> {
     pub fn emit_symbol_store(&mut self, value: &RightValue, symbol: &info::Symbol) -> crate::Result<()> {
         writeln!(
             self.writer,
-            "{INDENT}store {value_format} {value}, {symbol_register_format} {symbol_register}",
+            "{INDENT}store {value_format} {value}, {symbol_register_format} {symbol_register}, align {alignment}",
             value_format = value.format(),
             symbol_register_format = symbol.register().format(),
             symbol_register = symbol.register(),
+            alignment = symbol.alignment(),
         )
         .map_err(|cause| self.error(cause))
     }
@@ -184,10 +185,11 @@ impl<W: Write> Emitter<W> {
     pub fn emit_symbol_load(&mut self, register: &Register, symbol: &info::Symbol) -> crate::Result<()> {
         writeln!(
             self.writer,
-            "{INDENT}{register} = load {register_format}, {symbol_register_format} {symbol_register}",
+            "{INDENT}{register} = load {register_format}, {symbol_register_format} {symbol_register}, align {alignment}",
             register_format = register.format(),
             symbol_register_format = symbol.register().format(),
             symbol_register = symbol.register(),
+            alignment = symbol.alignment(),
         )
         .map_err(|cause| self.error(cause))
     }
@@ -227,6 +229,22 @@ impl<W: Write> Emitter<W> {
             ValueFormat::Integer { signed: true, .. } => self.emit_sign_extension(result, value),
             _ => self.emit_zero_extension(result, value)
         }
+    }
+
+    pub fn emit_negation(&mut self, result: &Register, operand: &RightValue) -> crate::Result<()> {
+        match operand.format() {
+            ValueFormat::Integer { signed: true, .. } => writeln!(
+                self.writer,
+                "{INDENT}{result} = sub nsw {format} 0, {operand}",
+                format = operand.format(),
+            ),
+            _ => writeln!(
+                self.writer,
+                "{INDENT}{result} = sub {format} 0, {operand}",
+                format = operand.format(),
+            )
+        }
+        .map_err(|cause| self.error(cause))
     }
 
     pub fn emit_addition(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
@@ -288,6 +306,90 @@ impl<W: Write> Emitter<W> {
                 self.writer,
                 "{INDENT}{result} = udiv {format} {lhs}, {rhs}",
                 format = lhs.format(),
+            )
+        }
+        .map_err(|cause| self.error(cause))
+    }
+
+    pub fn emit_remainder(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
+        match lhs.format() {
+            ValueFormat::Integer { signed: true, .. } => writeln!(
+                self.writer,
+                "{INDENT}{result} = srem {format} {lhs}, {rhs}",
+                format = lhs.format(),
+            ),
+            _ => writeln!(
+                self.writer,
+                "{INDENT}{result} = urem {format} {lhs}, {rhs}",
+                format = lhs.format(),
+            )
+        }
+        .map_err(|cause| self.error(cause))
+    }
+
+    pub fn emit_shift_left(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
+        writeln!(
+            self.writer,
+            "{INDENT}{result} = shl {format} {lhs}, {rhs}",
+            format = lhs.format(),
+        )
+        .map_err(|cause| self.error(cause))
+    }
+
+    pub fn emit_shift_right(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
+        match lhs.format() {
+            ValueFormat::Integer { signed: true, .. } => writeln!(
+                self.writer,
+                "{INDENT}{result} = ashr {format} {lhs}, {rhs}",
+                format = lhs.format(),
+            ),
+            _ => writeln!(
+                self.writer,
+                "{INDENT}{result} = lshr {format} {lhs}, {rhs}",
+                format = lhs.format(),
+            )
+        }
+        .map_err(|cause| self.error(cause))
+    }
+
+    pub fn emit_bitwise_and(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
+        writeln!(
+            self.writer,
+            "{INDENT}{result} = and {format} {lhs}, {rhs}",
+            format = lhs.format(),
+        )
+        .map_err(|cause| self.error(cause))
+    }
+
+    pub fn emit_bitwise_or(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
+        writeln!(
+            self.writer,
+            "{INDENT}{result} = or {format} {lhs}, {rhs}",
+            format = lhs.format(),
+        )
+        .map_err(|cause| self.error(cause))
+    }
+
+    pub fn emit_bitwise_xor(&mut self, result: &Register, lhs: &RightValue, rhs: &RightValue) -> crate::Result<()> {
+        writeln!(
+            self.writer,
+            "{INDENT}{result} = xor {format} {lhs}, {rhs}",
+            format = lhs.format(),
+        )
+        .map_err(|cause| self.error(cause))
+    }
+
+    pub fn emit_inversion(&mut self, result: &Register, operand: &RightValue) -> crate::Result<()> {
+        match operand.format() {
+            ValueFormat::Boolean => writeln!(
+                self.writer,
+                "{INDENT}{result} = xor {format} {operand}, true",
+                format = operand.format(),
+            ),
+            _ => writeln!(
+                self.writer,
+                "{INDENT}{result} = xor {format} {operand}, -1",
+                format = operand.format(),
             )
         }
         .map_err(|cause| self.error(cause))

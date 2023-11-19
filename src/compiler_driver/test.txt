@@ -11,13 +11,19 @@ function fibonacci(limit: i32) -> i32 {
     return a;
 }
 
-function my_print_fn(value: i32) {
-    print value;
+function gcd(a: u32, b: u32) -> u32 {
+    while (b >= 1) {
+        let temp: u32 = a % b;
+        a = b;
+        b = temp;
+    }
+
+    return a;
 }
 
 function main() -> i32 {
-    let my_fib: i32 = fibonacci(1000);
-    my_print_fn(my_fib);
+    print fibonacci(1000);
+    print gcd(18, 45);
 
     return 0;
 }

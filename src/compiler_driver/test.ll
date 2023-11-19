@@ -11,50 +11,68 @@ target triple = "x86_64-pc-linux-gnu"
 ; Function Attrs: noinline nounwind optnone uwtable
 define dso_local i32 @fibonacci(i32 noundef %-arg-limit) #0 {
     %limit = alloca i32, align 4
-    store i32 %-arg-limit, i32* %limit
+    store i32 %-arg-limit, i32* %limit, align 4
     %a = alloca i32, align 4
-    store i32 0, i32* %a
+    store i32 0, i32* %a, align 4
     %b = alloca i32, align 4
-    store i32 1, i32* %b
+    store i32 1, i32* %b, align 4
     br label %-L0
 -L0:
-    %1 = load i32, i32* %b
-    %2 = load i32, i32* %limit
+    %1 = load i32, i32* %b, align 4
+    %2 = load i32, i32* %limit, align 4
     %3 = icmp slt i32 %1, %2
     br i1 %3, label %-L1, label %-L2
 -L1:
     %temp = alloca i32, align 4
-    %4 = load i32, i32* %a
-    %5 = load i32, i32* %b
+    %4 = load i32, i32* %a, align 4
+    %5 = load i32, i32* %b, align 4
     %6 = add nsw i32 %4, %5
-    store i32 %6, i32* %temp
-    %7 = load i32, i32* %b
-    store i32 %7, i32* %a
-    %8 = load i32, i32* %temp
-    store i32 %8, i32* %b
+    store i32 %6, i32* %temp, align 4
+    %7 = load i32, i32* %b, align 4
+    store i32 %7, i32* %a, align 4
+    %8 = load i32, i32* %temp, align 4
+    store i32 %8, i32* %b, align 4
     br label %-L0
 -L2:
-    %9 = load i32, i32* %a
+    %9 = load i32, i32* %a, align 4
     ret i32 %9
 }
 
 ; Function Attrs: noinline nounwind optnone uwtable
-define dso_local void @my_print_fn(i32 noundef %-arg-value) #0 {
-    %value = alloca i32, align 4
-    store i32 %-arg-value, i32* %value
-    %1 = load i32, i32* %value
-    %2 = sext i32 %1 to i64
-    %3 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 noundef %2)
-    ret void
+define dso_local i32 @gcd(i32 noundef %-arg-a, i32 noundef %-arg-b) #0 {
+    %a = alloca i32, align 4
+    store i32 %-arg-a, i32* %a, align 4
+    %b = alloca i32, align 4
+    store i32 %-arg-b, i32* %b, align 4
+    br label %-L0
+-L0:
+    %1 = load i32, i32* %b, align 4
+    %2 = icmp uge i32 %1, 1
+    br i1 %2, label %-L1, label %-L2
+-L1:
+    %temp = alloca i32, align 4
+    %3 = load i32, i32* %a, align 4
+    %4 = load i32, i32* %b, align 4
+    %5 = urem i32 %3, %4
+    store i32 %5, i32* %temp, align 4
+    %6 = load i32, i32* %b, align 4
+    store i32 %6, i32* %a, align 4
+    %7 = load i32, i32* %temp, align 4
+    store i32 %7, i32* %b, align 4
+    br label %-L0
+-L2:
+    %8 = load i32, i32* %a, align 4
+    ret i32 %8
 }
 
 ; Function Attrs: noinline nounwind optnone uwtable
 define dso_local i32 @main() #0 {
-    %my_fib = alloca i32, align 4
     %1 = call i32(i32) @fibonacci(i32 noundef 1000)
-    store i32 %1, i32* %my_fib
-    %2 = load i32, i32* %my_fib
-    call void(i32) @my_print_fn(i32 noundef %2)
+    %2 = sext i32 %1 to i64
+    %3 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 noundef %2)
+    %4 = call i32(i32, i32) @gcd(i32 noundef 18, i32 noundef 45)
+    %5 = zext i32 %4 to i64
+    %6 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @print_u64_fstring, i32 0, i32 0), i64 noundef %5)
     ret i32 0
 }
 

@@ -226,6 +226,8 @@ pub fn expected_binary_rhs_format(operation: ast::BinaryOperation, _expected_for
         ast::BinaryOperation::Remainder => lhs_format,
         ast::BinaryOperation::Add => lhs_format,
         ast::BinaryOperation::Subtract => lhs_format,
+        ast::BinaryOperation::ShiftLeft => lhs_format,
+        ast::BinaryOperation::ShiftRight => lhs_format,
         ast::BinaryOperation::LessThan => lhs_format,
         ast::BinaryOperation::LessEqual => lhs_format,
         ast::BinaryOperation::GreaterThan => lhs_format,
@@ -443,17 +445,39 @@ impl<W: Write> Generator<W> {
                 }
             },
             ast::Node::Unary { operation, operand } => {
-                let _operand = self.generate_node(operand.as_ref(), context, expected_unary_operand_format(*operation, expected_format))?;
+                let expected_operand_format = expected_unary_operand_format(*operation, expected_format.clone());
+                let operand = self.generate_node(operand.as_ref(), context, expected_operand_format)?;
                 
                 match operation {
                     ast::UnaryOperation::PostIncrement => todo!(),
                     ast::UnaryOperation::PostDecrement => todo!(),
                     ast::UnaryOperation::PreIncrement => todo!(),
                     ast::UnaryOperation::PreDecrement => todo!(),
-                    ast::UnaryOperation::Positive => todo!(),
-                    ast::UnaryOperation::Negative => todo!(),
-                    ast::UnaryOperation::BitwiseNot => todo!(),
-                    ast::UnaryOperation::LogicalNot => todo!(),
+                    ast::UnaryOperation::Positive => {
+                        // Basically a no-op...
+                        operand
+                    },
+                    ast::UnaryOperation::Negative => {
+                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(operand.format()));
+
+                        self.emitter.emit_negation(&result, &operand)?;
+
+                        RightValue::Register(result)
+                    },
+                    ast::UnaryOperation::BitwiseNot => {
+                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(operand.format()));
+
+                        self.emitter.emit_inversion(&result, &operand)?;
+
+                        RightValue::Register(result)
+                    },
+                    ast::UnaryOperation::LogicalNot => {
+                        let result = self.new_anonymous_register(ValueFormat::Boolean);
+
+                        self.emitter.emit_inversion(&result, &operand)?;
+
+                        RightValue::Register(result)
+                    },
                     ast::UnaryOperation::Reference => todo!(),
                     ast::UnaryOperation::Dereference => todo!(),
                     ast::UnaryOperation::GetSize => todo!(),
@@ -486,8 +510,10 @@ impl<W: Write> Generator<W> {
                 }
             }
             ast::Node::Binary { operation, lhs, rhs } => {
-                let lhs = self.generate_node(lhs.as_ref(), context, expected_binary_lhs_format(*operation, expected_format.clone()))?;
-                let rhs = self.generate_node(rhs.as_ref(), context, expected_binary_rhs_format(*operation, expected_format.clone(), Some(lhs.format())))?;
+                let expected_lhs_format = expected_binary_lhs_format(*operation, expected_format.clone());
+                let lhs = self.generate_node(lhs.as_ref(), context, expected_lhs_format)?;
+                let expected_rhs_format = expected_binary_rhs_format(*operation, expected_format.clone(), Some(lhs.format()));
+                let rhs = self.generate_node(rhs.as_ref(), context, expected_rhs_format)?;
 
                 match operation {
                     ast::BinaryOperation::Subscript => todo!(),
@@ -522,9 +548,48 @@ impl<W: Write> Generator<W> {
 
                         RightValue::Register(result)
                     },
-                    ast::BinaryOperation::Remainder => todo!(),
-                    ast::BinaryOperation::ShiftLeft => todo!(),
-                    ast::BinaryOperation::ShiftRight => todo!(),
+                    ast::BinaryOperation::Remainder => {
+                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+
+                        self.emitter.emit_remainder(&result, &lhs, &rhs)?;
+
+                        RightValue::Register(result)
+                    },
+                    ast::BinaryOperation::ShiftLeft => {
+                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+
+                        self.emitter.emit_shift_left(&result, &lhs, &rhs)?;
+
+                        RightValue::Register(result)
+                    },
+                    ast::BinaryOperation::ShiftRight => {
+                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+
+                        self.emitter.emit_shift_right(&result, &lhs, &rhs)?;
+
+                        RightValue::Register(result)
+                    },
+                    ast::BinaryOperation::BitwiseAnd => {
+                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+
+                        self.emitter.emit_bitwise_and(&result, &lhs, &rhs)?;
+
+                        RightValue::Register(result)
+                    },
+                    ast::BinaryOperation::BitwiseOr => {
+                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+
+                        self.emitter.emit_bitwise_or(&result, &lhs, &rhs)?;
+
+                        RightValue::Register(result)
+                    },
+                    ast::BinaryOperation::BitwiseXor => {
+                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+
+                        self.emitter.emit_bitwise_xor(&result, &lhs, &rhs)?;
+
+                        RightValue::Register(result)
+                    },
                     ast::BinaryOperation::Equal => {
                         let result = self.new_anonymous_register(ValueFormat::Boolean);
 
@@ -567,9 +632,6 @@ impl<W: Write> Generator<W> {
 
                         RightValue::Register(result)
                     },
-                    ast::BinaryOperation::BitwiseAnd => todo!(),
-                    ast::BinaryOperation::BitwiseXor => todo!(),
-                    ast::BinaryOperation::BitwiseOr => todo!(),
                     ast::BinaryOperation::LogicalAnd => todo!(),
                     ast::BinaryOperation::LogicalOr => todo!(),
                     ast::BinaryOperation::Assign => unreachable!(),

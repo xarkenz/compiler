@@ -16,7 +16,7 @@ pub struct Scanner<T: BufRead> {
 }
 
 impl Scanner<BufReader<File>> {
-    pub fn from_file(filename: String) -> crate::Result<Self> {
+    pub fn from_filename(filename: String) -> crate::Result<Self> {
         File::open(filename.clone())
             .map(|file| Self::new(filename.clone(), BufReader::new(file)))
             .map_err(|cause| FileError::new(filename.clone(), None, cause).into_boxed())
