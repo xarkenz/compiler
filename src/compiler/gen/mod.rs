@@ -856,6 +856,9 @@ impl<W: Write> Generator<W> {
 
                 if context.is_global() {
                     // TODO: allow a constant for initializing global
+                    if value.is_some() {
+                        return Err(crate::RawError::new(String::from("initializing globals is not yet supported")).into_boxed());
+                    }
                     self.emitter.emit_global_allocation(&pointer, &Value::Integer(0, format.clone()))?;
                 }
                 else {
