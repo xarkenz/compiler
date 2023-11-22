@@ -173,20 +173,22 @@ impl<'a, T: BufRead> Parser<'a, T> {
     }
 
     pub fn parse_value_type(&mut self, allowed_ends: &[Token]) -> crate::Result<ValueType> {
-        let value_type = match self.get_token()? {
+        match self.get_token()? {
             Token::Literal(Literal::Identifier(name)) => {
                 let name = name.clone();
                 self.scan_token()?;
-                ValueType::Named(name)
+                self.expect_token(allowed_ends)?;
+                Ok(ValueType::Named(name))
+            },
+            Token::Star => {
+                self.scan_token()?;
+                let to_type = self.parse_value_type(allowed_ends)?;
+                Ok(ValueType::Pointer(Box::new(to_type)))
             },
             token => {
-                return Err(self.scanner.syntax_error(format!("expected a type, got '{token}'")));
+                Err(self.scanner.syntax_error(format!("expected a type, got '{token}'")))
             }
-        };
-
-        self.expect_token(allowed_ends)?;
-
-        Ok(value_type)
+        }
     }
 
     pub fn parse_statement(&mut self, is_global: bool, allow_empty: bool) -> crate::Result<Option<Box<Node>>> {

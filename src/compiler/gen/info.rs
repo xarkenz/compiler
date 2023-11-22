@@ -14,9 +14,7 @@ impl Scope {
 #[derive(Clone, PartialEq, Debug)]
 pub struct Symbol {
     identifier: String,
-    format: ValueFormat,
-    alignment: usize,
-    register: Register,
+    value: Value,
     scope: Scope,
     version: usize,
 }
@@ -26,16 +24,8 @@ impl Symbol {
         self.identifier.as_str()
     }
 
-    pub fn format(&self) -> &ValueFormat {
-        &self.format
-    }
-
-    pub fn alignment(&self) -> usize {
-        self.alignment
-    }
-
-    pub fn register(&self) -> &Register {
-        &self.register
+    pub fn value(&self) -> &Value {
+        &self.value
     }
 
     pub fn scope(&self) -> &Scope {
@@ -44,6 +34,10 @@ impl Symbol {
 
     pub fn version(&self) -> usize {
         self.version
+    }
+
+    pub fn format(&self) -> ValueFormat {
+        self.value.format()
     }
 }
 
@@ -129,33 +123,54 @@ impl SymbolTable {
             .map_or(0, |symbol| symbol.version() + 1)
     }
 
-    pub fn create_symbol(&self, identifier: String, format: ValueFormat, alignment: usize) -> Symbol {
+    pub fn create_register_symbol(&self, identifier: String, format: ValueFormat) -> (Symbol, Register) {
         let scope = self.current_scope().clone();
         let version = self.next_symbol_version(&identifier);
-        let register_name = if version == 0 {
+        let qualified_name = if version == 0 {
             identifier.clone()
         } else {
             format!("{identifier}-{version}")
         };
-        let register_format = if format.is_function() {
-            format.clone()
-        } else {
-            format.clone().into_pointer()
-        };
         let register = Register {
-            name: register_name,
-            format: register_format,
-            is_global: self.is_global,
-        };
-
-        Symbol {
-            identifier,
+            name: qualified_name,
             format,
-            alignment,
-            register,
+            is_global: self.is_global(),
+        };
+        let symbol = Symbol {
+            identifier,
+            value: Value::Register(register.clone()),
             scope,
             version,
-        }
+        };
+
+        (symbol, register)
+    }
+
+    pub fn create_indirect_symbol(&self, identifier: String, loaded_format: ValueFormat) -> (Symbol, Register) {
+        let scope = self.current_scope().clone();
+        let version = self.next_symbol_version(&identifier);
+        let qualified_name = if version == 0 {
+            identifier.clone()
+        } else {
+            format!("{identifier}-{version}")
+        };
+        let pointer = Register {
+            name: qualified_name,
+            format: loaded_format.clone().into_pointer(),
+            is_global: self.is_global(),
+        };
+        let value = Value::Indirect {
+            pointer: Box::new(Value::Register(pointer.clone())),
+            loaded_format,
+        };
+        let symbol = Symbol {
+            identifier,
+            value,
+            scope,
+            version,
+        };
+
+        (symbol, pointer)
     }
 
     pub fn insert(&mut self, symbol: Symbol) {

@@ -297,6 +297,7 @@ impl Operation {
 #[derive(Clone, PartialEq, Debug)]
 pub enum ValueType {
     Named(String),
+    Pointer(Box<ValueType>),
 }
 
 impl std::fmt::Display for ValueType {
@@ -304,6 +305,9 @@ impl std::fmt::Display for ValueType {
         match self {
             Self::Named(name) => {
                 write!(f, "{name}")
+            },
+            Self::Pointer(to_type) => {
+                write!(f, "*{to_type}")
             },
         }
     }

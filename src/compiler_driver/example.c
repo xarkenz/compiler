@@ -38,33 +38,18 @@ uint32_t gcd(uint32_t a, uint32_t b) {
 }
 
 int32_t main() {
-    print_i64((int64_t) fibonacci(1000));
-    print_u64((uint64_t) gcd(18, 45));
+    bool a = true;
+    bool b = false;
+    bool c = true;
 
-    int32_t sx = 64;
-    int32_t sy = 1;
-    int32_t sz;
-    uint32_t ux = 64;
-    uint32_t uy = 1;
-    uint32_t uz;
+    bool d = (a && b) || c;
 
-    sz = +sx;
-    uz = +ux;
-    sz = -sx;
-    uz = -ux;
-    sz = sx << sy;
-    uz = ux << uy;
-    sz = sx >> sy;
-    uz = ux >> uy;
-    sz = sx & sy;
-    uz = ux & uy;
-    sz = sx | sy;
-    uz = ux | uy;
-    sz = sx ^ sy;
-    uz = ux ^ uy;
-    sz = ~sx;
-    uz = ~ux;
-    bool b = !sx;
+    if ((a && b) || c) {
+        print_i64((int64_t) fibonacci(1000));
+    }
+    else {
+        print_u64((uint64_t) gcd(18, 45));
+    }
 
     return 0;
 }

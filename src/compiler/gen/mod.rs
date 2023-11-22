@@ -75,8 +75,11 @@ impl TryFrom<&ast::ValueType> for ValueFormat {
                     "u32" => Ok(ValueFormat::Integer { size: 4, signed: false }),
                     "i64" => Ok(ValueFormat::Integer { size: 8, signed: true }),
                     "u64" => Ok(ValueFormat::Integer { size: 8, signed: false }),
-                    _ => Err(crate::RawError::new(format!("unrecognized type name 'name'")).into_boxed())
+                    _ => Err(crate::RawError::new(format!("unrecognized type name '{name}'")).into_boxed())
                 }
+            },
+            ast::ValueType::Pointer(to_type) => {
+                Self::try_from(to_type.as_ref()).map(Self::into_pointer)
             },
         }
     }
@@ -143,33 +146,39 @@ impl fmt::Display for Register {
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub enum RightValue {
+pub enum Value {
     Never,
     Void,
     Boolean(bool),
     Integer(u64, ValueFormat),
     Register(Register),
+    Indirect {
+        pointer: Box<Value>,
+        loaded_format: ValueFormat,
+    },
 }
 
-impl RightValue {
+impl Value {
     pub fn format(&self) -> ValueFormat {
         match self {
             Self::Never => ValueFormat::Never,
             Self::Void => ValueFormat::Void,
             Self::Boolean(_) => ValueFormat::Boolean,
             Self::Integer(_, format) => format.clone(),
-            Self::Register(value) => value.format().clone(),
+            Self::Register(register) => register.format().clone(),
+            Self::Indirect { loaded_format, .. } => loaded_format.clone(),
         }
     }
 }
 
-impl fmt::Display for RightValue {
+impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Never | Self::Void => write!(f, "?"),
             Self::Boolean(value) => value.fmt(f),
             Self::Integer(value, _) => value.fmt(f),
-            Self::Register(value) => value.fmt(f),
+            Self::Register(register) => register.fmt(f),
+            Self::Indirect { .. } => write!(f, "?"),
         }
     }
 }
@@ -188,58 +197,6 @@ impl Label {
 impl fmt::Display for Label {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "%{}", self.name)
-    }
-}
-
-pub fn expected_unary_operand_format(operation: ast::UnaryOperation, expected_format: Option<ValueFormat>) -> Option<ValueFormat> {
-    match operation {
-        ast::UnaryOperation::Positive => expected_format,
-        ast::UnaryOperation::Negative => expected_format,
-        ast::UnaryOperation::BitwiseNot => expected_format,
-        ast::UnaryOperation::LogicalNot => Some(ValueFormat::Boolean),
-        _ => None
-    }
-}
-
-pub fn expected_binary_lhs_format(operation: ast::BinaryOperation, expected_format: Option<ValueFormat>) -> Option<ValueFormat> {
-    match operation {
-        ast::BinaryOperation::Multiply => expected_format,
-        ast::BinaryOperation::Divide => expected_format,
-        ast::BinaryOperation::Remainder => expected_format,
-        ast::BinaryOperation::Add => expected_format,
-        ast::BinaryOperation::Subtract => expected_format,
-        ast::BinaryOperation::ShiftLeft => expected_format,
-        ast::BinaryOperation::ShiftRight => expected_format,
-        ast::BinaryOperation::BitwiseAnd => expected_format,
-        ast::BinaryOperation::BitwiseXor => expected_format,
-        ast::BinaryOperation::BitwiseOr => expected_format,
-        ast::BinaryOperation::LogicalAnd => Some(ValueFormat::Boolean),
-        ast::BinaryOperation::LogicalOr => Some(ValueFormat::Boolean),
-        _ => None
-    }
-}
-
-pub fn expected_binary_rhs_format(operation: ast::BinaryOperation, _expected_format: Option<ValueFormat>, lhs_format: Option<ValueFormat>) -> Option<ValueFormat> {
-    match operation {
-        ast::BinaryOperation::Multiply => lhs_format,
-        ast::BinaryOperation::Divide => lhs_format,
-        ast::BinaryOperation::Remainder => lhs_format,
-        ast::BinaryOperation::Add => lhs_format,
-        ast::BinaryOperation::Subtract => lhs_format,
-        ast::BinaryOperation::ShiftLeft => lhs_format,
-        ast::BinaryOperation::ShiftRight => lhs_format,
-        ast::BinaryOperation::LessThan => lhs_format,
-        ast::BinaryOperation::LessEqual => lhs_format,
-        ast::BinaryOperation::GreaterThan => lhs_format,
-        ast::BinaryOperation::GreaterEqual => lhs_format,
-        ast::BinaryOperation::Equal => lhs_format,
-        ast::BinaryOperation::NotEqual => lhs_format,
-        ast::BinaryOperation::BitwiseAnd => lhs_format,
-        ast::BinaryOperation::BitwiseXor => lhs_format,
-        ast::BinaryOperation::BitwiseOr => lhs_format,
-        ast::BinaryOperation::LogicalAnd => Some(ValueFormat::Boolean),
-        ast::BinaryOperation::LogicalOr => Some(ValueFormat::Boolean),
-        _ => None
     }
 }
 
@@ -293,8 +250,8 @@ pub struct Generator<W: Write> {
     emitter: llvm::Emitter<W>,
     next_anonymous_register_id: usize,
     next_anonymous_label_id: usize,
-    global_symbols: info::SymbolTable,
-    local_symbols: info::SymbolTable,
+    global_symbol_table: info::SymbolTable,
+    local_symbol_table: info::SymbolTable,
 }
 
 impl Generator<std::fs::File> {
@@ -312,14 +269,15 @@ impl<W: Write> Generator<W> {
             emitter,
             next_anonymous_register_id: 1,
             next_anonymous_label_id: 0,
-            global_symbols: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY, true),
-            local_symbols: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY, false),
+            global_symbol_table: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY, true),
+            local_symbol_table: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY, false),
         }
     }
 
     pub fn new_anonymous_register(&mut self, format: ValueFormat) -> Register {
         let id = self.next_anonymous_register_id;
         self.next_anonymous_register_id += 1;
+
         Register {
             name: format!("{id}"),
             format,
@@ -330,36 +288,37 @@ impl<W: Write> Generator<W> {
     pub fn new_anonymous_label(&mut self) -> Label {
         let id = self.next_anonymous_label_id;
         self.next_anonymous_label_id += 1;
+
         Label {
             name: format!("-L{id}"),
         }
     }
 
-    pub fn create_symbol(&self, context: &ScopeContext, identifier: String, format: ValueFormat, alignment: usize) -> info::Symbol {
+    pub fn get_symbol_table(&self, context: &ScopeContext) -> &info::SymbolTable {
         if context.is_global() {
-            self.global_symbols.create_symbol(identifier, format, alignment)
+            &self.global_symbol_table
         }
         else {
-            self.local_symbols.create_symbol(identifier, format, alignment)
+            &self.local_symbol_table
         }
     }
 
     pub fn define_symbol(&mut self, context: &ScopeContext, symbol: info::Symbol) {
         if context.is_global() {
-            self.global_symbols.insert(symbol);
+            self.global_symbol_table.insert(symbol);
         }
         else {
-            self.local_symbols.insert(symbol);
+            self.local_symbol_table.insert(symbol);
         }
     }
 
     pub fn get_symbol(&self, name: &str) -> crate::Result<&info::Symbol> {
-        self.local_symbols.find(name)
-            .or_else(|| self.global_symbols.find(name))
+        self.local_symbol_table.find(name)
+            .or_else(|| self.global_symbol_table.find(name))
             .ok_or_else(|| crate::RawError::new(format!("undefined symbol '{name}'")).into_boxed())
     }
 
-    pub fn enforce_format(&self, value: &RightValue, format: &ValueFormat) -> crate::Result<()> {
+    pub fn enforce_format(&self, value: &Value, format: &ValueFormat) -> crate::Result<()> {
         let got_format = value.format();
 
         if &got_format == format {
@@ -370,7 +329,7 @@ impl<W: Write> Generator<W> {
         }
     }
 
-    pub fn change_format(&mut self, value: RightValue, to_format: &ValueFormat) -> crate::Result<RightValue> {
+    pub fn change_format(&mut self, value: Value, to_format: &ValueFormat) -> crate::Result<Value> {
         let from_format = value.format();
 
         if to_format == &from_format {
@@ -384,13 +343,13 @@ impl<W: Write> Generator<W> {
                 let result = self.new_anonymous_register(to_format.clone());
                 self.emitter.emit_extension(&result, &value)?;
 
-                Ok(RightValue::Register(result))
+                Ok(Value::Register(result))
             }
             else if to_size < from_size {
                 let result = self.new_anonymous_register(to_format.clone());
                 self.emitter.emit_truncation(&result, &value)?;
 
-                Ok(RightValue::Register(result))
+                Ok(Value::Register(result))
             }
             else {
                 Ok(value)
@@ -401,9 +360,9 @@ impl<W: Write> Generator<W> {
             ValueFormat::Boolean,
         ) = (&from_format, to_format) {
             let result = self.new_anonymous_register(ValueFormat::Boolean);
-            self.emitter.emit_cmp_not_equal(&result, &value, &RightValue::Integer(0, from_format.clone()))?;
+            self.emitter.emit_cmp_not_equal(&result, &value, &Value::Integer(0, from_format.clone()))?;
             
-            Ok(RightValue::Register(result))
+            Ok(Value::Register(result))
         }
         else if let (
             ValueFormat::Boolean,
@@ -412,229 +371,281 @@ impl<W: Write> Generator<W> {
             let result = self.new_anonymous_register(to_format.clone());
             self.emitter.emit_zero_extension(&result, &value)?;
             
-            Ok(RightValue::Register(result))
+            Ok(Value::Register(result))
         }
         else {
-            Err(crate::RawError::new(format!("cannot convert from {from_format} to {to_format}")).into_boxed())
+            Err(crate::RawError::new(format!("cannot convert from '{from_format}' to '{to_format}'")).into_boxed())
         }
     }
 
-    pub fn generate_node(&mut self, node: &ast::Node, context: &ScopeContext, expected_format: Option<ValueFormat>) -> crate::Result<RightValue> {
+    pub fn coerce_to_rvalue(&mut self, value: Value) -> crate::Result<Value> {
+        if let Value::Indirect { pointer, loaded_format } = value {
+            let result = self.new_anonymous_register(loaded_format);
+            self.emitter.emit_load(&result, pointer.as_ref())?;
+            
+            Ok(Value::Register(result))
+        }
+        else {
+            Ok(value)
+        }
+    }
+
+    pub fn generate_binary_arithmetic_operands(&mut self, lhs: &ast::Node, rhs: &ast::Node, context: &ScopeContext, expected_format: Option<ValueFormat>) -> crate::Result<(Register, Value, Value)> {
+        let lhs = self.generate_node(lhs, context, expected_format.clone())?;
+        let lhs = self.coerce_to_rvalue(lhs)?;
+
+        let rhs = self.generate_node(rhs, context, Some(lhs.format()))?;
+        let rhs = self.coerce_to_rvalue(rhs)?;
+
+        let result = self.new_anonymous_register(expected_format.unwrap_or_else(|| lhs.format()));
+
+        Ok((result, lhs, rhs))
+    }
+
+    pub fn generate_comparison_operands(&mut self, lhs: &ast::Node, rhs: &ast::Node, context: &ScopeContext) -> crate::Result<(Register, Value, Value)> {
+        let lhs = self.generate_node(lhs, context, None)?;
+        let lhs = self.coerce_to_rvalue(lhs)?;
+
+        let rhs = self.generate_node(rhs, context, Some(lhs.format()))?;
+        let rhs = self.coerce_to_rvalue(rhs)?;
+
+        let result = self.new_anonymous_register(ValueFormat::Boolean);
+
+        Ok((result, lhs, rhs))
+    }
+
+    pub fn generate_assignment(&mut self, lhs: &ast::Node, rhs: &ast::Node, context: &ScopeContext, expected_format: Option<ValueFormat>) -> crate::Result<Value> {
+        let lhs = self.generate_node(lhs, context, expected_format.clone())?;
+
+        if let Value::Indirect { pointer, loaded_format } = lhs {
+            let rhs = self.generate_node(rhs, context, Some(loaded_format))?;
+            let rhs = self.coerce_to_rvalue(rhs)?;
+
+            self.emitter.emit_store(&rhs, pointer.as_ref())?;
+
+            Ok(rhs)
+        }
+        else {
+            Err(crate::RawError::new(String::from("left-hand side of '=' must be an lvalue")).into_boxed())
+        }
+    }
+
+    pub fn generate_node(&mut self, node: &ast::Node, context: &ScopeContext, expected_format: Option<ValueFormat>) -> crate::Result<Value> {
         let result = match node {
             ast::Node::Literal(literal) => {
                 match literal {
                     token::Literal::Identifier(name) => {
-                        // If we don't clone here, with the way things are currently set up, we can't borrow *self as mutable
-                        let symbol = self.get_symbol(name)?.clone();
-
-                        if symbol.format().is_function() {
-                            RightValue::Register(symbol.register().clone())
-                        }
-                        else {
-                            let result = self.new_anonymous_register(symbol.format().clone());
-                            self.emitter.emit_symbol_load(&result, &symbol)?;
-                            RightValue::Register(result)
-                        }
+                        self.get_symbol(name)?.value().clone()
                     },
                     token::Literal::Integer(value) => {
-                        RightValue::Integer(*value, expected_format.clone().unwrap_or(ValueFormat::Integer { size: 4, signed: true }))
+                        Value::Integer(*value, expected_format.clone().unwrap_or_else(ValueFormat::default_integer))
                     },
                     token::Literal::Boolean(value) => {
-                        RightValue::Boolean(*value)
+                        Value::Boolean(*value)
                     }
                 }
             },
             ast::Node::Unary { operation, operand } => {
-                let expected_operand_format = expected_unary_operand_format(*operation, expected_format.clone());
-                let operand = self.generate_node(operand.as_ref(), context, expected_operand_format)?;
-                
                 match operation {
                     ast::UnaryOperation::PostIncrement => todo!(),
                     ast::UnaryOperation::PostDecrement => todo!(),
                     ast::UnaryOperation::PreIncrement => todo!(),
                     ast::UnaryOperation::PreDecrement => todo!(),
                     ast::UnaryOperation::Positive => {
-                        // Basically a no-op...
-                        operand
+                        let operand = self.generate_node(operand.as_ref(), context, expected_format.clone())?;
+
+                        self.coerce_to_rvalue(operand)?
                     },
                     ast::UnaryOperation::Negative => {
+                        let operand = self.generate_node(operand.as_ref(), context, expected_format.clone())?;
+                        let operand = self.coerce_to_rvalue(operand)?;
                         let result = self.new_anonymous_register(expected_format.clone().unwrap_or(operand.format()));
 
                         self.emitter.emit_negation(&result, &operand)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::UnaryOperation::BitwiseNot => {
+                        let operand = self.generate_node(operand.as_ref(), context, expected_format.clone())?;
+                        let operand = self.coerce_to_rvalue(operand)?;
                         let result = self.new_anonymous_register(expected_format.clone().unwrap_or(operand.format()));
 
                         self.emitter.emit_inversion(&result, &operand)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::UnaryOperation::LogicalNot => {
+                        let operand = self.generate_node(operand.as_ref(), context, Some(ValueFormat::Boolean))?;
+                        let operand = self.coerce_to_rvalue(operand)?;
                         let result = self.new_anonymous_register(ValueFormat::Boolean);
 
                         self.emitter.emit_inversion(&result, &operand)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
-                    ast::UnaryOperation::Reference => todo!(),
-                    ast::UnaryOperation::Dereference => todo!(),
+                    ast::UnaryOperation::Reference => {
+                        let operand = self.generate_node(operand.as_ref(), context, None)?;
+
+                        if let Value::Indirect { pointer, .. } = operand {
+                            *pointer
+                        }
+                        else {
+                            return Err(crate::RawError::new(String::from("operand of '&' must be an lvalue")).into_boxed());
+                        }
+                    },
+                    ast::UnaryOperation::Dereference => {
+                        let operand = self.generate_node(operand.as_ref(), context, expected_format.clone().map(ValueFormat::into_pointer))?;
+                        let operand = self.coerce_to_rvalue(operand)?;
+                        
+                        if let ValueFormat::Pointer { to } = operand.format() {
+                            Value::Indirect {
+                                pointer: Box::new(operand),
+                                loaded_format: *to,
+                            }
+                        }
+                        else {
+                            return Err(crate::RawError::new(format!("cannot dereference value of type '{}'", operand.format())).into_boxed());
+                        }
+                    },
                     ast::UnaryOperation::GetSize => todo!(),
                     ast::UnaryOperation::GetAlign => todo!(),
                 }
             },
-            ast::Node::Binary { operation: ast::BinaryOperation::Assign, lhs, rhs } => {
-                if let ast::Node::Literal(token::Literal::Identifier(name)) = lhs.as_ref() {
-                    // If we don't clone here, with the way things are currently set up, we can't borrow *self as mutable
-                    let symbol = self.get_symbol(name)?.clone();
-                    let value = self.generate_node(rhs.as_ref(), context, Some(symbol.format().clone()))?;
-
-                    self.emitter.emit_symbol_store(&value, &symbol)?;
-
-                    value
-                }
-                else {
-                    return Err(crate::RawError::new(String::from("invalid left-hand side for '='")).into_boxed());
-                }
-            },
-            ast::Node::Binary { operation: ast::BinaryOperation::Convert, lhs, rhs } => {
-                if let ast::Node::ValueType(value_type) = rhs.as_ref() {
-                    let to_format = ValueFormat::try_from(value_type)?;
-                    let value = self.generate_node(lhs.as_ref(), context, None)?;
-
-                    self.change_format(value, &to_format)?
-                }
-                else {
-                    return Err(crate::RawError::new(String::from("invalid right-hand side for 'as'")).into_boxed());
-                }
-            }
             ast::Node::Binary { operation, lhs, rhs } => {
-                let expected_lhs_format = expected_binary_lhs_format(*operation, expected_format.clone());
-                let lhs = self.generate_node(lhs.as_ref(), context, expected_lhs_format)?;
-                let expected_rhs_format = expected_binary_rhs_format(*operation, expected_format.clone(), Some(lhs.format()));
-                let rhs = self.generate_node(rhs.as_ref(), context, expected_rhs_format)?;
-
                 match operation {
                     ast::BinaryOperation::Subscript => todo!(),
                     ast::BinaryOperation::Access => todo!(),
                     ast::BinaryOperation::DerefAccess => todo!(),
-                    ast::BinaryOperation::Convert => unreachable!(),
+                    ast::BinaryOperation::Convert => {
+                        if let ast::Node::ValueType(value_type) = rhs.as_ref() {
+                            let value = self.generate_node(lhs.as_ref(), context, None)?;
+                            let value = self.coerce_to_rvalue(value)?;
+                            
+                            let to_format = ValueFormat::try_from(value_type)?;
+        
+                            self.change_format(value, &to_format)?
+                        }
+                        else {
+                            return Err(crate::RawError::new(String::from("invalid right-hand side for 'as'")).into_boxed());
+                        }
+                    },
                     ast::BinaryOperation::Add => {
-                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
                         self.emitter.emit_addition(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::Subtract => {
-                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
                         self.emitter.emit_subtraction(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::Multiply => {
-                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
                         self.emitter.emit_multiplication(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::Divide => {
-                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
                         self.emitter.emit_division(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::Remainder => {
-                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
                         self.emitter.emit_remainder(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::ShiftLeft => {
-                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
                         self.emitter.emit_shift_left(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::ShiftRight => {
-                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
                         self.emitter.emit_shift_right(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::BitwiseAnd => {
-                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
                         self.emitter.emit_bitwise_and(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::BitwiseOr => {
-                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
                         self.emitter.emit_bitwise_or(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::BitwiseXor => {
-                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(lhs.format()));
+                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
                         self.emitter.emit_bitwise_xor(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::Equal => {
-                        let result = self.new_anonymous_register(ValueFormat::Boolean);
+                        let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
 
                         self.emitter.emit_cmp_equal(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::NotEqual => {
-                        let result = self.new_anonymous_register(ValueFormat::Boolean);
+                        let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
 
                         self.emitter.emit_cmp_not_equal(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::LessThan => {
-                        let result = self.new_anonymous_register(ValueFormat::Boolean);
+                        let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
 
                         self.emitter.emit_cmp_less_than(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::LessEqual => {
-                        let result = self.new_anonymous_register(ValueFormat::Boolean);
+                        let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
 
                         self.emitter.emit_cmp_less_equal(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::GreaterThan => {
-                        let result = self.new_anonymous_register(ValueFormat::Boolean);
+                        let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
 
                         self.emitter.emit_cmp_greater_than(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::GreaterEqual => {
-                        let result = self.new_anonymous_register(ValueFormat::Boolean);
+                        let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
 
                         self.emitter.emit_cmp_greater_equal(&result, &lhs, &rhs)?;
 
-                        RightValue::Register(result)
+                        Value::Register(result)
                     },
                     ast::BinaryOperation::LogicalAnd => todo!(),
                     ast::BinaryOperation::LogicalOr => todo!(),
-                    ast::BinaryOperation::Assign => unreachable!(),
+                    ast::BinaryOperation::Assign => {
+                        self.generate_assignment(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?
+                    },
                     ast::BinaryOperation::MultiplyAssign => todo!(),
                     ast::BinaryOperation::DivideAssign => todo!(),
                     ast::BinaryOperation::RemainderAssign => todo!(),
@@ -649,39 +660,42 @@ impl<W: Write> Generator<W> {
             },
             ast::Node::Call { callee, arguments } => {
                 let callee = self.generate_node(callee.as_ref(), context, None)?;
+                let callee = self.coerce_to_rvalue(callee)?;
 
                 if let ValueFormat::Function { returned, parameters, is_varargs } = callee.format() {
-                    let mut argument_results = Vec::new();
+                    let mut argument_values = Vec::new();
                     for (argument, parameter_format) in arguments.iter().zip(parameters.iter()) {
-                        let argument_result = self.generate_node(argument.as_ref(), context, Some(parameter_format.clone()))?;
-                        argument_results.push(argument_result);
+                        let argument = self.generate_node(argument.as_ref(), context, Some(parameter_format.clone()))?;
+                        let argument = self.coerce_to_rvalue(argument)?;
+
+                        argument_values.push(argument);
                     }
 
                     if !is_varargs && arguments.len() > parameters.len() {
-                        return Err(crate::RawError::new(format!("too many arguments; expected {} arguments, got {}", parameters.len(), arguments.len())).into_boxed());
+                        return Err(crate::RawError::new(format!("too many arguments (expected {}, got {})", parameters.len(), arguments.len())).into_boxed());
                     }
                     else if arguments.len() < parameters.len() {
-                        return Err(crate::RawError::new(format!("too few arguments; expected {} arguments, got {}", parameters.len(), arguments.len())).into_boxed());
+                        return Err(crate::RawError::new(format!("too few arguments (expected {}, got {})", parameters.len(), arguments.len())).into_boxed());
                     }
 
                     match returned.as_ref() {
                         ValueFormat::Never => {
-                            self.emitter.emit_function_call(None, &callee, &argument_results)?;
+                            self.emitter.emit_function_call(None, &callee, &argument_values)?;
                             self.emitter.emit_unreachable()?;
 
-                            RightValue::Never
+                            Value::Never
                         },
                         ValueFormat::Void => {
-                            self.emitter.emit_function_call(None, &callee, &argument_results)?;
+                            self.emitter.emit_function_call(None, &callee, &argument_values)?;
 
-                            RightValue::Void
+                            Value::Void
                         },
                         _ => {
                             let result = self.new_anonymous_register(*returned);
 
-                            self.emitter.emit_function_call(Some(&result), &callee, &argument_results)?;
+                            self.emitter.emit_function_call(Some(&result), &callee, &argument_values)?;
 
-                            RightValue::Register(result)
+                            Value::Register(result)
                         }
                     }
                 }
@@ -690,24 +704,26 @@ impl<W: Write> Generator<W> {
                 }
             },
             ast::Node::Scope { statements } => {
-                self.local_symbols.enter_scope();
+                self.local_symbol_table.enter_scope();
 
-                let mut result = RightValue::Void;
+                let mut result = Value::Void;
                 for statement in statements {
-                    let statement_result = self.generate_node(statement.as_ref(), context, None)?;
-                    if let RightValue::Never = statement_result {
+                    let statement_value = self.generate_node(statement.as_ref(), context, None)?;
+                    if let Value::Never = statement_value {
                         // The rest of the statements in the block will never be executed, so they don't need to be generated
-                        result = RightValue::Never;
+                        result = Value::Never;
                         break;
                     }
                 }
 
-                self.local_symbols.leave_scope();
+                self.local_symbol_table.leave_scope();
 
                 result
             },
             ast::Node::Conditional { condition, consequent, alternative } => {
                 let condition = self.generate_node(condition.as_ref(), context, Some(ValueFormat::Boolean))?;
+                let condition = self.coerce_to_rvalue(condition)?;
+
                 let consequent_label = self.new_anonymous_label();
                 let alternative_label = self.new_anonymous_label();
 
@@ -717,20 +733,20 @@ impl<W: Write> Generator<W> {
                     let tail_label = self.new_anonymous_label();
 
                     self.emitter.emit_label(&consequent_label)?;
-                    let consequent_result = self.generate_node(consequent.as_ref(), context, None)?;
+                    let consequent_value = self.generate_node(consequent.as_ref(), context, None)?;
                     self.emitter.emit_unconditional_branch(&tail_label)?;
 
                     self.emitter.emit_label(&alternative_label)?;
-                    let alternative_result = self.generate_node(alternative.as_ref(), context, None)?;
+                    let alternative_value = self.generate_node(alternative.as_ref(), context, None)?;
                     self.emitter.emit_unconditional_branch(&tail_label)?;
 
                     self.emitter.emit_label(&tail_label)?;
 
-                    if let (RightValue::Never, RightValue::Never) = (consequent_result, alternative_result) {
-                        RightValue::Never
+                    if let (Value::Never, Value::Never) = (consequent_value, alternative_value) {
+                        Value::Never
                     }
                     else {
-                        RightValue::Void
+                        Value::Void
                     }
                 }
                 else {
@@ -740,7 +756,7 @@ impl<W: Write> Generator<W> {
 
                     self.emitter.emit_label(&alternative_label)?;
 
-                    RightValue::Void
+                    Value::Void
                 }
             },
             ast::Node::While { condition, body } => {
@@ -752,6 +768,8 @@ impl<W: Write> Generator<W> {
                 self.emitter.emit_label(&condition_label)?;
 
                 let condition = self.generate_node(condition.as_ref(), context, Some(ValueFormat::Boolean))?;
+                let condition = self.coerce_to_rvalue(condition)?;
+
                 let body_label = self.new_anonymous_label();
                 let tail_label = self.new_anonymous_label();
                 let loop_context = context.clone().enter_loop(tail_label.clone(), condition_label.clone());
@@ -764,7 +782,7 @@ impl<W: Write> Generator<W> {
 
                 self.emitter.emit_label(&tail_label)?;
 
-                RightValue::Void
+                Value::Void
             },
             ast::Node::Break => {
                 let break_label = context.break_label()
@@ -775,7 +793,7 @@ impl<W: Write> Generator<W> {
                 // Consume an anonymous ID corresponding to the implicit label inserted after the terminator instruction
                 self.next_anonymous_register_id += 1;
 
-                RightValue::Never
+                Value::Never
             },
             ast::Node::Continue => {
                 let continue_label = context.continue_label()
@@ -786,7 +804,7 @@ impl<W: Write> Generator<W> {
                 // Consume an anonymous ID corresponding to the implicit label inserted after the terminator instruction
                 self.next_anonymous_register_id += 1;
 
-                RightValue::Never
+                Value::Never
             },
             ast::Node::Return { value } => {
                 let return_format = context.return_format()
@@ -794,10 +812,12 @@ impl<W: Write> Generator<W> {
 
                 if let Some(value) = value {
                     if let ValueFormat::Void = return_format {
-                        return Err(crate::RawError::new(String::from("returning a non-void value from a void function")).into_boxed());
+                        return Err(crate::RawError::new(String::from("returning without a value from a non-void function")).into_boxed());
                     }
                     else {
                         let value = self.generate_node(value.as_ref(), context, Some(return_format.clone()))?;
+                        let value = self.coerce_to_rvalue(value)?;
+
                         self.emitter.emit_return(Some(&value))?;
                     }
                 }
@@ -806,17 +826,18 @@ impl<W: Write> Generator<W> {
                         self.emitter.emit_return(None)?;
                     }
                     else {
-                        return Err(crate::RawError::new(String::from("returning a non-void value from a void function")).into_boxed());
+                        return Err(crate::RawError::new(String::from("returning with a value from a void function")).into_boxed());
                     }
                 }
 
                 // Consume an anonymous ID corresponding to the implicit label inserted after the terminator instruction
                 self.next_anonymous_register_id += 1;
 
-                RightValue::Never
+                Value::Never
             },
             ast::Node::Print { value } => {
                 let value_to_print = self.generate_node(value.as_ref(), context, None)?;
+                let value_to_print = self.coerce_to_rvalue(value_to_print)?;
                 let to_format = match value_to_print.format() {
                     ValueFormat::Boolean => ValueFormat::Integer { size: 8, signed: false },
                     ValueFormat::Integer { signed, .. } => ValueFormat::Integer { size: 8, signed },
@@ -827,35 +848,34 @@ impl<W: Write> Generator<W> {
 
                 self.emitter.emit_print(&result_register, &value_to_print)?;
 
-                RightValue::Void
+                Value::Void
             },
             ast::Node::Let { name, value_type, value } => {
                 let format = ValueFormat::try_from(value_type)?;
-                let alignment = format.size();
-                let symbol = self.create_symbol(context, name.clone(), format.clone(), alignment);
+                let (symbol, pointer) = self.get_symbol_table(context).create_indirect_symbol(name.clone(), format.clone());
 
-                self.emitter.emit_symbol_allocation(&symbol)?;
+                self.emitter.emit_static_allocation(&pointer, &format)?;
 
                 if let Some(node) = value {
                     let value = self.generate_node(node.as_ref(), context, Some(format))?;
+                    let value = self.coerce_to_rvalue(value)?;
 
-                    self.emitter.emit_symbol_store(&value, &symbol)?;
+                    self.emitter.emit_store(&value, &Value::Register(pointer))?;
                 }
 
                 self.define_symbol(context, symbol);
 
-                RightValue::Void
+                Value::Void
             },
             ast::Node::Function { name, parameters, return_type, body } => {
                 let returned = ValueFormat::try_from(return_type)?;
-                let alignment = returned.size(); // TODO: what would this even mean
                 let parameter_formats = parameters.iter()
                     .map(|parameter| ValueFormat::try_from(&parameter.value_type))
                     // This looks ugly but just collects the iterator of Result<T, E> into a Result<Vec<T>, E>
                     .collect::<Result<Vec<_>, _>>()?;
 
                 // TODO: pretty much everything below this line is positively foul
-                self.local_symbols.clear();
+                self.local_symbol_table.clear();
                 self.next_anonymous_register_id = 1;
                 self.next_anonymous_label_id = 0;
                 let function_context = context.clone().enter_function(returned.clone());
@@ -864,14 +884,14 @@ impl<W: Write> Generator<W> {
                     .map(|parameter| parameter.name.clone())
                     .zip(parameter_formats.iter())
                     .map(|(name, format)| {
-                        let alignment = format.size();
-                        let parameter_register = Register {
+                        let input_register = Register {
                             name: format!("-arg-{name}"),
                             format: format.clone(),
                             is_global: false,
                         };
-                        let parameter_symbol = self.create_symbol(&function_context, name, format.clone(), alignment);
-                        (parameter_symbol, parameter_register)
+                        let (symbol, pointer) = self.get_symbol_table(&function_context).create_indirect_symbol(name, format.clone());
+                        
+                        (input_register, symbol, pointer)
                     })
                     .collect();
 
@@ -880,19 +900,22 @@ impl<W: Write> Generator<W> {
                     parameters: parameter_formats, 
                     is_varargs: false, // TODO
                 };
-                let function_symbol = self.create_symbol(context, name.clone(), format, alignment);
+                let (function_symbol, function_register) = self.get_symbol_table(context).create_register_symbol(name.clone(), format);
 
-                self.emitter.emit_function_enter(function_symbol.register(), &parameter_handles)?;
+                let input_registers: Vec<_> = parameter_handles.iter()
+                    .map(|(register, _, _)| register.clone())
+                    .collect();
+                self.emitter.emit_function_enter(&function_register, &input_registers)?;
                 self.define_symbol(context, function_symbol);
 
-                for (parameter_symbol, parameter_register) in parameter_handles {
-                    self.emitter.emit_symbol_allocation(&parameter_symbol)?;
-                    self.emitter.emit_symbol_store(&RightValue::Register(parameter_register), &parameter_symbol)?;
-                    self.define_symbol(&function_context, parameter_symbol);
+                for (input_register, symbol, pointer) in parameter_handles {
+                    self.emitter.emit_static_allocation(&pointer, input_register.format())?;
+                    self.emitter.emit_store(&Value::Register(input_register), &Value::Register(pointer))?;
+                    self.define_symbol(&function_context, symbol);
                 }
 
                 let body_result = self.generate_node(body.as_ref(), &function_context, None)?;
-                if !(matches!(body_result, RightValue::Never)) {
+                if &body_result != &Value::Never {
                     if let ValueFormat::Void = &returned {
                         self.emitter.emit_return(None)?;
                     }
@@ -903,7 +926,7 @@ impl<W: Write> Generator<W> {
 
                 self.emitter.emit_function_exit()?;
 
-                RightValue::Void
+                Value::Void
             },
             _ => return Err(crate::RawError::new(String::from("unexpected node type")).into_boxed())
         };
