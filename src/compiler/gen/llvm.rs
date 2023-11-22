@@ -149,19 +149,20 @@ impl<W: Write> Emitter<W> {
         .map_err(|cause| self.error(cause))
     }
 
-    pub fn emit_static_allocation(&mut self, pointer: &Register, format: &ValueFormat) -> crate::Result<()> {
-        if pointer.is_global() {
-            writeln!(
-                self.writer,
-                "{pointer} = global {format}",
-            )
-        }
-        else {
-            writeln!(
-                self.writer,
-                "{INDENT}{pointer} = alloca {format}",
-            )
-        }
+    pub fn emit_global_allocation(&mut self, pointer: &Register, value: &Value) -> crate::Result<()> {
+        writeln!(
+            self.writer,
+            "{pointer} = dso_local global {format} {value}\n",
+            format = value.format(),
+        )
+        .map_err(|cause| self.error(cause))
+    }
+
+    pub fn emit_local_allocation(&mut self, pointer: &Register, format: &ValueFormat) -> crate::Result<()> {
+        writeln!(
+            self.writer,
+            "{INDENT}{pointer} = alloca {format}",
+        )
         .map_err(|cause| self.error(cause))
     }
 

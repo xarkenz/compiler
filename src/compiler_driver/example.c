@@ -2,6 +2,8 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+int32_t my_global_variable = 10;
+
 void print_i64(int64_t x) {
     printf("%ld\n", x);
 }
@@ -50,6 +52,10 @@ int32_t main() {
     else {
         print_u64((uint64_t) gcd(18, 45));
     }
+
+    print_i64((int64_t) my_global_variable);
+    my_global_variable = 5;
+    print_i64((int64_t) my_global_variable);
 
     return 0;
 }

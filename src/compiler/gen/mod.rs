@@ -854,13 +854,19 @@ impl<W: Write> Generator<W> {
                 let format = ValueFormat::try_from(value_type)?;
                 let (symbol, pointer) = self.get_symbol_table(context).create_indirect_symbol(name.clone(), format.clone());
 
-                self.emitter.emit_static_allocation(&pointer, &format)?;
+                if context.is_global() {
+                    // TODO: allow a constant for initializing global
+                    self.emitter.emit_global_allocation(&pointer, &Value::Integer(0, format.clone()))?;
+                }
+                else {
+                    self.emitter.emit_local_allocation(&pointer, &format)?;
 
-                if let Some(node) = value {
-                    let value = self.generate_node(node.as_ref(), context, Some(format))?;
-                    let value = self.coerce_to_rvalue(value)?;
+                    if let Some(node) = value {
+                        let value = self.generate_node(node.as_ref(), context, Some(format.clone()))?;
+                        let value = self.coerce_to_rvalue(value)?;
 
-                    self.emitter.emit_store(&value, &Value::Register(pointer))?;
+                        self.emitter.emit_store(&value, &Value::Register(pointer))?;
+                    }
                 }
 
                 self.define_symbol(context, symbol);
@@ -909,7 +915,7 @@ impl<W: Write> Generator<W> {
                 self.define_symbol(context, function_symbol);
 
                 for (input_register, symbol, pointer) in parameter_handles {
-                    self.emitter.emit_static_allocation(&pointer, input_register.format())?;
+                    self.emitter.emit_local_allocation(&pointer, input_register.format())?;
                     self.emitter.emit_store(&Value::Register(input_register), &Value::Register(pointer))?;
                     self.define_symbol(&function_context, symbol);
                 }
