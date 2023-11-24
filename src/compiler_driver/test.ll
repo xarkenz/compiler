@@ -8,7 +8,9 @@ target triple = "x86_64-pc-linux-gnu"
 @print_u64_fstring = private unnamed_addr constant [6 x i8] c"%llu\0A\00", align 1
 @print_ptr_fstring = private unnamed_addr constant [4 x i8] c"%p\0A\00", align 1
 
-@my_global_variable = dso_local global i32 0
+@global_1 = dso_local global i32 100
+
+@global_2 = dso_local global i32 zeroinitializer
 
 ; Function Attrs: noinline nounwind optnone uwtable
 define dso_local i32 @fibonacci(i32 noundef %-arg-limit) #0 {
@@ -109,14 +111,13 @@ define dso_local void @do_some_pointing() #0 {
 
 ; Function Attrs: noinline nounwind optnone uwtable
 define dso_local i32 @main() #0 {
-    call void() @do_some_pointing()
-    %1 = load i32, i32* @my_global_variable
+    %1 = load i32, i32* @global_1
     %2 = sext i32 %1 to i64
     %3 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 noundef %2)
-    store i32 5, i32* @my_global_variable
-    %4 = load i32, i32* @my_global_variable
+    %4 = load i32, i32* @global_2
     %5 = sext i32 %4 to i64
     %6 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 noundef %5)
+    call void() @do_some_pointing()
     ret i32 0
 }
 

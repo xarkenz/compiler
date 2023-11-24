@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::{Error, FileError, SyntaxError};
+use crate::Error;
 
 use std::io::{BufRead, BufReader};
 use std::fs::File;
@@ -19,7 +19,7 @@ impl Scanner<BufReader<File>> {
     pub fn from_filename(filename: String) -> crate::Result<Self> {
         File::open(filename.clone())
             .map(|file| Self::new(filename.clone(), BufReader::new(file)))
-            .map_err(|cause| FileError::new(filename.clone(), None, cause).into_boxed())
+            .map_err(|cause| crate::FileError::new(filename.clone(), None, cause).into_boxed())
     }
 }
 
@@ -42,11 +42,11 @@ impl<T: BufRead> Scanner<T> {
     }
 
     pub fn file_error(&self, cause: std::io::Error) -> Box<dyn Error> {
-        FileError::new(self.filename.to_owned(), Some(self.line), cause).into_boxed()
+        crate::FileError::new(self.filename.to_owned(), Some(self.line), cause).into_boxed()
     }
 
     pub fn syntax_error(&self, message: String) -> Box<dyn Error> {
-        SyntaxError::new(self.filename.to_owned(), self.line, message).into_boxed()
+        crate::SyntaxError::new(self.filename.to_owned(), self.line, message).into_boxed()
     }
 
     fn next_char(&mut self) -> crate::Result<Option<char>> {
@@ -147,6 +147,73 @@ impl<T: BufRead> Scanner<T> {
         Err(self.syntax_error(String::from("unrecognized token")))
     }
 
+    fn scan_string_literal(&mut self) -> crate::Result<Option<Token>> {
+        let mut bytes = Vec::new();
+
+        while let Some(ch) = self.next_char()? {
+            if ch == '"' {
+                // Add the NUL byte at the end
+                // TODO: syntax like r"hello" to opt out?
+                bytes.push(0);
+                return Ok(Some(Token::Literal(Literal::String(StringValue::new(bytes)))));
+            }
+            else if ch == '\\' {
+                match self.next_char()? {
+                    Some('\\') => {
+                        bytes.push(b'\\');
+                    },
+                    Some('\"') => {
+                        bytes.push(b'\"');
+                    },
+                    Some('\'') => {
+                        bytes.push(b'\'');
+                    },
+                    Some('n') => {
+                        bytes.push(b'\n');
+                    },
+                    Some('t') => {
+                        bytes.push(b'\t');
+                    },
+                    Some('0') => {
+                        bytes.push(0);
+                    },
+                    Some('x') => {
+                        let mut byte = 0;
+                        for _ in 0..2 {
+                            if let Some(ch) = self.next_char()? {
+                                // why did i do this manually, you ask? idk man no real reason
+                                byte *= 16;
+                                byte += match ch {
+                                    '0'..='9' => ch as u8 - b'0',
+                                    'A'..='F' => ch as u8 - b'A' + 10,
+                                    'a'..='f' => ch as u8 - b'a' + 10,
+                                    _ => return Err(self.syntax_error(format!("expected a hexadecimal digit")))
+                                };
+                            } else {
+                                break;
+                            }
+                        }
+                        bytes.push(byte);
+                    },
+                    Some(escape_ch) => {
+                        return Err(self.syntax_error(format!("unrecognized escape character '{escape_ch}'")));
+                    },
+                    None => {
+                        break;
+                    },
+                }
+            }
+            else if ch.is_ascii() {
+                bytes.push(ch as u8);
+            }
+            else {
+                return Err(self.syntax_error(format!("non-ASCII character '{ch}' in string literal")));
+            }
+        }
+
+        Err(self.syntax_error(String::from("unclosed string literal")))
+    }
+
     fn skip_line_comment(&mut self) -> crate::Result<()> {
         let mut escape_next_newline = false;
 
@@ -179,9 +246,9 @@ impl<T: BufRead> Scanner<T> {
             }
             else if ch == '*' {
                 match self.next_char()? {
-                    Some('/') => break,
+                    Some('/') => return Ok(()),
                     Some(next_ch) => self.put_back(next_ch),
-                    None => {},
+                    None => break,
                 }
             }
             else if ch == '\\' {
@@ -189,7 +256,7 @@ impl<T: BufRead> Scanner<T> {
             }
         }
 
-        Ok(())
+        Err(self.syntax_error(String::from("unclosed block comment")))
     }
 
     pub fn next_token(&mut self) -> crate::Result<Option<Token>> {
@@ -216,6 +283,9 @@ impl<T: BufRead> Scanner<T> {
                         Some(next_ch) => self.put_back(next_ch),
                         None => {},
                     }
+                }
+                else if ch == '"' {
+                    return self.scan_string_literal();
                 }
                 self.put_back(ch);
                 self.scan_symbolic_literal()

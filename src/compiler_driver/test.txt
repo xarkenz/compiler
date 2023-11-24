@@ -1,3 +1,8 @@
+// function printf(*[u8], ...) -> u32;
+
+let global_1: i32 = 100;
+let global_2: i32;
+
 function fibonacci(limit: i32) -> i32 {
     let a: i32 = 0;
     let b: i32 = 1;
@@ -43,6 +48,9 @@ function do_some_pointing() {
 function main() -> i32 {
     // print fibonacci(1000);
     // print gcd(18, 45);
+
+    print global_1;
+    print global_2;
 
     do_some_pointing();
 

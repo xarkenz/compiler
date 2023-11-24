@@ -146,11 +146,40 @@ impl fmt::Display for Register {
 }
 
 #[derive(Clone, PartialEq, Debug)]
+pub enum Constant {
+    ZeroInitializer(ValueFormat),
+    Boolean(bool),
+    Integer(u64, ValueFormat),
+    String(token::StringValue),
+}
+
+impl Constant {
+    pub fn format(&self) -> ValueFormat {
+        match self {
+            Self::ZeroInitializer(format) => format.clone(),
+            Self::Boolean(_) => ValueFormat::Boolean,
+            Self::Integer(_, format) => format.clone(),
+            Self::String(_) => todo!(),
+        }
+    }
+}
+
+impl fmt::Display for Constant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroInitializer(_) => write!(f, "zeroinitializer"),
+            Self::Boolean(value) => write!(f, "{value}"),
+            Self::Integer(value, _) => write!(f, "{value}"),
+            Self::String(value) => write!(f, "{value}"),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub enum Value {
     Never,
     Void,
-    Boolean(bool),
-    Integer(u64, ValueFormat),
+    Constant(Constant),
     Register(Register),
     Indirect {
         pointer: Box<Value>,
@@ -163,8 +192,7 @@ impl Value {
         match self {
             Self::Never => ValueFormat::Never,
             Self::Void => ValueFormat::Void,
-            Self::Boolean(_) => ValueFormat::Boolean,
-            Self::Integer(_, format) => format.clone(),
+            Self::Constant(constant) => constant.format(),
             Self::Register(register) => register.format().clone(),
             Self::Indirect { loaded_format, .. } => loaded_format.clone(),
         }
@@ -174,11 +202,9 @@ impl Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Never | Self::Void => write!(f, "?"),
-            Self::Boolean(value) => value.fmt(f),
-            Self::Integer(value, _) => value.fmt(f),
-            Self::Register(register) => register.fmt(f),
-            Self::Indirect { .. } => write!(f, "?"),
+            Self::Constant(constant) => write!(f, "{constant}"),
+            Self::Register(register) => write!(f, "{register}"),
+            _ => write!(f, "?")
         }
     }
 }
@@ -360,7 +386,7 @@ impl<W: Write> Generator<W> {
             ValueFormat::Boolean,
         ) = (&from_format, to_format) {
             let result = self.new_anonymous_register(ValueFormat::Boolean);
-            self.emitter.emit_cmp_not_equal(&result, &value, &Value::Integer(0, from_format.clone()))?;
+            self.emitter.emit_cmp_not_equal(&result, &value, &Value::Constant(Constant::Integer(0, from_format.clone())))?;
             
             Ok(Value::Register(result))
         }
@@ -438,10 +464,13 @@ impl<W: Write> Generator<W> {
                         self.get_symbol(name)?.value().clone()
                     },
                     token::Literal::Integer(value) => {
-                        Value::Integer(*value, expected_format.clone().unwrap_or_else(ValueFormat::default_integer))
+                        Value::Constant(Constant::Integer(*value, expected_format.clone().unwrap_or_else(ValueFormat::default_integer)))
                     },
                     token::Literal::Boolean(value) => {
-                        Value::Boolean(*value)
+                        Value::Constant(Constant::Boolean(*value))
+                    },
+                    token::Literal::String(value) => {
+                        Value::Constant(Constant::String(value.clone()))
                     }
                 }
             },
@@ -855,11 +884,20 @@ impl<W: Write> Generator<W> {
                 let (symbol, pointer) = self.get_symbol_table(context).create_indirect_symbol(name.clone(), format.clone());
 
                 if context.is_global() {
-                    // TODO: allow a constant for initializing global
-                    if value.is_some() {
-                        return Err(crate::RawError::new(String::from("initializing globals is not yet supported")).into_boxed());
+                    // TODO: constant folding
+                    let init_value = if let Some(node) = value {
+                        if let Value::Constant(constant) = self.generate_node(node.as_ref(), context, Some(format.clone()))? {
+                            constant
+                        }
+                        else {
+                            return Err(crate::RawError::new(String::from("initial value for global must be constant")).into_boxed());
+                        }
                     }
-                    self.emitter.emit_global_allocation(&pointer, &Value::Integer(0, format.clone()))?;
+                    else {
+                        Constant::ZeroInitializer(format.clone())
+                    };
+
+                    self.emitter.emit_global_allocation(&pointer, &init_value, false)?;
                 }
                 else {
                     self.emitter.emit_local_allocation(&pointer, &format)?;
