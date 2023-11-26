@@ -294,10 +294,11 @@ impl Operation {
     }
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, Debug)]
 pub enum ValueType {
     Named(String),
     Pointer(Box<ValueType>),
+    Array(Box<ValueType>, Option<Box<Node>>),
 }
 
 impl std::fmt::Display for ValueType {
@@ -308,6 +309,12 @@ impl std::fmt::Display for ValueType {
             },
             Self::Pointer(to_type) => {
                 write!(f, "*{to_type}")
+            },
+            Self::Array(item_type, Some(length)) => {
+                write!(f, "[{item_type}; {length}]")
+            },
+            Self::Array(item_type, None) => {
+                write!(f, "[{item_type}]")
             },
         }
     }
@@ -325,7 +332,7 @@ impl std::fmt::Display for FunctionParameter {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Node {
     Literal(Literal),
     ValueType(ValueType),
@@ -370,8 +377,9 @@ pub enum Node {
     Function {
         name: String,
         parameters: Vec<FunctionParameter>,
+        is_varargs: bool,
         return_type: ValueType,
-        body: Box<Node>,
+        body: Option<Box<Node>>,
     },
 }
 
@@ -430,23 +438,34 @@ impl fmt::Display for Node {
             Self::Print { value } => {
                 write!(f, " print {value};")
             },
-            Self::Let { name: identifier, value_type, value } => {
+            Self::Let { name, value_type, value } => {
                 if let Some(value) = value {
-                    write!(f, " let {identifier}: {value_type} = {value};")
+                    write!(f, " let {name}: {value_type} = {value};")
                 } else {
-                    write!(f, " let {identifier}: {value_type};")
+                    write!(f, " let {name}: {value_type};")
                 }
             },
-            Self::Function { name: identifier, parameters, return_type, body } => {
-                write!(f, " function {identifier}(")?;
+            Self::Function { name, parameters, is_varargs, return_type, body } => {
+                write!(f, " function {name}(")?;
                 let mut parameters_iter = parameters.iter();
                 if let Some(first) = parameters_iter.next() {
                     write!(f, "{first}")?;
+                    for parameter in parameters_iter {
+                        write!(f, ", {parameter}")?;
+                    }
+                    if *is_varargs {
+                        write!(f, ", ..")?;
+                    }
                 }
-                for parameter in parameters_iter {
-                    write!(f, ", {parameter}")?;
+                else if *is_varargs {
+                    write!(f, "..")?;
                 }
-                write!(f, ") -> {return_type}{body}")
+                if let Some(body) = body {
+                    write!(f, ") -> {return_type}{body}")
+                }
+                else {
+                    write!(f, ") -> {return_type};")
+                }
             },
         }
     }

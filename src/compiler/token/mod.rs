@@ -85,6 +85,7 @@ pub enum Token {
     Equal,
     Equal2,
     Dot,
+    Dot2,
     Comma,
     Colon,
     Semicolon,
@@ -152,6 +153,7 @@ impl fmt::Display for Token {
             Self::Equal => write!(f, "="),
             Self::Equal2 => write!(f, "=="),
             Self::Dot => write!(f, "."),
+            Self::Dot2 => write!(f, ".."),
             Self::Comma => write!(f, ","),
             Self::Colon => write!(f, ":"),
             Self::Semicolon => write!(f, ";"),
@@ -219,6 +221,7 @@ pub const SYMBOLIC_TOKENS: &[(&str, Token)] = &[
     ("=", Token::Equal),
     ("==", Token::Equal2),
     (".", Token::Dot),
+    ("..", Token::Dot2),
     (",", Token::Comma),
     (":", Token::Colon),
     (";", Token::Semicolon),
@@ -261,25 +264,15 @@ pub const KEYWORD_TOKENS: &[(&str, Token)] = &[
 
 pub fn get_symbolic_token_partial_matches(start_content: &str) -> Vec<&'static Token> {
     SYMBOLIC_TOKENS.iter()
-        .filter_map(|(literal, token)| {
-            if literal.starts_with(start_content) {
-                Some(token)
-            } else {
-                None
-            }
-        })
+        .filter(|(literal, _)| literal.starts_with(start_content))
+        .map(|(_, symbolic_token)| symbolic_token)
         .collect()
 }
 
 pub fn get_symbolic_token_match(content: &str) -> Option<&'static Token> {
     SYMBOLIC_TOKENS.iter()
-        .find_map(|(literal, token)| {
-            if *literal == content {
-                Some(token)
-            } else {
-                None
-            }
-        })
+        .find(|(literal, _)| &content == literal)
+        .map(|(_, symbolic_token)| symbolic_token)
 }
 
 pub fn get_keyword_token_match(content: &str) -> Option<&'static Token> {

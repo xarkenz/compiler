@@ -28,6 +28,10 @@ impl Symbol {
         &self.value
     }
 
+    pub fn value_mut(&mut self) -> &mut Value {
+        &mut self.value
+    }
+
     pub fn scope(&self) -> &Scope {
         &self.scope
     }

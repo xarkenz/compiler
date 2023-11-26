@@ -1,7 +1,18 @@
-// function printf(*[u8], ...) -> u32;
+// 3 challenges to make printf work:
+// - function prototypes (done)
+// - variadic arguments (done)
+// - strings/arrays (big challenge)
+function printf(format: *[u8], ..) -> u32;
 
-let global_1: i32 = 100;
-let global_2: i32;
+function fibonacci(limit: i32) -> i32;
+function gcd(a: u32, b: u32) -> u32;
+
+function main() -> i32 {
+    print fibonacci(1000);
+    print gcd(18, 45);
+
+    return 0;
+}
 
 function fibonacci(limit: i32) -> i32 {
     let a: i32 = 0;
@@ -26,33 +37,30 @@ function gcd(a: u32, b: u32) -> u32 {
     return a;
 }
 
-function do_some_pointing() {
+/*function do_some_pointing() {
     let a: i32;
     let b: i32;
     let c: i32;
     a = b = c = 3;
-    print a;
-    print b;
-    print c;
+    printf("a: %d\n", a);
+    printf("b: %d\n", b);
+    printf("c: %d\n", c);
 
     let x: i32 = 0;
-    print x;
+    printf("x: %d\n", x);
     let y: *i32 = &x;
     *y = 1;
-    print x;
+    printf("*y: %d\n", x);
     let z: **i32 = &y;
     **z = 2;
-    print x;
+    printf("**z: %d\n", x);
 }
 
 function main() -> i32 {
-    // print fibonacci(1000);
-    // print gcd(18, 45);
-
-    print global_1;
-    print global_2;
+    printf("fibonacci: %d\n", fibonacci(1000));
+    printf("gcd: %u\n", gcd(18, 45));
 
     do_some_pointing();
 
     return 0;
-}
+}*/

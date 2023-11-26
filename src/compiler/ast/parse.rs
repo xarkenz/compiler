@@ -178,12 +178,30 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 let name = name.clone();
                 self.scan_token()?;
                 self.expect_token(allowed_ends)?;
+
                 Ok(ValueType::Named(name))
             },
             Token::Star => {
                 self.scan_token()?;
                 let to_type = self.parse_value_type(allowed_ends)?;
+
                 Ok(ValueType::Pointer(Box::new(to_type)))
+            },
+            Token::SquareLeft => {
+                self.scan_token()?;
+                let item_type = Box::new(self.parse_value_type(&[Token::Semicolon, Token::SquareRight])?);
+                let length;
+                if let Some(Token::Semicolon) = self.current_token() {
+                    self.scan_token()?;
+                    length = Some(self.parse_expression(None, &[Token::SquareRight])?);
+                }
+                else {
+                    length = None;
+                }
+                self.scan_token()?;
+                self.expect_token(allowed_ends)?;
+                
+                Ok(ValueType::Array(item_type, length))
             },
             token => {
                 Err(self.scanner.syntax_error(format!("expected a type, got '{token}'")))
@@ -227,7 +245,16 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.scan_token()?;
 
                 let mut parameters = Vec::new();
+                let mut is_varargs = false;
                 while !(matches!(self.current_token(), Some(Token::ParenRight))) {
+                    if let Some(Token::Dot2) = self.current_token() {
+                        is_varargs = true;
+                        self.scan_token()?;
+                        // The '..' for variadic arguments must be the end of the function signature
+                        self.expect_token(&[Token::ParenRight])?;
+                        break;
+                    }
+
                     let parameter_name = self.expect_identifier()?;
                     self.scan_token()?;
                     self.expect_token(&[Token::Colon])?;
@@ -244,19 +271,25 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 }
 
                 self.scan_token()?;
-                self.expect_token(&[Token::RightArrow, Token::CurlyLeft])?;
-                // The function body must be enclosed by a scope, so expect a '{' token following the return type (if present)
+                // The function body must be enclosed by a scope, so expect a '{' or ';' token following the return type (if present)
+                self.expect_token(&[Token::RightArrow, Token::CurlyLeft, Token::Semicolon])?;
                 let return_type = if let Some(Token::RightArrow) = self.current_token() {
                     self.scan_token()?;
-                    self.parse_value_type(&[Token::CurlyLeft])?
+                    self.parse_value_type(&[Token::CurlyLeft, Token::Semicolon])?
                 } else {
                     ValueType::Named(String::from("void"))
                 };
-                let body = self.parse_statement(false, false)?.unwrap();
+                let body = if let Some(Token::CurlyLeft) = self.current_token() {
+                    self.parse_statement(false, false)?
+                } else {
+                    self.scan_token()?;
+                    None
+                };
 
                 Ok(Some(Box::new(Node::Function {
                     name,
                     parameters,
+                    is_varargs,
                     return_type,
                     body,
                 })))
