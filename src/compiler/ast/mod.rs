@@ -366,9 +366,6 @@ pub enum Node {
     Return {
         value: Option<Box<Node>>,
     },
-    Print {
-        value: Box<Node>,
-    },
     Let {
         name: String,
         value_type: ValueType,
@@ -434,9 +431,6 @@ impl fmt::Display for Node {
                 } else {
                     write!(f, " return;")
                 }
-            },
-            Self::Print { value } => {
-                write!(f, " print {value};")
             },
             Self::Let { name, value_type, value } => {
                 if let Some(value) = value {

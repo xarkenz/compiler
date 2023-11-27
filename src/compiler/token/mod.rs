@@ -118,7 +118,6 @@ pub enum Token {
     Break,
     Continue,
     Return,
-    Print,
     Let,
     Function,
     Literal(Literal),
@@ -186,7 +185,6 @@ impl fmt::Display for Token {
             Self::Break => write!(f, "break"),
             Self::Continue => write!(f, "continue"),
             Self::Return => write!(f, "return"),
-            Self::Print => write!(f, "print"),
             Self::Let => write!(f, "let"),
             Self::Function => write!(f, "function"),
             Self::Literal(literal) => literal.fmt(f),
@@ -257,7 +255,6 @@ pub const KEYWORD_TOKENS: &[(&str, Token)] = &[
     ("break", Token::Break),
     ("continue", Token::Continue),
     ("return", Token::Return),
-    ("print", Token::Print),
     ("let", Token::Let),
     ("function", Token::Function),
 ];

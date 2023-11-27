@@ -11,6 +11,7 @@ pub struct Emitter<W: Write> {
     used_attribute_group_1: bool,
     defined_functions: Vec<Register>,
     queued_function_declarations: Vec<(Register, String)>,
+    queued_anonymous_constants: Vec<String>,
 }
 
 impl Emitter<std::fs::File> {
@@ -30,6 +31,7 @@ impl<W: Write> Emitter<W> {
             used_attribute_group_1: false,
             defined_functions: Vec::new(),
             queued_function_declarations: Vec::new(),
+            queued_anonymous_constants: Vec::new(),
         }
     }
 
@@ -43,10 +45,6 @@ impl<W: Write> Emitter<W> {
 
             target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128\"
             target triple = \"x86_64-pc-linux-gnu\"
-
-            @print_i64_fstring = private unnamed_addr constant [6 x i8] c\"%lld\\0A\\00\", align 1
-            @print_u64_fstring = private unnamed_addr constant [6 x i8] c\"%llu\\0A\\00\", align 1
-            @print_ptr_fstring = private unnamed_addr constant [4 x i8] c\"%p\\0A\\00\", align 1
 
         ")
         .map_err(|cause| self.error(cause))
@@ -64,7 +62,6 @@ impl<W: Write> Emitter<W> {
         }
         // Dequeue all declarations which were just written
         self.queued_function_declarations.clear();
-        self.queued_function_declarations.shrink_to_fit();
 
         if self.used_attribute_group_0 {
             writedoc!(self.writer, "
@@ -110,7 +107,7 @@ impl<W: Write> Emitter<W> {
         .map_err(|cause| self.error(cause))
     }
 
-    pub fn queue_function_declaration(&mut self, function: &Register, return_format: &ValueFormat, parameter_formats: &[ValueFormat], is_varargs: bool) -> crate::Result<()> {
+    pub fn queue_function_declaration(&mut self, function: &Register, return_format: &ValueFormat, parameter_formats: &[ValueFormat], is_varargs: bool) {
         if !self.defined_functions.contains(function) && (
             !self.queued_function_declarations.iter().any(|(declared_function, _)| declared_function == function)
         ) {
@@ -140,8 +137,6 @@ impl<W: Write> Emitter<W> {
             // --that is, unless the function is defined later in the file
             self.queued_function_declarations.push((function.clone(), declaration));
         }
-
-        Ok(())
     }
 
     pub fn emit_function_enter(&mut self, function: &Register, return_format: &ValueFormat, parameters: &[Register], is_varargs: bool) -> crate::Result<()> {
@@ -177,11 +172,45 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_function_exit(&mut self) -> crate::Result<()> {
-        writeln!(
-            self.writer,
-            "}}\n",
-        )
+        writeln!(self.writer, "}}\n")
+            .map_err(|cause| self.error(cause))?;
+        
+        // Write all constant declarations queued for writing
+        for constant in &self.queued_anonymous_constants {
+            writeln!(self.writer, "{constant}\n")
+                .map_err(|cause| self.error(cause))?;
+        }
+        // Dequeue all declarations which were just written
+        self.queued_anonymous_constants.clear();
+
+        Ok(())
+    }
+
+    pub fn emit_global_allocation(&mut self, pointer: &Register, init_value: &Constant, constant: bool) -> crate::Result<()> {
+        if constant {
+            writeln!(
+                self.writer,
+                "{pointer} = dso_local constant {format} {init_value}\n",
+                format = init_value.format(),
+            )
+        }
+        else {
+            writeln!(
+                self.writer,
+                "{pointer} = dso_local global {format} {init_value}\n",
+                format = init_value.format(),
+            )
+        }
         .map_err(|cause| self.error(cause))
+    }
+
+    pub fn queue_anonymous_constant(&mut self, pointer: &Register, value: &Constant) {
+        let constant = format!(
+            "{pointer} = private unnamed_addr constant {format} {value}",
+            format = value.format(),
+        );
+        // Enqueue the constant declaration, which will be written just after the function end
+        self.queued_anonymous_constants.push(constant);
     }
 
     pub fn emit_label(&mut self, label: &Label) -> crate::Result<()> {
@@ -206,24 +235,6 @@ impl<W: Write> Emitter<W> {
             self.writer,
             "\tbr i1 {condition}, label {consequent}, label {alternative}",
         )
-        .map_err(|cause| self.error(cause))
-    }
-
-    pub fn emit_global_allocation(&mut self, pointer: &Register, init_value: &Constant, constant: bool) -> crate::Result<()> {
-        if constant {
-            writeln!(
-                self.writer,
-                "{pointer} = dso_local constant {format} {init_value}\n",
-                format = init_value.format(),
-            )
-        }
-        else {
-            writeln!(
-                self.writer,
-                "{pointer} = dso_local global {format} {init_value}\n",
-                format = init_value.format(),
-            )
-        }
         .map_err(|cause| self.error(cause))
     }
 
@@ -567,24 +578,6 @@ impl<W: Write> Emitter<W> {
 
         writeln!(self.writer, ")")
             .map_err(|cause| self.error(cause))
-    }
-
-    pub fn emit_print(&mut self, result: &Register, value: &Value) -> crate::Result<()> {
-        match value.format() {
-            ValueFormat::Integer { signed: true, .. } => writeln!(
-                self.writer,
-                "\t{result} = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @print_i64_fstring, i32 0, i32 0), i64 noundef {value})",
-            ),
-            ValueFormat::Integer { signed: false, .. } => writeln!(
-                self.writer,
-                "\t{result} = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @print_u64_fstring, i32 0, i32 0), i64 noundef {value})",
-            ),
-            _ => writeln!(
-                self.writer,
-                "\t{result} = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([4 x i8], [4 x i8]* @print_ptr_fstring, i32 0, i32 0), ptr noundef {value})",
-            )
-        }
-        .map_err(|cause| self.error(cause))
     }
 
     pub fn emit_return(&mut self, value: Option<&Value>) -> crate::Result<()> {

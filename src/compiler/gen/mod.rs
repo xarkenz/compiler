@@ -62,6 +62,21 @@ impl ValueFormat {
             to_format: Box::new(self),
         }
     }
+
+    pub fn broadens_to(&self, other: &Self) -> bool {
+        self == other || match (self, other) {
+            (Self::Pointer { to_format: self_inner }, Self::Pointer { to_format: other_inner }) => {
+                self_inner.broadens_to(other_inner.as_ref())
+            },
+            (Self::Array { item_format: self_item, length: _ }, Self::Array { item_format: other_item, length: None }) => {
+                self_item.broadens_to(other_item.as_ref())
+            },
+            (Self::Array { item_format: self_item, length: Some(self_length) }, Self::Array { item_format: other_item, length: Some(other_length) }) => {
+                self_length >= other_length && self_item.broadens_to(other_item.as_ref())
+            },
+            _ => false
+        }
+    }
 }
 
 impl TryFrom<&ast::ValueType> for ValueFormat {
@@ -192,6 +207,17 @@ pub enum Constant {
     Boolean(bool),
     Integer(u64, ValueFormat),
     String(token::StringValue),
+    Array(Vec<Value>, ValueFormat),
+    BitCast {
+        value: Box<Value>,
+        to_format: ValueFormat,
+    },
+    GetElementPointer {
+        element_format: ValueFormat,
+        aggregate_format: ValueFormat,
+        pointer: Box<Value>,
+        indices: Vec<Value>,
+    },
 }
 
 impl Constant {
@@ -200,7 +226,16 @@ impl Constant {
             Self::ZeroInitializer(format) => format.clone(),
             Self::Boolean(_) => ValueFormat::Boolean,
             Self::Integer(_, format) => format.clone(),
-            Self::String(_) => todo!(),
+            Self::String(value) => ValueFormat::Array {
+                item_format: Box::new(ValueFormat::Integer { size: 1, signed: false }),
+                length: Some(value.len()),
+            },
+            Self::Array(value, format) => ValueFormat::Array {
+                item_format: Box::new(format.clone()),
+                length: Some(value.len()),
+            },
+            Self::BitCast { to_format, .. } => to_format.clone(),
+            Self::GetElementPointer { element_format, .. } => element_format.clone().into_pointer(),
         }
     }
 }
@@ -212,6 +247,28 @@ impl fmt::Display for Constant {
             Self::Boolean(value) => write!(f, "{value}"),
             Self::Integer(value, _) => write!(f, "{value}"),
             Self::String(value) => write!(f, "{value}"),
+            Self::Array(value, _) => {
+                write!(f, "[")?;
+                let mut items = value.iter();
+                if let Some(item) = items.next() {
+                    write!(f, " {format} {item}", format = item.format())?;
+                    for item in items {
+                        write!(f, ", {format} {item}", format = item.format())?;
+                    }
+                    write!(f, " ")?;
+                }
+                write!(f, "]")
+            },
+            Self::BitCast { value, to_format } => {
+                write!(f, "bitcast ({format} {value} to {to_format})", format = value.format())
+            },
+            Self::GetElementPointer { aggregate_format, pointer, indices, .. } => {
+                write!(f, "getelementptr inbounds ({aggregate_format}, {pointer_format} {pointer}", pointer_format = pointer.format())?;
+                for index in indices {
+                    write!(f, ", {index_format} {index}", index_format = index.format())?;
+                }
+                write!(f, ")")
+            },
         }
     }
 }
@@ -313,10 +370,15 @@ impl ScopeContext {
     }
 }
 
+fn error_unknown_compile_time_size(value_type: &ast::ValueType) -> Box<dyn crate::Error> {
+    crate::RawError::new(format!("cannot use type '{value_type}' here, as it does not have a known size at compile time")).into_boxed()
+}
+
 pub struct Generator<W: Write> {
     emitter: llvm::Emitter<W>,
     next_anonymous_register_id: usize,
     next_anonymous_label_id: usize,
+    next_anonymous_constant_id: usize,
     global_symbol_table: info::SymbolTable,
     local_symbol_table: info::SymbolTable,
 }
@@ -336,6 +398,7 @@ impl<W: Write> Generator<W> {
             emitter,
             next_anonymous_register_id: 1,
             next_anonymous_label_id: 0,
+            next_anonymous_constant_id: 0,
             global_symbol_table: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY, true),
             local_symbol_table: info::SymbolTable::new(Self::DEFAULT_SYMBOL_TABLE_CAPACITY, false),
         }
@@ -357,7 +420,18 @@ impl<W: Write> Generator<W> {
         self.next_anonymous_label_id += 1;
 
         Label {
-            name: format!("-L{id}"),
+            name: format!(".label.{id}"),
+        }
+    }
+
+    pub fn new_anonymous_constant(&mut self, format: ValueFormat) -> Register {
+        let id = self.next_anonymous_constant_id;
+        self.next_anonymous_constant_id += 1;
+
+        Register {
+            name: format!(".const.{id}"),
+            format: format.into_pointer(),
+            is_global: true,
         }
     }
 
@@ -385,11 +459,11 @@ impl<W: Write> Generator<W> {
             .ok_or_else(|| crate::RawError::new(format!("undefined symbol '{name}'")).into_boxed())
     }
 
-    pub fn enforce_format(&self, value: &Value, format: &ValueFormat) -> crate::Result<()> {
+    pub fn enforce_format(&self, value: Value, format: &ValueFormat) -> crate::Result<Value> {
         let got_format = value.format();
 
-        if &got_format == format {
-            Ok(())
+        if got_format.broadens_to(format) {
+            Ok(value)
         }
         else {
             Err(crate::RawError::new(format!("expected a value of type {format}, got {got_format} instead")).into_boxed())
@@ -511,7 +585,36 @@ impl<W: Write> Generator<W> {
                         Value::Constant(Constant::Boolean(*value))
                     },
                     token::Literal::String(value) => {
-                        Value::Constant(Constant::String(value.clone()))
+                        let constant = Constant::String(value.clone());
+                        let constant_format = constant.format();
+
+                        // I'm not satisfied with how hacky this is, but...
+                        if let Some(ValueFormat::Pointer { to_format }) = &expected_format {
+                            let pointer = self.new_anonymous_constant(constant_format.clone());
+
+                            self.emitter.queue_anonymous_constant(&pointer, &constant);
+
+                            if let ValueFormat::Array { length: None, .. } = to_format.as_ref() {
+                                // Unsized arrays are problematic because they are actually *T pretending to be *[T]
+                                // Again, this is... definitely a hack... and really disgusting
+                                let integer_zero = Value::Constant(Constant::Integer(0, ValueFormat::default_integer()));
+                                Value::Constant(Constant::GetElementPointer {
+                                    element_format: ValueFormat::Array {
+                                        item_format: Box::new(ValueFormat::Integer { size: 1, signed: false }),
+                                        length: None,
+                                    },
+                                    aggregate_format: constant_format,
+                                    pointer: Box::new(Value::Register(pointer)),
+                                    indices: vec![integer_zero.clone(), integer_zero],
+                                })
+                            }
+                            else {
+                                Value::Register(pointer)
+                            }
+                        }
+                        else {
+                            Value::Constant(constant)
+                        }
                     }
                 }
             },
@@ -734,8 +837,14 @@ impl<W: Write> Generator<W> {
 
                 if let ValueFormat::Function { return_format, parameters, is_varargs, .. } = callee.format() {
                     let mut argument_values = Vec::new();
-                    for (argument, parameter_format) in arguments.iter().zip(parameters.iter()) {
-                        let argument = self.generate_node(argument.as_ref(), context, Some(parameter_format.clone()))?;
+
+                    // Ensure that when arguments and parameter formats are zipped, all arguments are generated
+                    // This is important for e.g. variadic arguments, which don't have corresponding parameters
+                    let parameters_iter = parameters.iter()
+                        .map(|parameter_format| Some(parameter_format))
+                        .chain(std::iter::repeat(None));
+                    for (argument, parameter_format) in arguments.iter().zip(parameters_iter) {
+                        let argument = self.generate_node(argument.as_ref(), context, parameter_format.cloned())?;
                         let argument = self.coerce_to_rvalue(argument)?;
 
                         argument_values.push(argument);
@@ -905,23 +1014,11 @@ impl<W: Write> Generator<W> {
 
                 Value::Never
             },
-            ast::Node::Print { value } => {
-                let value_to_print = self.generate_node(value.as_ref(), context, None)?;
-                let value_to_print = self.coerce_to_rvalue(value_to_print)?;
-                let to_format = match value_to_print.format() {
-                    ValueFormat::Boolean => ValueFormat::Integer { size: 8, signed: false },
-                    ValueFormat::Integer { signed, .. } => ValueFormat::Integer { size: 8, signed },
-                    format => format
-                };
-                let value_to_print = self.change_format(value_to_print, &to_format)?;
-                let result_register = self.new_anonymous_register(ValueFormat::Integer { size: 4, signed: true });
-
-                self.emitter.emit_print(&result_register, &value_to_print)?;
-
-                Value::Void
-            },
             ast::Node::Let { name, value_type, value } => {
                 let format = ValueFormat::try_from(value_type)?;
+                if format.size().is_none() {
+                    return Err(error_unknown_compile_time_size(value_type));
+                }
                 let (symbol, pointer) = self.get_symbol_table(context).create_indirect_symbol(name.clone(), format.clone());
 
                 if context.is_global() {
@@ -957,9 +1054,17 @@ impl<W: Write> Generator<W> {
             },
             ast::Node::Function { name, parameters, is_varargs, return_type, body: None } => {
                 let return_format = ValueFormat::try_from(return_type)?;
+                if return_format.size().is_none() {
+                    return Err(error_unknown_compile_time_size(return_type));
+                }
                 let parameter_formats = parameters.iter()
                     .map(|parameter| ValueFormat::try_from(&parameter.value_type))
                     .collect::<Result<Vec<ValueFormat>, _>>()?;
+                for (format, parameter) in std::iter::zip(&parameter_formats, parameters) {
+                    if format.size().is_none() {
+                        return Err(error_unknown_compile_time_size(&parameter.value_type));
+                    }
+                }
 
                 let format = ValueFormat::Function {
                     is_defined: false,
@@ -999,17 +1104,25 @@ impl<W: Write> Generator<W> {
                     function_register = register;
                 }
 
-                self.emitter.queue_function_declaration(&function_register, &return_format, &parameter_formats, *is_varargs)?;
+                self.emitter.queue_function_declaration(&function_register, &return_format, &parameter_formats, *is_varargs);
 
                 Value::Void
             },
             ast::Node::Function { name, parameters, is_varargs, return_type, body: Some(body) } => {
+                // TODO: functions need a *bit* of cleaning up...
                 let return_format = ValueFormat::try_from(return_type)?;
+                if return_format.size().is_none() {
+                    return Err(error_unknown_compile_time_size(return_type));
+                }
                 let parameter_formats = parameters.iter()
                     .map(|parameter| ValueFormat::try_from(&parameter.value_type))
                     .collect::<Result<Vec<ValueFormat>, _>>()?;
+                for (format, parameter) in std::iter::zip(&parameter_formats, parameters) {
+                    if format.size().is_none() {
+                        return Err(error_unknown_compile_time_size(&parameter.value_type));
+                    }
+                }
 
-                // TODO: pretty much everything below this line is positively foul
                 self.local_symbol_table.clear();
                 self.next_anonymous_register_id = 1;
                 self.next_anonymous_label_id = 0;
@@ -1020,7 +1133,7 @@ impl<W: Write> Generator<W> {
                     .zip(parameter_formats.iter())
                     .map(|(name, format)| {
                         let input_register = Register {
-                            name: format!("-A{name}"),
+                            name: format!(".arg.{name}"),
                             format: format.clone(),
                             is_global: false,
                         };
@@ -1089,7 +1202,7 @@ impl<W: Write> Generator<W> {
                         self.emitter.emit_return(None)?;
                     }
                     else {
-                        return Err(crate::RawError::new(String::from("non-void function could finish without returning a value")).into_boxed());
+                        return Err(crate::RawError::new(format!("non-void function '{name}' could finish without returning a value")).into_boxed());
                     }
                 }
 
@@ -1101,10 +1214,11 @@ impl<W: Write> Generator<W> {
         };
 
         if let Some(expected_format) = &expected_format {
-            self.enforce_format(&result, expected_format)?;
+            self.enforce_format(result, expected_format)
         }
-
-        Ok(result)
+        else {
+            Ok(result)
+        }
     }
 
     pub fn generate<T: BufRead>(mut self, parser: &mut ast::parse::Parser<T>) -> crate::Result<()> {

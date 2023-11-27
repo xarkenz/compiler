@@ -1,18 +1,4 @@
-// 3 challenges to make printf work:
-// - function prototypes (done)
-// - variadic arguments (done)
-// - strings/arrays (big challenge)
 function printf(format: *[u8], ..) -> u32;
-
-function fibonacci(limit: i32) -> i32;
-function gcd(a: u32, b: u32) -> u32;
-
-function main() -> i32 {
-    print fibonacci(1000);
-    print gcd(18, 45);
-
-    return 0;
-}
 
 function fibonacci(limit: i32) -> i32 {
     let a: i32 = 0;
@@ -37,7 +23,7 @@ function gcd(a: u32, b: u32) -> u32 {
     return a;
 }
 
-/*function do_some_pointing() {
+function do_some_pointing() {
     let a: i32;
     let b: i32;
     let c: i32;
@@ -63,4 +49,4 @@ function main() -> i32 {
     do_some_pointing();
 
     return 0;
-}*/
+}

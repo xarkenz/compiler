@@ -397,15 +397,6 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     value,
                 })))
             },
-            Some(Token::Print) => {
-                self.scan_token()?;
-                let value = self.parse_expression(None, &[Token::Semicolon])?;
-                self.scan_token()?;
-
-                Ok(Some(Box::new(Node::Print {
-                    value,
-                })))
-            },
             Some(_) => {
                 let expression = self.parse_expression(None, &[Token::Semicolon])?;
                 self.scan_token()?;
