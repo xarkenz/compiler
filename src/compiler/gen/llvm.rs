@@ -7,6 +7,7 @@ use indoc::writedoc;
 pub struct Emitter<W: Write> {
     name: String,
     writer: W,
+    is_global: bool,
     used_attribute_group_0: bool,
     used_attribute_group_1: bool,
     defined_functions: Vec<Register>,
@@ -27,6 +28,7 @@ impl<W: Write> Emitter<W> {
         Self {
             name,
             writer,
+            is_global: true,
             used_attribute_group_0: false,
             used_attribute_group_1: false,
             defined_functions: Vec::new(),
@@ -107,7 +109,7 @@ impl<W: Write> Emitter<W> {
         .map_err(|cause| self.error(cause))
     }
 
-    pub fn queue_function_declaration(&mut self, function: &Register, return_format: &ValueFormat, parameter_formats: &[ValueFormat], is_varargs: bool) {
+    pub fn queue_function_declaration(&mut self, function: &Register, return_format: &Format, parameter_formats: &[Format], is_varargs: bool) {
         if !self.defined_functions.contains(function) && (
             !self.queued_function_declarations.iter().any(|(declared_function, _)| declared_function == function)
         ) {
@@ -139,7 +141,7 @@ impl<W: Write> Emitter<W> {
         }
     }
 
-    pub fn emit_function_enter(&mut self, function: &Register, return_format: &ValueFormat, parameters: &[Register], is_varargs: bool) -> crate::Result<()> {
+    pub fn emit_function_enter(&mut self, function: &Register, return_format: &Format, parameters: &[Register], is_varargs: bool) -> crate::Result<()> {
         // Remove any forward declarations of this function from the declaration queue
         self.queued_function_declarations.retain(|(declared_function, _)| declared_function.name() != function.name());
 
@@ -166,6 +168,11 @@ impl<W: Write> Emitter<W> {
 
         // All emitted function definitions use attributes #0
         self.used_attribute_group_0 = true;
+
+        if !self.is_global {
+            panic!("entering a function while already within a function");
+        }
+        self.is_global = false;
         
         writeln!(self.writer, ") #0 {{")
             .map_err(|cause| self.error(cause))
@@ -182,6 +189,8 @@ impl<W: Write> Emitter<W> {
         }
         // Dequeue all declarations which were just written
         self.queued_anonymous_constants.clear();
+
+        self.is_global = true;
 
         Ok(())
     }
@@ -204,13 +213,26 @@ impl<W: Write> Emitter<W> {
         .map_err(|cause| self.error(cause))
     }
 
-    pub fn queue_anonymous_constant(&mut self, pointer: &Register, value: &Constant) {
-        let constant = format!(
-            "{pointer} = private unnamed_addr constant {format} {value}",
-            format = value.format(),
-        );
-        // Enqueue the constant declaration, which will be written just after the function end
-        self.queued_anonymous_constants.push(constant);
+    pub fn emit_anonymous_constant(&mut self, pointer: &Register, value: &Constant) -> crate::Result<()> {
+        if self.is_global {
+            // Write the constant declaration immediately
+            writeln!(
+                self.writer,
+                "{pointer} = private unnamed_addr constant {format} {value}\n",
+                format = value.format(),
+            )
+            .map_err(|cause| self.error(cause))
+        }
+        else {
+            // Enqueue the constant declaration so it will be written just after the function end
+            let constant = format!(
+                "{pointer} = private unnamed_addr constant {format} {value}",
+                format = value.format(),
+            );
+            self.queued_anonymous_constants.push(constant);
+
+            Ok(())
+        }
     }
 
     pub fn emit_label(&mut self, label: &Label) -> crate::Result<()> {
@@ -238,7 +260,7 @@ impl<W: Write> Emitter<W> {
         .map_err(|cause| self.error(cause))
     }
 
-    pub fn emit_local_allocation(&mut self, pointer: &Register, format: &ValueFormat) -> crate::Result<()> {
+    pub fn emit_local_allocation(&mut self, pointer: &Register, format: &Format) -> crate::Result<()> {
         writeln!(
             self.writer,
             "\t{pointer} = alloca {format}",
@@ -262,6 +284,33 @@ impl<W: Write> Emitter<W> {
             "\t{result} = load {result_format}, {pointer_format} {pointer}",
             result_format = result.format(),
             pointer_format = pointer.format(),
+        )
+        .map_err(|cause| self.error(cause))
+    }
+
+    pub fn emit_get_element_pointer(&mut self, result: &Register, aggregate_format: &Format, pointer: &Value, indices: &[Value]) -> crate::Result<()> {
+        write!(
+            self.writer,
+            "\t{result} = getelementptr inbounds {aggregate_format}, {pointer_format} {pointer}",
+            pointer_format = pointer.format(),
+        )
+        .map_err(|cause| self.error(cause))?;
+
+        for index in indices {
+            write!(self.writer, ", {index_format} {index}", index_format = index.format())
+                .map_err(|cause| self.error(cause))?;
+        }
+
+        writeln!(self.writer)
+            .map_err(|cause| self.error(cause))
+    }
+
+    pub fn emit_bitwise_cast(&mut self, result: &Register, value: &Value) -> crate::Result<()> {
+        writeln!(
+            self.writer,
+            "\t{result} = bitcast {from_format} {value} to {to_format}",
+            to_format = result.format(),
+            from_format = value.format(),
         )
         .map_err(|cause| self.error(cause))
     }
@@ -298,14 +347,14 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_extension(&mut self, result: &Register, value: &Value) -> crate::Result<()> {
         match value.format() {
-            ValueFormat::Integer { signed: true, .. } => self.emit_sign_extension(result, value),
+            Format::Integer { signed: true, .. } => self.emit_sign_extension(result, value),
             _ => self.emit_zero_extension(result, value)
         }
     }
 
     pub fn emit_negation(&mut self, result: &Register, operand: &Value) -> crate::Result<()> {
         match operand.format() {
-            ValueFormat::Integer { signed: true, .. } => writeln!(
+            Format::Integer { signed: true, .. } => writeln!(
                 self.writer,
                 "\t{result} = sub nsw {format} 0, {operand}",
                 format = operand.format(),
@@ -321,7 +370,7 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_addition(&mut self, result: &Register, lhs: &Value, rhs: &Value) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => writeln!(
+            Format::Integer { signed: true, .. } => writeln!(
                 self.writer,
                 "\t{result} = add nsw {format} {lhs}, {rhs}",
                 format = lhs.format(),
@@ -337,7 +386,7 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_subtraction(&mut self, result: &Register, lhs: &Value, rhs: &Value) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => writeln!(
+            Format::Integer { signed: true, .. } => writeln!(
                 self.writer,
                 "\t{result} = sub nsw {format} {lhs}, {rhs}",
                 format = lhs.format(),
@@ -353,7 +402,7 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_multiplication(&mut self, result: &Register, lhs: &Value, rhs: &Value) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => writeln!(
+            Format::Integer { signed: true, .. } => writeln!(
                 self.writer,
                 "\t{result} = mul nsw {format} {lhs}, {rhs}",
                 format = lhs.format(),
@@ -369,7 +418,7 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_division(&mut self, result: &Register, lhs: &Value, rhs: &Value) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => writeln!(
+            Format::Integer { signed: true, .. } => writeln!(
                 self.writer,
                 "\t{result} = sdiv {format} {lhs}, {rhs}",
                 format = lhs.format(),
@@ -385,7 +434,7 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_remainder(&mut self, result: &Register, lhs: &Value, rhs: &Value) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => writeln!(
+            Format::Integer { signed: true, .. } => writeln!(
                 self.writer,
                 "\t{result} = srem {format} {lhs}, {rhs}",
                 format = lhs.format(),
@@ -410,7 +459,7 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_shift_right(&mut self, result: &Register, lhs: &Value, rhs: &Value) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => writeln!(
+            Format::Integer { signed: true, .. } => writeln!(
                 self.writer,
                 "\t{result} = ashr {format} {lhs}, {rhs}",
                 format = lhs.format(),
@@ -453,7 +502,7 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_inversion(&mut self, result: &Register, operand: &Value) -> crate::Result<()> {
         match operand.format() {
-            ValueFormat::Boolean => writeln!(
+            Format::Boolean => writeln!(
                 self.writer,
                 "\t{result} = xor {format} {operand}, true",
                 format = operand.format(),
@@ -487,7 +536,7 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_cmp_less_than(&mut self, result: &Register, lhs: &Value, rhs: &Value) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => writeln!(
+            Format::Integer { signed: true, .. } => writeln!(
                 self.writer,
                 "\t{result} = icmp slt {format} {lhs}, {rhs}",
                 format = lhs.format(),
@@ -503,7 +552,7 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_cmp_less_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => writeln!(
+            Format::Integer { signed: true, .. } => writeln!(
                 self.writer,
                 "\t{result} = icmp sle {format} {lhs}, {rhs}",
                 format = lhs.format(),
@@ -519,7 +568,7 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_cmp_greater_than(&mut self, result: &Register, lhs: &Value, rhs: &Value) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => writeln!(
+            Format::Integer { signed: true, .. } => writeln!(
                 self.writer,
                 "\t{result} = icmp sgt {format} {lhs}, {rhs}",
                 format = lhs.format(),
@@ -535,7 +584,7 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_cmp_greater_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value) -> crate::Result<()> {
         match lhs.format() {
-            ValueFormat::Integer { signed: true, .. } => writeln!(
+            Format::Integer { signed: true, .. } => writeln!(
                 self.writer,
                 "\t{result} = icmp sge {format} {lhs}, {rhs}",
                 format = lhs.format(),

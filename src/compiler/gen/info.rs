@@ -40,7 +40,7 @@ impl Symbol {
         self.version
     }
 
-    pub fn format(&self) -> ValueFormat {
+    pub fn format(&self) -> Format {
         self.value.format()
     }
 }
@@ -127,7 +127,7 @@ impl SymbolTable {
             .map_or(0, |symbol| symbol.version() + 1)
     }
 
-    pub fn create_register_symbol(&self, identifier: String, format: ValueFormat) -> (Symbol, Register) {
+    pub fn create_register_symbol(&self, identifier: String, format: Format) -> (Symbol, Register) {
         let scope = self.current_scope().clone();
         let version = self.next_symbol_version(&identifier);
         let qualified_name = if version == 0 {
@@ -150,7 +150,7 @@ impl SymbolTable {
         (symbol, register)
     }
 
-    pub fn create_indirect_symbol(&self, identifier: String, loaded_format: ValueFormat) -> (Symbol, Register) {
+    pub fn create_indirect_symbol(&self, identifier: String, loaded_format: Format) -> (Symbol, Register) {
         let scope = self.current_scope().clone();
         let version = self.next_symbol_version(&identifier);
         let qualified_name = if version == 0 {

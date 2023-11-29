@@ -42,11 +42,16 @@ function do_some_pointing() {
     printf("**z: %d\n", x);
 }
 
+let my_string_ptr: *[u8; 28] = "assigning string to pointer";
+
 function main() -> i32 {
     printf("fibonacci: %d\n", fibonacci(1000));
     printf("gcd: %u\n", gcd(18, 45));
 
     do_some_pointing();
+
+    let format: [u8; 10] = *"test: %d\n";
+    printf(&format, 6 * 7);
 
     return 0;
 }

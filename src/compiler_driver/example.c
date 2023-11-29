@@ -9,5 +9,7 @@ const uint32_t* const my_other_ptr = &((const uint32_t[5]) {'w', 'o', 'r', 'l', 
 
 int32_t main() {
     int16_t my_local_array[3] = {1, 2, 3};
+    char format[10] = "test: %d\n";
+    printf(&format[0], 6 * 7);
     return 0;
 }
