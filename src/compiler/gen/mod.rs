@@ -18,9 +18,7 @@ pub enum Format {
         size: usize,
         signed: bool,
     },
-    Pointer {
-        to_format: Box<Format>,
-    },
+    Pointer(Box<Format>),
     Array {
         item_format: Box<Format>,
         length: Option<usize>,
@@ -48,7 +46,7 @@ impl Format {
             Self::Constant(format) => format.size(),
             Self::Boolean => Some(1),
             Self::Integer { size, .. } => Some(*size),
-            Self::Pointer { .. } => Some(8),
+            Self::Pointer(_) => Some(8),
             Self::Array { length: Some(length), item_format } => item_format.size().map(|item_size| item_size * length),
             Self::Array { length: None, .. } => None,
             Self::Function { .. } => None,
@@ -59,16 +57,31 @@ impl Format {
         matches!(self, Format::Function { .. })
     }
 
+    pub fn into_constant(self) -> Self {
+        Self::Constant(Box::new(self))
+    }
+
     pub fn into_pointer(self) -> Self {
-        Self::Pointer {
-            to_format: Box::new(self),
+        Self::Pointer(Box::new(self))
+    }
+
+    pub fn as_unqualified(&self) -> &Format {
+        match self {
+            Self::Constant(format) => format.as_ref(),
+            _ => self
         }
     }
 
     pub fn can_coerce_to(&self, other: &Self) -> bool {
         self == other || match (self, other) {
-            (Self::Pointer { to_format: self_inner }, Self::Pointer { to_format: other_inner }) => {
-                self_inner.can_coerce_to(other_inner.as_ref())
+            (Self::Constant(self_format), Self::Constant(other_format)) => {
+                self_format.can_coerce_to(other_format.as_ref())
+            },
+            (Self::Constant(self_format), other_format) => {
+                self_format.can_coerce_to(other_format)
+            },
+            (Self::Pointer(self_pointee), Self::Pointer(other_pointee)) => {
+                self_pointee.can_coerce_to(other_pointee.as_ref())
             },
             (Self::Array { item_format: self_item, length: _ }, Self::Array { item_format: other_item, length: None }) => {
                 self_item.can_coerce_to(other_item.as_ref())
@@ -79,14 +92,94 @@ impl Format {
             _ => false
         }
     }
+
+    pub fn requires_bitcast_to(&self, other: &Self) -> bool {
+        self != other && match (self, other) {
+            (Self::Constant(self_format), Self::Constant(other_format)) => {
+                self_format.requires_bitcast_to(other_format.as_ref())
+            },
+            (Self::Constant(self_format), other_format) => {
+                self_format.requires_bitcast_to(other_format)
+            },
+            (self_format, Self::Constant(other_format)) => {
+                self_format.requires_bitcast_to(other_format.as_ref())
+            },
+            (Self::Pointer(self_pointee), Self::Pointer(other_pointee)) => {
+                self_pointee.requires_bitcast_to(other_pointee)
+            },
+            (Self::Array { length: _, .. }, Self::Array { length: None, .. }) => {
+                true
+            },
+            (Self::Array { item_format: self_item, length: Some(self_length) }, Self::Array { item_format: other_item, length: Some(other_length) }) => {
+                self_length != other_length || self_item.requires_bitcast_to(other_item.as_ref())
+            },
+            _ => false
+        }
+    }
+
+    pub fn expect_constant_sized(&self) -> crate::Result<()> {
+        match self.size() {
+            Some(_) => Ok(()),
+            None => Err(crate::RawError::new(format!("cannot use type '{self}' here, as it does not have a known size at compile time (did you mean to use a pointer?)")).into_boxed()),
+        }
+    }
+
+    pub fn rich_name(&self) -> String {
+        match self {
+            Self::Never => {
+                String::from("never")
+            }
+            Self::Void => {
+                String::from("void")
+            },
+            Self::Boolean => {
+                String::from("bool")
+            },
+            Self::Constant(format) => {
+                format!("const {format}", format = format.rich_name())
+            },
+            Self::Integer { size, signed: true } => {
+                format!("i{bits}", bits = size * 8)
+            },
+            Self::Integer { size, signed: false } => {
+                format!("u{bits}", bits = size * 8)
+            },
+            Self::Pointer(pointee_format) => {
+                format!("*{pointee_format}", pointee_format = pointee_format.rich_name())
+            },
+            Self::Array { item_format, length: Some(length) } => {
+                format!("[{item_format}; {length}]", item_format = item_format.rich_name())
+            },
+            Self::Array { item_format, length: None } => {
+                format!("[{item_format}]", item_format = item_format.rich_name())
+            },
+            Self::Function { return_format, parameters, is_varargs, .. } => {
+                let mut name = String::from("function(");
+                let mut parameters_iter = parameters.iter();
+                if let Some(parameter) = parameters_iter.next() {
+                    name = format!("{name}{parameter}", parameter = parameter.rich_name());
+                    for parameter in parameters_iter {
+                        name = format!("{name}, {parameter}", parameter = parameter.rich_name());
+                    }
+                    if *is_varargs {
+                        name = format!("{name}, ..");
+                    }
+                }
+                else if *is_varargs {
+                    name = format!("{name}..");
+                }
+                format!("{name}) -> {return_format}", return_format = return_format.rich_name())
+            },
+        }
+    }
 }
 
-impl TryFrom<&ast::ValueType> for Format {
+impl TryFrom<&ast::TypeNode> for Format {
     type Error = Box<dyn crate::Error>;
 
-    fn try_from(value: &ast::ValueType) -> crate::Result<Self> {
+    fn try_from(value: &ast::TypeNode) -> crate::Result<Self> {
         match value {
-            ast::ValueType::Named(name) => {
+            ast::TypeNode::Named(name) => {
                 match name.as_str() {
                     "never" => Ok(Self::Never),
                     "void" => Ok(Self::Void),
@@ -102,10 +195,13 @@ impl TryFrom<&ast::ValueType> for Format {
                     _ => Err(crate::RawError::new(format!("unrecognized type name '{name}'")).into_boxed())
                 }
             },
-            ast::ValueType::Pointer(to_type) => {
+            ast::TypeNode::Const(const_type) => {
+                Self::try_from(const_type.as_ref()).map(Self::into_constant)
+            },
+            ast::TypeNode::Pointer(to_type) => {
                 Self::try_from(to_type.as_ref()).map(Self::into_pointer)
             },
-            ast::ValueType::Array(item_type, Some(length)) => {
+            ast::TypeNode::Array(item_type, Some(length)) => {
                 if let ast::Node::Literal(token::Literal::Integer(length)) = length.as_ref() {
                     Ok(Self::Array {
                         item_format: Box::new(Self::try_from(item_type.as_ref())?),
@@ -116,7 +212,7 @@ impl TryFrom<&ast::ValueType> for Format {
                     Err(crate::RawError::new(String::from("array length must be constant")).into_boxed())
                 }
             },
-            ast::ValueType::Array(item_type, None) => {
+            ast::TypeNode::Array(item_type, None) => {
                 Ok(Self::Array {
                     item_format: Box::new(Self::try_from(item_type.as_ref())?),
                     length: None,
@@ -135,12 +231,14 @@ impl fmt::Display for Format {
             Self::Boolean => {
                 write!(f, "i1")
             },
-            Self::Constant(format) => write!(f, "{format}"),
+            Self::Constant(format) => {
+                write!(f, "{format}")
+            },
             Self::Integer { size, .. } => {
                 write!(f, "i{bits}", bits = size * 8)
             },
-            Self::Pointer { to_format } => {
-                write!(f, "{to_format}*")
+            Self::Pointer(pointee_format) => {
+                write!(f, "{pointee_format}*")
             },
             Self::Array { item_format, length: Some(length) } => {
                 write!(f, "[{length} x {item_format}]")
@@ -151,8 +249,8 @@ impl fmt::Display for Format {
             Self::Function { return_format, parameters, is_varargs, .. } => {
                 write!(f, "{return_format}(")?;
                 let mut parameters_iter = parameters.iter();
-                if let Some(first) = parameters_iter.next() {
-                    write!(f, "{first}")?;
+                if let Some(parameter) = parameters_iter.next() {
+                    write!(f, "{parameter}")?;
                     for parameter in parameters_iter {
                         write!(f, ", {parameter}")?;
                     }
@@ -198,7 +296,8 @@ impl fmt::Display for Register {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_global() {
             write!(f, "@{}", self.name)
-        } else {
+        }
+        else {
             write!(f, "%{}", self.name)
         }
     }
@@ -230,7 +329,7 @@ pub enum Constant {
 
 impl Constant {
     pub fn format(&self) -> Format {
-        match self {
+        let format = match self {
             Self::ZeroInitializer(format) => format.clone(),
             Self::Boolean(_) => Format::Boolean,
             Self::Integer(_, format) => format.clone(),
@@ -246,7 +345,9 @@ impl Constant {
             Self::Indirect { loaded_format, .. } => loaded_format.clone(),
             Self::BitwiseCast { to_format, .. } => to_format.clone(),
             Self::GetElementPointer { element_format, .. } => element_format.clone().into_pointer(),
-        }
+        };
+
+        Format::Constant(Box::new(format))
     }
 }
 
@@ -270,7 +371,7 @@ impl fmt::Display for Constant {
                 write!(f, "]")
             },
             Self::Register(register) => write!(f, "{register}"),
-            Self::Indirect { .. } => write!(f, "?"),
+            Self::Indirect { .. } => write!(f, "<ERROR indirect constant>"),
             Self::BitwiseCast { value, to_format } => {
                 write!(f, "bitcast ({format} {value} to {to_format})", format = value.format())
             },
@@ -312,9 +413,11 @@ impl Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Never => write!(f, "<ERROR never value>"),
+            Self::Void => write!(f, "<ERROR void value>"),
             Self::Constant(constant) => write!(f, "{constant}"),
             Self::Register(register) => write!(f, "{register}"),
-            _ => write!(f, "?")
+            Self::Indirect { .. } => write!(f, "<ERROR indirect value>"),
         }
     }
 }
@@ -380,10 +483,6 @@ impl GenerationContext {
 
         self
     }
-}
-
-fn error_unknown_compile_time_size(value_type: &ast::ValueType) -> Box<dyn crate::Error> {
-    crate::RawError::new(format!("cannot use type '{value_type}' here, as it does not have a known size at compile time")).into_boxed()
 }
 
 pub struct Generator<W: Write> {
@@ -478,13 +577,33 @@ impl<W: Write> Generator<W> {
             Ok(value)
         }
         else if got_format.can_coerce_to(format) {
-            let result = self.new_anonymous_register(format.clone());
-            self.emitter.emit_bitwise_cast(&result, &value)?;
+            let value = if let Format::Constant(_) = format {
+                value
+            } else {
+                self.coerce_to_rvalue(value)?
+            };
+            if !got_format.requires_bitcast_to(format) {
+                Ok(value)
+            }
+            else if let Value::Constant(constant) = value {
+                Ok(Value::Constant(Constant::BitwiseCast {
+                    value: Box::new(constant),
+                    to_format: format.clone(),
+                }))
+            }
+            else {
+                let result = self.new_anonymous_register(format.clone());
+                self.emitter.emit_bitwise_cast(&result, &value)?;
 
-            Ok(Value::Register(result))
+                Ok(Value::Register(result))
+            }
         }
         else {
-            Err(crate::RawError::new(format!("expected a value of type {format}, got {got_format} instead")).into_boxed())
+            Err(crate::RawError::new(format!(
+                "expected a value of type '{format}', got '{got_format}' instead",
+                format = format.rich_name(),
+                got_format = got_format.rich_name(),
+            )).into_boxed())
         }
     }
 
@@ -496,7 +615,7 @@ impl<W: Write> Generator<W> {
         }
         else {
             match (&original_format, target_format) {
-                (Format::Pointer { .. }, Format::Pointer { .. }) => {
+                (Format::Pointer(_), Format::Pointer(_)) => {
                     let result = self.new_anonymous_register(target_format.clone());
                     self.emitter.emit_bitwise_cast(&result, &value)?;
 
@@ -532,7 +651,11 @@ impl<W: Write> Generator<W> {
                     Ok(Value::Register(result))
                 },
                 _ => {
-                    Err(crate::RawError::new(format!("cannot convert from '{original_format}' to '{target_format}'")).into_boxed())
+                    Err(crate::RawError::new(format!(
+                        "cannot convert from '{original_format}' to '{target_format}'",
+                        original_format = original_format.rich_name(),
+                        target_format = target_format.rich_name(),
+                    )).into_boxed())
                 }
             }
         }
@@ -543,6 +666,12 @@ impl<W: Write> Generator<W> {
             let result = self.new_anonymous_register(loaded_format);
             self.emitter.emit_load(&result, pointer.as_ref())?;
             
+            Ok(Value::Register(result))
+        }
+        else if let Value::Constant(Constant::Indirect { pointer, loaded_format }) = value {
+            let result = self.new_anonymous_register(loaded_format);
+            self.emitter.emit_load(&result, &Value::Constant(*pointer))?;
+
             Ok(Value::Register(result))
         }
         else {
@@ -606,34 +735,11 @@ impl<W: Write> Generator<W> {
                     token::Literal::String(value) => {
                         let constant = Constant::String(value.clone());
                         let constant_format = constant.format();
+                        let pointer = self.new_anonymous_constant(constant_format.clone());
 
-                        // I'm not satisfied with how hacky this is, but...
-                        if let Some(Format::Pointer { to_format }) = &expected_format {
-                            let pointer = self.new_anonymous_constant(constant_format.clone());
+                        self.emitter.emit_anonymous_constant(&pointer, &constant)?;
 
-                            self.emitter.emit_anonymous_constant(&pointer, &constant)?;
-
-                            if let Format::Array { length: None, .. } = to_format.as_ref() {
-                                // Unsized arrays are problematic because they are actually *T pretending to be *[T]
-                                // Again, this is... definitely a hack... and really disgusting
-                                let integer_zero = Constant::Integer(0, Format::default_integer());
-                                Value::Constant(Constant::GetElementPointer {
-                                    element_format: Format::Array {
-                                        item_format: Box::new(Format::Integer { size: 1, signed: false }),
-                                        length: None,
-                                    },
-                                    aggregate_format: constant_format,
-                                    pointer: Box::new(Constant::Register(pointer)),
-                                    indices: vec![integer_zero.clone(), integer_zero],
-                                })
-                            }
-                            else {
-                                Value::Constant(Constant::Register(pointer))
-                            }
-                        }
-                        else {
-                            Value::Constant(constant)
-                        }
+                        Value::Constant(Constant::Register(pointer))
                     }
                 }
             },
@@ -689,14 +795,22 @@ impl<W: Write> Generator<W> {
                         let operand = self.generate_node(operand.as_ref(), context, expected_format.clone().map(Format::into_pointer))?;
                         let operand = self.coerce_to_rvalue(operand)?;
                         
-                        if let Format::Pointer { to_format } = operand.format() {
-                            Value::Indirect {
-                                pointer: Box::new(operand),
-                                loaded_format: *to_format,
+                        if let Format::Pointer(pointee_format) = operand.format().as_unqualified() {
+                            if let Value::Constant(constant) = operand {
+                                Value::Constant(Constant::Indirect {
+                                    pointer: Box::new(constant),
+                                    loaded_format: pointee_format.as_ref().clone(),
+                                })
+                            }
+                            else {
+                                Value::Indirect {
+                                    pointer: Box::new(operand),
+                                    loaded_format: pointee_format.as_ref().clone(),
+                                }
                             }
                         }
                         else {
-                            return Err(crate::RawError::new(format!("cannot dereference value of type '{}'", operand.format())).into_boxed());
+                            return Err(crate::RawError::new(format!("cannot dereference value of type '{}'", operand.format().rich_name())).into_boxed());
                         }
                     },
                     ast::UnaryOperation::GetSize => todo!(),
@@ -1035,15 +1149,14 @@ impl<W: Write> Generator<W> {
             },
             ast::Node::Let { name, value_type, value } => {
                 let format = Format::try_from(value_type)?;
-                if format.size().is_none() {
-                    return Err(error_unknown_compile_time_size(value_type));
-                }
+                format.expect_constant_sized()?;
                 let (symbol, pointer) = self.get_symbol_table(context).create_indirect_symbol(name.clone(), format.clone());
 
                 if context.is_global() {
                     // TODO: constant folding
                     let init_value = if let Some(node) = value {
-                        if let Value::Constant(constant) = self.generate_node(node.as_ref(), context, Some(format.clone()))? {
+                        let value = self.generate_node(node.as_ref(), context, Some(format.clone()))?;
+                        if let Value::Constant(constant) = value {
                             constant
                         }
                         else {
@@ -1073,17 +1186,14 @@ impl<W: Write> Generator<W> {
             },
             ast::Node::Function { name, parameters, is_varargs, return_type, body: None } => {
                 let return_format = Format::try_from(return_type)?;
-                if return_format.size().is_none() {
-                    return Err(error_unknown_compile_time_size(return_type));
-                }
+                return_format.expect_constant_sized()?;
+
                 let parameter_formats = parameters.iter()
-                    .map(|parameter| Format::try_from(&parameter.value_type))
+                    .map(|(_, parameter_type)| Format::try_from(parameter_type).and_then(|format| {
+                        format.expect_constant_sized()?;
+                        Ok(format)
+                    }))
                     .collect::<Result<Vec<Format>, _>>()?;
-                for (format, parameter) in std::iter::zip(&parameter_formats, parameters) {
-                    if format.size().is_none() {
-                        return Err(error_unknown_compile_time_size(&parameter.value_type));
-                    }
-                }
 
                 let format = Format::Function {
                     is_defined: false,
@@ -1130,17 +1240,14 @@ impl<W: Write> Generator<W> {
             ast::Node::Function { name, parameters, is_varargs, return_type, body: Some(body) } => {
                 // TODO: functions need a *bit* of cleaning up...
                 let return_format = Format::try_from(return_type)?;
-                if return_format.size().is_none() {
-                    return Err(error_unknown_compile_time_size(return_type));
-                }
+                return_format.expect_constant_sized()?;
+                
                 let parameter_formats = parameters.iter()
-                    .map(|parameter| Format::try_from(&parameter.value_type))
+                    .map(|(_, parameter_type)| Format::try_from(parameter_type).and_then(|format| {
+                        format.expect_constant_sized()?;
+                        Ok(format)
+                    }))
                     .collect::<Result<Vec<Format>, _>>()?;
-                for (format, parameter) in std::iter::zip(&parameter_formats, parameters) {
-                    if format.size().is_none() {
-                        return Err(error_unknown_compile_time_size(&parameter.value_type));
-                    }
-                }
 
                 self.local_symbol_table.clear();
                 self.next_anonymous_register_id = 1;
@@ -1148,7 +1255,7 @@ impl<W: Write> Generator<W> {
                 let function_context = context.clone().enter_function(return_format.clone());
 
                 let parameter_handles: Vec<_> = parameters.iter()
-                    .map(|parameter| parameter.name.clone())
+                    .map(|(parameter_name, _)| parameter_name.clone())
                     .zip(parameter_formats.iter())
                     .map(|(name, format)| {
                         let input_register = Register {

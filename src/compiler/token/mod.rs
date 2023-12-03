@@ -120,6 +120,7 @@ pub enum Token {
     Return,
     Let,
     Function,
+    Const,
     Literal(Literal),
 }
 
@@ -187,7 +188,8 @@ impl fmt::Display for Token {
             Self::Return => write!(f, "return"),
             Self::Let => write!(f, "let"),
             Self::Function => write!(f, "function"),
-            Self::Literal(literal) => literal.fmt(f),
+            Self::Const => write!(f, "const"),
+            Self::Literal(literal) => write!(f, "{literal}"),
         }
     }
 }
@@ -257,6 +259,7 @@ pub const KEYWORD_TOKENS: &[(&str, Token)] = &[
     ("return", Token::Return),
     ("let", Token::Let),
     ("function", Token::Function),
+    ("const", Token::Const),
 ];
 
 pub fn get_symbolic_token_partial_matches(start_content: &str) -> Vec<&'static Token> {

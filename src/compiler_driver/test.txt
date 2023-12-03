@@ -1,4 +1,4 @@
-function printf(format: *[u8], ..) -> u32;
+function printf(format: const *const [u8], ..) -> u32;
 
 function fibonacci(limit: i32) -> i32 {
     let a: i32 = 0;
@@ -42,7 +42,7 @@ function do_some_pointing() {
     printf("**z: %d\n", x);
 }
 
-let my_string_ptr: *[u8; 28] = "assigning string to pointer";
+let my_string_ptr: *const [u8] = "assigning string to pointer";
 
 function main() -> i32 {
     printf("fibonacci: %d\n", fibonacci(1000));
@@ -50,8 +50,8 @@ function main() -> i32 {
 
     do_some_pointing();
 
-    let format: [u8; 10] = *"test: %d\n";
-    printf(&format, 6 * 7);
+    let my_string_array: [u8; 14] = *"i am a string";
+    printf("%s\n", &my_string_array);
 
     return 0;
 }

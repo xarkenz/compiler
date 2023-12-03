@@ -295,20 +295,24 @@ impl Operation {
 }
 
 #[derive(Clone, Debug)]
-pub enum ValueType {
+pub enum TypeNode {
     Named(String),
-    Pointer(Box<ValueType>),
-    Array(Box<ValueType>, Option<Box<Node>>),
+    Const(Box<TypeNode>),
+    Pointer(Box<TypeNode>),
+    Array(Box<TypeNode>, Option<Box<Node>>),
 }
 
-impl std::fmt::Display for ValueType {
+impl std::fmt::Display for TypeNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Named(name) => {
                 write!(f, "{name}")
             },
-            Self::Pointer(to_type) => {
-                write!(f, "*{to_type}")
+            Self::Const(const_type) => {
+                write!(f, "const {const_type}")
+            },
+            Self::Pointer(pointee_type) => {
+                write!(f, "*{pointee_type}")
             },
             Self::Array(item_type, Some(length)) => {
                 write!(f, "[{item_type}; {length}]")
@@ -321,21 +325,9 @@ impl std::fmt::Display for ValueType {
 }
 
 #[derive(Clone, Debug)]
-pub struct FunctionParameter {
-    pub name: String,
-    pub value_type: ValueType,
-}
-
-impl std::fmt::Display for FunctionParameter {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.name, self.value_type)
-    }
-}
-
-#[derive(Clone, Debug)]
 pub enum Node {
     Literal(Literal),
-    ValueType(ValueType),
+    ValueType(TypeNode),
     Unary {
         operation: UnaryOperation,
         operand: Box<Node>,
@@ -368,14 +360,14 @@ pub enum Node {
     },
     Let {
         name: String,
-        value_type: ValueType,
+        value_type: TypeNode,
         value: Option<Box<Node>>,
     },
     Function {
         name: String,
-        parameters: Vec<FunctionParameter>,
+        parameters: Vec<(String, TypeNode)>,
         is_varargs: bool,
-        return_type: ValueType,
+        return_type: TypeNode,
         body: Option<Box<Node>>,
     },
 }
@@ -442,10 +434,10 @@ impl fmt::Display for Node {
             Self::Function { name, parameters, is_varargs, return_type, body } => {
                 write!(f, " function {name}(")?;
                 let mut parameters_iter = parameters.iter();
-                if let Some(first) = parameters_iter.next() {
-                    write!(f, "{first}")?;
-                    for parameter in parameters_iter {
-                        write!(f, ", {parameter}")?;
+                if let Some((parameter_name, parameter_type)) = parameters_iter.next() {
+                    write!(f, "{parameter_name}: {parameter_type}")?;
+                    for (parameter_name, parameter_type) in parameters_iter {
+                        write!(f, ", {parameter_name}: {parameter_type}")?;
                     }
                     if *is_varargs {
                         write!(f, ", ..")?;

@@ -66,28 +66,28 @@ define dso_local void @do_some_pointing() #0 {
 	store i32 3, i32* %b
 	store i32 3, i32* %a
 	%1 = load i32, i32* %a
-	%2 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([7 x i8], [7 x i8]* @.const.0, i32 0, i32 0), i32 noundef %1)
+	%2 = call i32(i8*, ...) @printf(i8* noundef bitcast ([7 x i8]* @.const.0 to i8*), i32 noundef %1)
 	%3 = load i32, i32* %b
-	%4 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([7 x i8], [7 x i8]* @.const.1, i32 0, i32 0), i32 noundef %3)
+	%4 = call i32(i8*, ...) @printf(i8* noundef bitcast ([7 x i8]* @.const.1 to i8*), i32 noundef %3)
 	%5 = load i32, i32* %c
-	%6 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([7 x i8], [7 x i8]* @.const.2, i32 0, i32 0), i32 noundef %5)
+	%6 = call i32(i8*, ...) @printf(i8* noundef bitcast ([7 x i8]* @.const.2 to i8*), i32 noundef %5)
 	%x = alloca i32
 	store i32 0, i32* %x
 	%7 = load i32, i32* %x
-	%8 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([7 x i8], [7 x i8]* @.const.3, i32 0, i32 0), i32 noundef %7)
+	%8 = call i32(i8*, ...) @printf(i8* noundef bitcast ([7 x i8]* @.const.3 to i8*), i32 noundef %7)
 	%y = alloca i32*
 	store i32* %x, i32** %y
 	%9 = load i32*, i32** %y
 	store i32 1, i32* %9
 	%10 = load i32, i32* %x
-	%11 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([8 x i8], [8 x i8]* @.const.4, i32 0, i32 0), i32 noundef %10)
+	%11 = call i32(i8*, ...) @printf(i8* noundef bitcast ([8 x i8]* @.const.4 to i8*), i32 noundef %10)
 	%z = alloca i32**
 	store i32** %y, i32*** %z
 	%12 = load i32**, i32*** %z
 	%13 = load i32*, i32** %12
 	store i32 2, i32* %13
 	%14 = load i32, i32* %x
-	%15 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([9 x i8], [9 x i8]* @.const.5, i32 0, i32 0), i32 noundef %14)
+	%15 = call i32(i8*, ...) @printf(i8* noundef bitcast ([9 x i8]* @.const.5 to i8*), i32 noundef %14)
 	ret void
 }
 
@@ -105,20 +105,18 @@ define dso_local void @do_some_pointing() #0 {
 
 @.const.6 = private unnamed_addr constant [28 x i8] c"assigning string to pointer\00"
 
-@my_string_ptr = dso_local global [28 x i8]* @.const.6
+@my_string_ptr = dso_local global i8* bitcast ([28 x i8]* @.const.6 to i8*)
 
 define dso_local i32 @main() #0 {
 	%1 = call i32(i32) @fibonacci(i32 noundef 1000)
-	%2 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([15 x i8], [15 x i8]* @.const.7, i32 0, i32 0), i32 noundef %1)
+	%2 = call i32(i8*, ...) @printf(i8* noundef bitcast ([15 x i8]* @.const.7 to i8*), i32 noundef %1)
 	%3 = call i32(i32, i32) @gcd(i32 noundef 18, i32 noundef 45)
-	%4 = call i32(i8*, ...) @printf(i8* noundef getelementptr inbounds ([9 x i8], [9 x i8]* @.const.8, i32 0, i32 0), i32 noundef %3)
+	%4 = call i32(i8*, ...) @printf(i8* noundef bitcast ([9 x i8]* @.const.8 to i8*), i32 noundef %3)
 	call void() @do_some_pointing()
-	%format = alloca [10 x i8]
-	%5 = load [10 x i8], [10 x i8]* @.const.9
-	store [10 x i8] %5, [10 x i8]* %format
-	%6 = bitcast [10 x i8]* %format to i8*
-	%7 = mul nsw i32 6, 7
-	%8 = call i32(i8*, ...) @printf(i8* noundef %6, i32 noundef %7)
+	%my_string_array = alloca [14 x i8]
+	%5 = load [14 x i8], [14 x i8]* @.const.9
+	store [14 x i8] %5, [14 x i8]* %my_string_array
+	%6 = call i32(i8*, ...) @printf(i8* noundef bitcast ([4 x i8]* @.const.10 to i8*), [14 x i8]* noundef %my_string_array)
 	ret i32 0
 }
 
@@ -126,7 +124,9 @@ define dso_local i32 @main() #0 {
 
 @.const.8 = private unnamed_addr constant [9 x i8] c"gcd: %u\0A\00"
 
-@.const.9 = private unnamed_addr constant [10 x i8] c"test: %d\0A\00"
+@.const.9 = private unnamed_addr constant [14 x i8] c"i am a string\00"
+
+@.const.10 = private unnamed_addr constant [4 x i8] c"%s\0A\00"
 
 declare i32 @printf(i8* noundef, ...) #1
 
