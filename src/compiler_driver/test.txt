@@ -1,4 +1,6 @@
 function printf(format: const *const [u8], ..) -> u32;
+function malloc(size_bytes: u64) -> *void;
+function free(alloc: *void);
 
 function fibonacci(limit: i32) -> i32 {
     let a: i32 = 0;
@@ -42,7 +44,7 @@ function do_some_pointing() {
     printf("**z: %d\n", x);
 }
 
-let my_string_ptr: *const [u8] = "assigning string to pointer";
+let my_string_ptr: const *const [u8] = "assigning string to pointer (%s)\n";
 
 function main() -> i32 {
     printf("fibonacci: %d\n", fibonacci(1000));
@@ -51,7 +53,18 @@ function main() -> i32 {
     do_some_pointing();
 
     let my_string_array: [u8; 14] = *"i am a string";
-    printf("%s\n", &my_string_array);
+    printf(my_string_ptr, &my_string_array);
+    printf("\"%s\"[10]: '%c'\n", &my_string_array, my_string_array[10]);
+    my_string_array[10] = 'o';
+    printf("\"%s\"[10]: '%c'\n", &my_string_array, my_string_array[10]);
+    printf("%c\n", (*my_string_ptr)[0]);
+
+    let block: *[u8] = malloc(sizeof(u8) * 3) as *[u8];
+    (*block)[0] = 'h';
+    (*block)[1] = 'i';
+    (*block)[2] = '\0';
+    printf("%s\n", block);
+    free(block as *void);
 
     return 0;
 }

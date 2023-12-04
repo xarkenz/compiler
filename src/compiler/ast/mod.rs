@@ -103,27 +103,21 @@ impl UnaryOperation {
         }
     }
 
-    pub fn notation(&self) -> &'static str {
+    pub fn to_string_with_operand(&self, operand: &Node) -> String {
         match self {
-            Self::PostIncrement => "++", // FIXME
-            Self::PostDecrement => "--", // FIXME
-            Self::PreIncrement => "++",
-            Self::PreDecrement => "--",
-            Self::Positive => "+",
-            Self::Negative => "-",
-            Self::BitwiseNot => "~",
-            Self::LogicalNot => "!",
-            Self::Reference => "&",
-            Self::Dereference => "*",
-            Self::GetSize => "sizeof ",
-            Self::GetAlign => "alignof ",
+            Self::PostIncrement => format!("{operand}++"),
+            Self::PostDecrement => format!("{operand}--"),
+            Self::PreIncrement => format!("++{operand}"),
+            Self::PreDecrement => format!("--{operand}"),
+            Self::Positive => format!("+{operand}"),
+            Self::Negative => format!("-{operand}"),
+            Self::BitwiseNot => format!("~{operand}"),
+            Self::LogicalNot => format!("!{operand}"),
+            Self::Reference => format!("&{operand}"),
+            Self::Dereference => format!("*{operand}"),
+            Self::GetSize => format!("sizeof {operand}"),
+            Self::GetAlign => format!("alignof {operand}"),
         }
-    }
-}
-
-impl fmt::Display for UnaryOperation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.notation())
     }
 }
 
@@ -227,48 +221,42 @@ impl BinaryOperation {
         }
     }
 
-    pub fn notation(&self) -> &'static str {
+    pub fn to_string_with_operands(&self, lhs: &Node, rhs: &Node) -> String {
         match self {
-            Self::Subscript => "[", // FIXME
-            Self::Access => ".",
-            Self::DerefAccess => "->",
-            Self::Convert => " as ",
-            Self::Multiply => " * ",
-            Self::Divide => " / ",
-            Self::Remainder => " % ",
-            Self::Add => " + ",
-            Self::Subtract => " - ",
-            Self::ShiftLeft => " << ",
-            Self::ShiftRight => " >> ",
-            Self::LessThan => " < ",
-            Self::LessEqual => " <= ",
-            Self::GreaterThan => " > ",
-            Self::GreaterEqual => " >= ",
-            Self::Equal => " == ",
-            Self::NotEqual => " != ",
-            Self::BitwiseAnd => " & ",
-            Self::BitwiseXor => " ^ ",
-            Self::BitwiseOr => " | ",
-            Self::LogicalAnd => " && ",
-            Self::LogicalOr => " || ",
-            Self::Assign => " = ",
-            Self::MultiplyAssign => " *= ",
-            Self::DivideAssign => " /= ",
-            Self::RemainderAssign => " %= ",
-            Self::AddAssign => " += ",
-            Self::SubtractAssign => " -= ",
-            Self::ShiftLeftAssign => " <<= ",
-            Self::ShiftRightAssign => " >>= ",
-            Self::BitwiseAndAssign => " &= ",
-            Self::BitwiseXorAssign => " ^= ",
-            Self::BitwiseOrAssign => " |= ",
+            Self::Subscript => format!("{lhs}[{rhs}]"),
+            Self::Access => format!("{lhs}.{rhs}"),
+            Self::DerefAccess => format!("{lhs}->{rhs}"),
+            Self::Convert => format!("{lhs} as {rhs}"),
+            Self::Multiply => format!("{lhs} * {rhs}"),
+            Self::Divide => format!("{lhs} / {rhs}"),
+            Self::Remainder => format!("{lhs} % {rhs}"),
+            Self::Add => format!("{lhs} + {rhs}"),
+            Self::Subtract => format!("{lhs} - {rhs}"),
+            Self::ShiftLeft => format!("{lhs} << {rhs}"),
+            Self::ShiftRight => format!("{lhs} >> {rhs}"),
+            Self::LessThan => format!("{lhs} < {rhs}"),
+            Self::LessEqual => format!("{lhs} <= {rhs}"),
+            Self::GreaterThan => format!("{lhs} > {rhs}"),
+            Self::GreaterEqual => format!("{lhs} >= {rhs}"),
+            Self::Equal => format!("{lhs} == {rhs}"),
+            Self::NotEqual => format!("{lhs} != {rhs}"),
+            Self::BitwiseAnd => format!("{lhs} & {rhs}"),
+            Self::BitwiseXor => format!("{lhs} ^ {rhs}"),
+            Self::BitwiseOr => format!("{lhs} | {rhs}"),
+            Self::LogicalAnd => format!("{lhs} && {rhs}"),
+            Self::LogicalOr => format!("{lhs} || {rhs}"),
+            Self::Assign => format!("{lhs} = {rhs}"),
+            Self::MultiplyAssign => format!("{lhs} *= {rhs}"),
+            Self::DivideAssign => format!("{lhs} /= {rhs}"),
+            Self::RemainderAssign => format!("{lhs} %= {rhs}"),
+            Self::AddAssign => format!("{lhs} += {rhs}"),
+            Self::SubtractAssign => format!("{lhs} -={rhs}"),
+            Self::ShiftLeftAssign => format!("{lhs} <<= {rhs}"),
+            Self::ShiftRightAssign => format!("{lhs} >>= {rhs}"),
+            Self::BitwiseAndAssign => format!("{lhs} &= {rhs}"),
+            Self::BitwiseXorAssign => format!("{lhs} ^= {rhs}"),
+            Self::BitwiseOrAssign => format!("{lhs} |= {rhs}"),
         }
-    }
-}
-
-impl fmt::Display for BinaryOperation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.notation())
     }
 }
 
@@ -327,7 +315,7 @@ impl std::fmt::Display for TypeNode {
 #[derive(Clone, Debug)]
 pub enum Node {
     Literal(Literal),
-    ValueType(TypeNode),
+    Type(TypeNode),
     Unary {
         operation: UnaryOperation,
         operand: Box<Node>,
@@ -378,14 +366,14 @@ impl fmt::Display for Node {
             Self::Literal(literal) => {
                 write!(f, "{literal}")
             },
-            Self::ValueType(value_type) => {
+            Self::Type(value_type) => {
                 write!(f, "{value_type}")
             },
             Self::Unary { operation, operand } => {
-                write!(f, "({operation}{operand})")
+                write!(f, "({operation})", operation = operation.to_string_with_operand(operand.as_ref()))
             },
             Self::Binary { operation, lhs, rhs } => {
-                write!(f, "({lhs}{operation}{rhs})")
+                write!(f, "({operation})", operation = operation.to_string_with_operands(lhs.as_ref(), rhs.as_ref()))
             },
             Self::Call { callee, arguments } => {
                 write!(f, "({callee}(")?;

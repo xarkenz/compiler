@@ -92,20 +92,14 @@ define dso_local void @do_some_pointing() #0 {
 }
 
 @.const.0 = private unnamed_addr constant [7 x i8] c"a: %d\0A\00"
-
 @.const.1 = private unnamed_addr constant [7 x i8] c"b: %d\0A\00"
-
 @.const.2 = private unnamed_addr constant [7 x i8] c"c: %d\0A\00"
-
 @.const.3 = private unnamed_addr constant [7 x i8] c"x: %d\0A\00"
-
 @.const.4 = private unnamed_addr constant [8 x i8] c"*y: %d\0A\00"
-
 @.const.5 = private unnamed_addr constant [9 x i8] c"**z: %d\0A\00"
 
-@.const.6 = private unnamed_addr constant [28 x i8] c"assigning string to pointer\00"
-
-@my_string_ptr = dso_local global i8* bitcast ([28 x i8]* @.const.6 to i8*)
+@.const.6 = private unnamed_addr constant [34 x i8] c"assigning string to pointer (%s)\0A\00"
+@my_string_ptr = dso_local global i8* bitcast ([34 x i8]* @.const.6 to i8*)
 
 define dso_local i32 @main() #0 {
 	%1 = call i32(i32) @fibonacci(i32 noundef 1000)
@@ -116,19 +110,55 @@ define dso_local i32 @main() #0 {
 	%my_string_array = alloca [14 x i8]
 	%5 = load [14 x i8], [14 x i8]* @.const.9
 	store [14 x i8] %5, [14 x i8]* %my_string_array
-	%6 = call i32(i8*, ...) @printf(i8* noundef bitcast ([4 x i8]* @.const.10 to i8*), [14 x i8]* noundef %my_string_array)
+	%6 = load i8*, i8** @my_string_ptr
+	%7 = call i32(i8*, ...) @printf(i8* noundef %6, [14 x i8]* noundef %my_string_array)
+	%8 = getelementptr inbounds [14 x i8], [14 x i8]* %my_string_array, i32 0, i32 10
+	%9 = load i8, i8* %8
+	%10 = call i32(i8*, ...) @printf(i8* noundef bitcast ([16 x i8]* @.const.10 to i8*), [14 x i8]* noundef %my_string_array, i8 noundef %9)
+	%11 = getelementptr inbounds [14 x i8], [14 x i8]* %my_string_array, i32 0, i32 10
+	store i8 111, i8* %11
+	%12 = getelementptr inbounds [14 x i8], [14 x i8]* %my_string_array, i32 0, i32 10
+	%13 = load i8, i8* %12
+	%14 = call i32(i8*, ...) @printf(i8* noundef bitcast ([16 x i8]* @.const.11 to i8*), [14 x i8]* noundef %my_string_array, i8 noundef %13)
+	%15 = load i8*, i8** @my_string_ptr
+	%16 = getelementptr inbounds i8, i8* %15, i32 0
+	%17 = load i8, i8* %16
+	%18 = call i32(i8*, ...) @printf(i8* noundef bitcast ([4 x i8]* @.const.12 to i8*), i8 noundef %17)
+	%block = alloca i8*
+	%19 = mul nuw i64 1, 3
+	%20 = call i8*(i64) @malloc(i64 noundef %19)
+	%21 = bitcast i8* %20 to i8*
+	store i8* %21, i8** %block
+	%22 = load i8*, i8** %block
+	%23 = getelementptr inbounds i8, i8* %22, i32 0
+	store i8 104, i8* %23
+	%24 = load i8*, i8** %block
+	%25 = getelementptr inbounds i8, i8* %24, i32 1
+	store i8 105, i8* %25
+	%26 = load i8*, i8** %block
+	%27 = getelementptr inbounds i8, i8* %26, i32 2
+	store i8 0, i8* %27
+	%28 = load i8*, i8** %block
+	%29 = call i32(i8*, ...) @printf(i8* noundef bitcast ([4 x i8]* @.const.13 to i8*), i8* noundef %28)
+	%30 = load i8*, i8** %block
+	%31 = bitcast i8* %30 to i8*
+	call void(i8*) @free(i8* noundef %31)
 	ret i32 0
 }
 
 @.const.7 = private unnamed_addr constant [15 x i8] c"fibonacci: %d\0A\00"
-
 @.const.8 = private unnamed_addr constant [9 x i8] c"gcd: %u\0A\00"
-
 @.const.9 = private unnamed_addr constant [14 x i8] c"i am a string\00"
-
-@.const.10 = private unnamed_addr constant [4 x i8] c"%s\0A\00"
+@.const.10 = private unnamed_addr constant [16 x i8] c"\22%s\22[10]: '%c'\0A\00"
+@.const.11 = private unnamed_addr constant [16 x i8] c"\22%s\22[10]: '%c'\0A\00"
+@.const.12 = private unnamed_addr constant [4 x i8] c"%c\0A\00"
+@.const.13 = private unnamed_addr constant [4 x i8] c"%s\0A\00"
 
 declare i32 @printf(i8* noundef, ...) #1
+
+declare i8* @malloc(i64 noundef) #1
+
+declare void @free(i8* noundef) #1
 
 attributes #0 = {
 	noinline nounwind optnone uwtable

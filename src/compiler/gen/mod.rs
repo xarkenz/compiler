@@ -87,7 +87,7 @@ impl Format {
                 self_item.can_coerce_to(other_item.as_ref())
             },
             (Self::Array { item_format: self_item, length: Some(self_length) }, Self::Array { item_format: other_item, length: Some(other_length) }) => {
-                self_length >= other_length && self_item.can_coerce_to(other_item.as_ref())
+                self_length == other_length && self_item.can_coerce_to(other_item.as_ref())
             },
             _ => false
         }
@@ -238,7 +238,12 @@ impl fmt::Display for Format {
                 write!(f, "i{bits}", bits = size * 8)
             },
             Self::Pointer(pointee_format) => {
-                write!(f, "{pointee_format}*")
+                if let Self::Void = pointee_format.as_unqualified() {
+                    write!(f, "i8*") // I wanted to use `ptr`, but LLVM complains unless -opaque-pointers is enabled
+                }
+                else {
+                    write!(f, "{pointee_format}*")
+                }
             },
             Self::Array { item_format, length: Some(length) } => {
                 write!(f, "[{length} x {item_format}]")
@@ -813,23 +818,74 @@ impl<W: Write> Generator<W> {
                             return Err(crate::RawError::new(format!("cannot dereference value of type '{}'", operand.format().rich_name())).into_boxed());
                         }
                     },
-                    ast::UnaryOperation::GetSize => todo!(),
+                    ast::UnaryOperation::GetSize => {
+                        if let ast::Node::Type(type_node) = operand.as_ref() {
+                            if let Some(size) = Format::try_from(type_node)?.size() {
+                                Value::Constant(Constant::Integer(size as u64, expected_format.clone().unwrap_or(Format::Integer { size: 8, signed: false })))
+                            }
+                            else {
+                                return Err(crate::RawError::new(format!("type '{type_node}' does not have a size")).into_boxed());
+                            }
+                        }
+                        else {
+                            return Err(crate::RawError::new(String::from("invalid operand for 'sizeof'")).into_boxed());
+                        }
+                    },
                     ast::UnaryOperation::GetAlign => todo!(),
                 }
             },
             ast::Node::Binary { operation, lhs, rhs } => {
                 match operation {
-                    ast::BinaryOperation::Subscript => todo!(),
+                    ast::BinaryOperation::Subscript => {
+                        let lhs = self.generate_node(lhs.as_ref(), context, None)?;
+                        let rhs = self.generate_node(rhs.as_ref(), context, None)?;
+                        let rhs = self.coerce_to_rvalue(rhs)?;
+
+                        match lhs {
+                            Value::Indirect { pointer, loaded_format } => {
+                                if !(matches!(rhs.format().as_unqualified(), Format::Integer { .. })) {
+                                    return Err(crate::RawError::new(String::from("expected an integer subscript")).into_boxed());
+                                }
+
+                                if let Format::Array { item_format, length } = loaded_format.as_unqualified() {
+                                    let result = self.new_anonymous_register(item_format.as_ref().clone().into_pointer());
+
+                                    let indices = match length {
+                                        Some(_) => vec![
+                                            Value::Constant(Constant::Integer(0, Format::default_integer())),
+                                            rhs,
+                                        ],
+                                        None => vec![
+                                            rhs,
+                                        ],
+                                    };
+
+                                    self.emitter.emit_get_element_pointer(&result, &loaded_format, pointer.as_ref(), &indices)?;
+
+                                    Value::Indirect {
+                                        pointer: Box::new(Value::Register(result)),
+                                        loaded_format: item_format.as_ref().clone(),
+                                    }
+                                }
+                                else {
+                                    return Err(crate::RawError::new(String::from("invalid value for subscripting")).into_boxed());
+                                }
+                            },
+                            _ => {
+                                return Err(crate::RawError::new(String::from("subscripted value must be an lvalue")).into_boxed());
+                            }
+                        }
+                    },
                     ast::BinaryOperation::Access => todo!(),
                     ast::BinaryOperation::DerefAccess => todo!(),
                     ast::BinaryOperation::Convert => {
-                        if let ast::Node::ValueType(value_type) = rhs.as_ref() {
+                        if let ast::Node::Type(type_node) = rhs.as_ref() {
                             let value = self.generate_node(lhs.as_ref(), context, None)?;
                             let value = self.coerce_to_rvalue(value)?;
                             
-                            let to_format = Format::try_from(value_type)?;
+                            let target_format = Format::try_from(type_node)?;
         
-                            self.change_format(value, &to_format)?
+                            self.change_format(value, &target_format)?
                         }
                         else {
                             return Err(crate::RawError::new(String::from("invalid right-hand side for 'as'")).into_boxed());
@@ -1185,15 +1241,16 @@ impl<W: Write> Generator<W> {
                 Value::Void
             },
             ast::Node::Function { name, parameters, is_varargs, return_type, body: None } => {
+                // TODO: maybe do multiple passes of the source file to avoid the need for forward declarations
                 let return_format = Format::try_from(return_type)?;
                 return_format.expect_constant_sized()?;
 
-                let parameter_formats = parameters.iter()
-                    .map(|(_, parameter_type)| Format::try_from(parameter_type).and_then(|format| {
+                let parameter_formats: Vec<Format> = Result::from_iter(parameters.iter().map(|(_, parameter_type)| {
+                    Format::try_from(parameter_type).and_then(|format| {
                         format.expect_constant_sized()?;
                         Ok(format)
-                    }))
-                    .collect::<Result<Vec<Format>, _>>()?;
+                    })
+                }))?;
 
                 let format = Format::Function {
                     is_defined: false,
@@ -1238,31 +1295,32 @@ impl<W: Write> Generator<W> {
                 Value::Void
             },
             ast::Node::Function { name, parameters, is_varargs, return_type, body: Some(body) } => {
-                // TODO: functions need a *bit* of cleaning up...
                 let return_format = Format::try_from(return_type)?;
                 return_format.expect_constant_sized()?;
                 
-                let parameter_formats = parameters.iter()
-                    .map(|(_, parameter_type)| Format::try_from(parameter_type).and_then(|format| {
+                let parameter_names_iter = parameters.iter().map(
+                    |(name, _type_node)| name.clone()
+                );
+                let parameter_formats: Vec<Format> = Result::from_iter(parameters.iter().map(|(_, parameter_type)| {
+                    Format::try_from(parameter_type).and_then(|format| {
                         format.expect_constant_sized()?;
                         Ok(format)
-                    }))
-                    .collect::<Result<Vec<Format>, _>>()?;
+                    })
+                }))?;
 
                 self.local_symbol_table.clear();
                 self.next_anonymous_register_id = 1;
                 self.next_anonymous_label_id = 0;
                 let function_context = context.clone().enter_function(return_format.clone());
 
-                let parameter_handles: Vec<_> = parameters.iter()
-                    .map(|(parameter_name, _)| parameter_name.clone())
-                    .zip(parameter_formats.iter())
+                let parameter_handles: Vec<_> = std::iter::zip(parameter_names_iter, parameter_formats.iter())
                     .map(|(name, format)| {
                         let input_register = Register {
                             name: format!(".arg.{name}"),
                             format: format.clone(),
                             is_global: false,
                         };
+
                         let (symbol, pointer) = self.get_symbol_table(&function_context).create_indirect_symbol(name, format.clone());
                         
                         (input_register, symbol, pointer)
@@ -1323,6 +1381,7 @@ impl<W: Write> Generator<W> {
                 }
 
                 let body_result = self.generate_node(body.as_ref(), &function_context, None)?;
+
                 if &body_result != &Value::Never {
                     if let Format::Void = &return_format {
                         self.emitter.emit_return(None)?;

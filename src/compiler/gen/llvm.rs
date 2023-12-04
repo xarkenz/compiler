@@ -9,7 +9,7 @@ pub struct Emitter<W: Write> {
     writer: W,
     is_global: bool,
     used_attribute_group_0: bool,
-    used_attribute_group_1: bool,
+    used_attribute_group_1: bool, // TODO: it's not that simple...
     defined_functions: Vec<Register>,
     queued_function_declarations: Vec<(Register, String)>,
     queued_anonymous_constants: Vec<String>,
@@ -184,7 +184,11 @@ impl<W: Write> Emitter<W> {
         
         // Write all constant declarations queued for writing
         for constant in &self.queued_anonymous_constants {
-            writeln!(self.writer, "{constant}\n")
+            writeln!(self.writer, "{constant}")
+                .map_err(|cause| self.error(cause))?;
+        }
+        if !self.queued_anonymous_constants.is_empty() {
+            writeln!(self.writer)
                 .map_err(|cause| self.error(cause))?;
         }
         // Dequeue all declarations which were just written
@@ -218,7 +222,7 @@ impl<W: Write> Emitter<W> {
             // Write the constant declaration immediately
             writeln!(
                 self.writer,
-                "{pointer} = private unnamed_addr constant {format} {value}\n",
+                "{pointer} = private unnamed_addr constant {format} {value}",
                 format = value.format(),
             )
             .map_err(|cause| self.error(cause))

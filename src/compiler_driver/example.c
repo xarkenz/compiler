@@ -1,6 +1,7 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 const char my_string_array[] = "assigning string to array";
 const char* const my_string_ptr = &"assigning string to pointer"[0];
@@ -11,5 +12,11 @@ int32_t main() {
     int16_t my_local_array[3] = {1, 2, 3};
     char format[10] = "test: %d\n";
     printf(&format[0], 6 * 7);
+    char* block = malloc(sizeof(char) * 3);
+    block[0] = 'h';
+    block[1] = 'i';
+    block[2] = '\0';
+    printf("%s\n", block);
+    free(block);
     return 0;
 }

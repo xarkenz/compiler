@@ -64,7 +64,24 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
         if let Some(operation) = UnaryOperation::from_prefix_token(token) {
             self.scan_token()?;
-            let operand = self.parse_operand()?;
+            let operand;
+            match operation {
+                UnaryOperation::GetSize => {
+                    self.expect_token(&[Token::ParenLeft])?;
+                    self.scan_token()?;
+                    operand = Box::new(Node::Type(self.parse_type(&[Token::ParenRight])?));
+                    self.scan_token()?;
+                },
+                UnaryOperation::GetAlign => {
+                    self.expect_token(&[Token::ParenLeft])?;
+                    self.scan_token()?;
+                    operand = Box::new(Node::Type(self.parse_type(&[Token::ParenRight])?));
+                    self.scan_token()?;
+                },
+                _ => {
+                    operand = self.parse_operand()?;
+                }
+            };
 
             Ok(Box::new(Node::Unary {
                 operation,
@@ -80,7 +97,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 Token::Literal(literal) => {
                     Box::new(Node::Literal(literal.clone()))
                 },
-                _ => return Err(self.scanner.syntax_error(format!("expected an operand, got {token}")))
+                _ => {
+                    return Err(self.scanner.syntax_error(format!("expected an operand, got {token}")));
+                }
             };
             self.scan_token()?;
 
@@ -120,8 +139,13 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.scan_token()?;
                 let rhs = match operation {
                     BinaryOperation::Convert => {
-                        Box::new(Node::ValueType(self.parse_type(allowed_ends)?))
+                        Box::new(Node::Type(self.parse_type(allowed_ends)?))
                     },
+                    BinaryOperation::Subscript => {
+                        let expression = self.parse_expression(None, &[Token::SquareRight])?;
+                        self.scan_token()?;
+                        expression
+                    }
                     _ => {
                         self.parse_expression(Some(precedence), allowed_ends)?
                     }

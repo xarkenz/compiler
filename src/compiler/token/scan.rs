@@ -147,35 +147,27 @@ impl<T: BufRead> Scanner<T> {
         Err(self.syntax_error(String::from("unrecognized token")))
     }
 
-    fn scan_string_literal(&mut self) -> crate::Result<Option<Token>> {
-        let mut bytes = Vec::new();
-
-        while let Some(ch) = self.next_char()? {
-            if ch == '"' {
-                // Add the NUL byte at the end
-                // TODO: syntax like r"hello" to opt out?
-                bytes.push(0);
-                return Ok(Some(Token::Literal(Literal::String(StringValue::new(bytes)))));
-            }
-            else if ch == '\\' {
+    fn scan_escaped_char(&mut self) -> crate::Result<Option<u8>> {
+        if let Some(ch) = self.next_char()? {
+            if ch == '\\' {
                 match self.next_char()? {
                     Some('\\') => {
-                        bytes.push(b'\\');
+                        Ok(Some(b'\\'))
                     },
                     Some('\"') => {
-                        bytes.push(b'\"');
+                        Ok(Some(b'\"'))
                     },
                     Some('\'') => {
-                        bytes.push(b'\'');
+                        Ok(Some(b'\''))
                     },
                     Some('n') => {
-                        bytes.push(b'\n');
+                        Ok(Some(b'\n'))
                     },
                     Some('t') => {
-                        bytes.push(b'\t');
+                        Ok(Some(b'\t'))
                     },
                     Some('0') => {
-                        bytes.push(0);
+                        Ok(Some(b'\0'))
                     },
                     Some('x') => {
                         let mut byte = 0;
@@ -187,31 +179,64 @@ impl<T: BufRead> Scanner<T> {
                                     '0'..='9' => ch as u8 - b'0',
                                     'A'..='F' => ch as u8 - b'A' + 10,
                                     'a'..='f' => ch as u8 - b'a' + 10,
-                                    _ => return Err(self.syntax_error(format!("expected a hexadecimal digit")))
+                                    _ => return Err(self.syntax_error(format!("invalid hexadecimal digit '{ch}'")))
                                 };
-                            } else {
-                                break;
+                            }
+                            else {
+                                return Ok(None)
                             }
                         }
-                        bytes.push(byte);
+                        Ok(Some(byte))
                     },
                     Some(escape_ch) => {
-                        return Err(self.syntax_error(format!("unrecognized escape character '{escape_ch}'")));
+                        Err(self.syntax_error(format!("unrecognized escape character '{escape_ch}'")))
                     },
                     None => {
-                        break;
+                        Ok(None)
                     },
                 }
             }
             else if ch.is_ascii() {
-                bytes.push(ch as u8);
+                Ok(Some(ch as u8))
             }
             else {
-                return Err(self.syntax_error(format!("non-ASCII character '{ch}' in string literal")));
+                Err(self.syntax_error(format!("non-ASCII character '{ch}' in literal")))
+            }
+        }
+        else {
+            Ok(None)
+        }
+    }
+
+    fn scan_string_literal(&mut self) -> crate::Result<Option<Token>> {
+        let mut bytes = Vec::new();
+
+        while let Some(ch) = self.next_char()? {
+            if ch == '"' {
+                // Add the NUL byte at the end
+                // TODO: syntax like r"hello" to opt out?
+                bytes.push(0);
+                return Ok(Some(Token::Literal(Literal::String(StringValue::new(bytes)))));
+            }
+            else {
+                self.put_back(ch);
+                bytes.push(self.scan_escaped_char()?
+                    .ok_or_else(|| self.syntax_error(String::from("unclosed string literal")))?);
             }
         }
 
         Err(self.syntax_error(String::from("unclosed string literal")))
+    }
+
+    fn scan_character_literal(&mut self) -> crate::Result<Option<Token>> {
+        let byte = self.scan_escaped_char()?
+            .ok_or_else(|| self.syntax_error(String::from("unclosed character literal")))?;
+
+        match self.next_char()? {
+            Some('\'') => Ok(Some(Token::Literal(Literal::Integer(byte as u64)))),
+            Some(_) => Err(self.syntax_error(String::from("expected single quote to close character literal"))),
+            None => Err(self.syntax_error(String::from("unclosed character literal"))),
+        }
     }
 
     fn skip_line_comment(&mut self) -> crate::Result<()> {
@@ -286,6 +311,9 @@ impl<T: BufRead> Scanner<T> {
                 }
                 else if ch == '"' {
                     return self.scan_string_literal();
+                }
+                else if ch == '\'' {
+                    return self.scan_character_literal();
                 }
                 self.put_back(ch);
                 self.scan_symbolic_literal()
