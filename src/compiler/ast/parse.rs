@@ -59,7 +59,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
         }
     }
 
-    pub fn parse_operand(&mut self) -> crate::Result<Box<Node>> {
+    pub fn parse_operand(&mut self, allowed_ends: &[Token]) -> crate::Result<Box<Node>> {
         let token = self.get_token()?;
 
         if let Some(operation) = UnaryOperation::from_prefix_token(token) {
@@ -79,7 +79,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.scan_token()?;
                 },
                 _ => {
-                    operand = self.parse_operand()?;
+                    operand = self.parse_expression(Some(Precedence::Prefix), allowed_ends)?;
                 }
             };
 
@@ -116,7 +116,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
     }
 
     pub fn parse_expression(&mut self, parent_precedence: Option<Precedence>, allowed_ends: &[Token]) -> crate::Result<Box<Node>> {
-        let mut lhs = self.parse_operand()?;
+        let mut lhs = self.parse_operand(allowed_ends)?;
 
         while let Some(token) = self.current_token() {
             // Allowed ends are checked before operations, even if a valid operation can end the expression

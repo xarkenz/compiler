@@ -25,46 +25,67 @@ function gcd(a: u32, b: u32) -> u32 {
     return a;
 }
 
-function do_some_pointing() {
-    let a: i32;
-    let b: i32;
-    let c: i32;
-    a = b = c = 3;
-    printf("a: %d\n", a);
-    printf("b: %d\n", b);
-    printf("c: %d\n", c);
-
-    let x: i32 = 0;
-    printf("x: %d\n", x);
-    let y: *i32 = &x;
-    *y = 1;
-    printf("*y: %d\n", x);
-    let z: **i32 = &y;
-    **z = 2;
-    printf("**z: %d\n", x);
+function is_digit(ch: u8) -> bool {
+    // oops i don't have && or || yet
+    if (ch >= '0') {
+        return ch <= '9';
+    }
+    else {
+        return false;
+    }
 }
 
-let my_string_ptr: const *const [u8] = "assigning string to pointer (%s)\n";
+function get_str_len(str: *[u8]) -> u64 {
+    let index: u64 = 0;
+    while (str[index] != '\0') {
+        index = index + 1;
+    }
+    return index;
+}
+
+let input: const *const [u8] = "1abc2\npqr3stu8vwx\na1b2c3d4e5f\ntreb7uchet\n";
+
+function aoc_01_p1() {
+    printf(input);
+
+    let input_len: u64 = get_str_len(input);
+
+    let calibration_sum: u32 = 0;
+
+    let start_index: u64 = 0;
+    while (start_index < input_len) {
+        let index: u64 = start_index;
+
+        // Find the first digit
+        while (!is_digit(input[index])) {
+            index = index + 1;
+        }
+        let calibration_value: u32 = (input[index] - '0') as u32;
+        
+        // Find the next '\n' character (the input is assumed to have a trailing \n)
+        while (input[index] != '\n') {
+            index = index + 1;
+        }
+
+        // Move the start index for the next iteration
+        start_index = index + 1;
+
+        // Backtrack to find the last digit
+        index = index - 1;
+        while (!is_digit(input[index])) {
+            index = index - 1;
+        }
+        calibration_value = calibration_value * 10 + (input[index] - '0') as u32;
+
+        // Add the found value to the sum
+        calibration_sum = calibration_sum + calibration_value;
+    }
+
+    printf("[01p1] Sum of calibration values: %d\n", calibration_sum);
+}
 
 function main() -> i32 {
-    printf("fibonacci: %d\n", fibonacci(1000));
-    printf("gcd: %u\n", gcd(18, 45));
-
-    do_some_pointing();
-
-    let my_string_array: [u8; 14] = *"i am a string";
-    printf(my_string_ptr, &my_string_array);
-    printf("\"%s\"[10]: '%c'\n", &my_string_array, my_string_array[10]);
-    my_string_array[10] = 'o';
-    printf("\"%s\"[10]: '%c'\n", &my_string_array, my_string_array[10]);
-    printf("%c\n", (*my_string_ptr)[0]);
-
-    let block: *[u8] = malloc(sizeof(u8) * 3) as *[u8];
-    (*block)[0] = 'h';
-    (*block)[1] = 'i';
-    (*block)[2] = '\0';
-    printf("%s\n", block);
-    free(block as *void);
+    aoc_01_p1();
 
     return 0;
 }

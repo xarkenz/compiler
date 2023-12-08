@@ -58,101 +58,152 @@ define dso_local i32 @gcd(i32 noundef %.arg.a, i32 noundef %.arg.b) #0 {
 	ret i32 %8
 }
 
-define dso_local void @do_some_pointing() #0 {
-	%a = alloca i32
-	%b = alloca i32
-	%c = alloca i32
-	store i32 3, i32* %c
-	store i32 3, i32* %b
-	store i32 3, i32* %a
-	%1 = load i32, i32* %a
-	%2 = call i32(i8*, ...) @printf(i8* noundef bitcast ([7 x i8]* @.const.0 to i8*), i32 noundef %1)
-	%3 = load i32, i32* %b
-	%4 = call i32(i8*, ...) @printf(i8* noundef bitcast ([7 x i8]* @.const.1 to i8*), i32 noundef %3)
-	%5 = load i32, i32* %c
-	%6 = call i32(i8*, ...) @printf(i8* noundef bitcast ([7 x i8]* @.const.2 to i8*), i32 noundef %5)
-	%x = alloca i32
-	store i32 0, i32* %x
-	%7 = load i32, i32* %x
-	%8 = call i32(i8*, ...) @printf(i8* noundef bitcast ([7 x i8]* @.const.3 to i8*), i32 noundef %7)
-	%y = alloca i32*
-	store i32* %x, i32** %y
-	%9 = load i32*, i32** %y
-	store i32 1, i32* %9
-	%10 = load i32, i32* %x
-	%11 = call i32(i8*, ...) @printf(i8* noundef bitcast ([8 x i8]* @.const.4 to i8*), i32 noundef %10)
-	%z = alloca i32**
-	store i32** %y, i32*** %z
-	%12 = load i32**, i32*** %z
-	%13 = load i32*, i32** %12
-	store i32 2, i32* %13
-	%14 = load i32, i32* %x
-	%15 = call i32(i8*, ...) @printf(i8* noundef bitcast ([9 x i8]* @.const.5 to i8*), i32 noundef %14)
+define dso_local i1 @is_digit(i8 noundef %.arg.ch) #0 {
+	%ch = alloca i8
+	store i8 %.arg.ch, i8* %ch
+	%1 = load i8, i8* %ch
+	%2 = icmp uge i8 %1, 48
+	br i1 %2, label %.label.0, label %.label.1
+.label.0:
+	%3 = load i8, i8* %ch
+	%4 = icmp ule i8 %3, 57
+	ret i1 %4
+.label.1:
+	ret i1 false
+}
+
+define dso_local i64 @get_str_len(i8* noundef %.arg.str) #0 {
+	%str = alloca i8*
+	store i8* %.arg.str, i8** %str
+	%index = alloca i64
+	store i64 0, i64* %index
+	br label %.label.0
+.label.0:
+	%1 = load i64, i64* %index
+	%2 = load i8*, i8** %str
+	%3 = getelementptr inbounds i8, i8* %2, i64 %1
+	%4 = load i8, i8* %3
+	%5 = icmp ne i8 %4, 0
+	br i1 %5, label %.label.1, label %.label.2
+.label.1:
+	%6 = load i64, i64* %index
+	%7 = add nuw i64 %6, 1
+	store i64 %7, i64* %index
+	br label %.label.0
+.label.2:
+	%8 = load i64, i64* %index
+	ret i64 %8
+}
+
+@.const.0 = private unnamed_addr constant [42 x i8] c"1abc2\0Apqr3stu8vwx\0Aa1b2c3d4e5f\0Atreb7uchet\0A\00"
+@input = dso_local global i8* bitcast ([42 x i8]* @.const.0 to i8*)
+
+define dso_local void @aoc_01_p1() #0 {
+	%1 = load i8*, i8** @input
+	%2 = call i32(i8*, ...) @printf(i8* noundef %1)
+	%input_len = alloca i64
+	%3 = load i8*, i8** @input
+	%4 = call i64(i8*) @get_str_len(i8* noundef %3)
+	store i64 %4, i64* %input_len
+	%calibration_sum = alloca i32
+	store i32 0, i32* %calibration_sum
+	%start_index = alloca i64
+	store i64 0, i64* %start_index
+	br label %.label.0
+.label.0:
+	%5 = load i64, i64* %start_index
+	%6 = load i64, i64* %input_len
+	%7 = icmp ult i64 %5, %6
+	br i1 %7, label %.label.1, label %.label.2
+.label.1:
+	%index = alloca i64
+	%8 = load i64, i64* %start_index
+	store i64 %8, i64* %index
+	br label %.label.3
+.label.3:
+	%9 = load i64, i64* %index
+	%10 = load i8*, i8** @input
+	%11 = getelementptr inbounds i8, i8* %10, i64 %9
+	%12 = load i8, i8* %11
+	%13 = call i1(i8) @is_digit(i8 noundef %12)
+	%14 = xor i1 %13, true
+	br i1 %14, label %.label.4, label %.label.5
+.label.4:
+	%15 = load i64, i64* %index
+	%16 = add nuw i64 %15, 1
+	store i64 %16, i64* %index
+	br label %.label.3
+.label.5:
+	%calibration_value = alloca i32
+	%17 = load i64, i64* %index
+	%18 = load i8*, i8** @input
+	%19 = getelementptr inbounds i8, i8* %18, i64 %17
+	%20 = load i8, i8* %19
+	%21 = sub nuw i8 %20, 48
+	%22 = zext i8 %21 to i32
+	store i32 %22, i32* %calibration_value
+	br label %.label.6
+.label.6:
+	%23 = load i64, i64* %index
+	%24 = load i8*, i8** @input
+	%25 = getelementptr inbounds i8, i8* %24, i64 %23
+	%26 = load i8, i8* %25
+	%27 = icmp ne i8 %26, 10
+	br i1 %27, label %.label.7, label %.label.8
+.label.7:
+	%28 = load i64, i64* %index
+	%29 = add nuw i64 %28, 1
+	store i64 %29, i64* %index
+	br label %.label.6
+.label.8:
+	%30 = load i64, i64* %index
+	%31 = add nuw i64 %30, 1
+	store i64 %31, i64* %start_index
+	%32 = load i64, i64* %index
+	%33 = sub nuw i64 %32, 1
+	store i64 %33, i64* %index
+	br label %.label.9
+.label.9:
+	%34 = load i64, i64* %index
+	%35 = load i8*, i8** @input
+	%36 = getelementptr inbounds i8, i8* %35, i64 %34
+	%37 = load i8, i8* %36
+	%38 = call i1(i8) @is_digit(i8 noundef %37)
+	%39 = xor i1 %38, true
+	br i1 %39, label %.label.10, label %.label.11
+.label.10:
+	%40 = load i64, i64* %index
+	%41 = sub nuw i64 %40, 1
+	store i64 %41, i64* %index
+	br label %.label.9
+.label.11:
+	%42 = load i32, i32* %calibration_value
+	%43 = mul nuw i32 %42, 10
+	%44 = load i64, i64* %index
+	%45 = load i8*, i8** @input
+	%46 = getelementptr inbounds i8, i8* %45, i64 %44
+	%47 = load i8, i8* %46
+	%48 = sub nuw i8 %47, 48
+	%49 = zext i8 %48 to i32
+	%50 = add nuw i32 %43, %49
+	store i32 %50, i32* %calibration_value
+	%51 = load i32, i32* %calibration_sum
+	%52 = load i32, i32* %calibration_value
+	%53 = add nuw i32 %51, %52
+	store i32 %53, i32* %calibration_sum
+	br label %.label.0
+.label.2:
+	%54 = load i32, i32* %calibration_sum
+	%55 = call i32(i8*, ...) @printf(i8* noundef bitcast ([38 x i8]* @.const.1 to i8*), i32 noundef %54)
 	ret void
 }
 
-@.const.0 = private unnamed_addr constant [7 x i8] c"a: %d\0A\00"
-@.const.1 = private unnamed_addr constant [7 x i8] c"b: %d\0A\00"
-@.const.2 = private unnamed_addr constant [7 x i8] c"c: %d\0A\00"
-@.const.3 = private unnamed_addr constant [7 x i8] c"x: %d\0A\00"
-@.const.4 = private unnamed_addr constant [8 x i8] c"*y: %d\0A\00"
-@.const.5 = private unnamed_addr constant [9 x i8] c"**z: %d\0A\00"
-
-@.const.6 = private unnamed_addr constant [34 x i8] c"assigning string to pointer (%s)\0A\00"
-@my_string_ptr = dso_local global i8* bitcast ([34 x i8]* @.const.6 to i8*)
+@.const.1 = private unnamed_addr constant [38 x i8] c"[01p1] Sum of calibration values: %d\0A\00"
 
 define dso_local i32 @main() #0 {
-	%1 = call i32(i32) @fibonacci(i32 noundef 1000)
-	%2 = call i32(i8*, ...) @printf(i8* noundef bitcast ([15 x i8]* @.const.7 to i8*), i32 noundef %1)
-	%3 = call i32(i32, i32) @gcd(i32 noundef 18, i32 noundef 45)
-	%4 = call i32(i8*, ...) @printf(i8* noundef bitcast ([9 x i8]* @.const.8 to i8*), i32 noundef %3)
-	call void() @do_some_pointing()
-	%my_string_array = alloca [14 x i8]
-	%5 = load [14 x i8], [14 x i8]* @.const.9
-	store [14 x i8] %5, [14 x i8]* %my_string_array
-	%6 = load i8*, i8** @my_string_ptr
-	%7 = call i32(i8*, ...) @printf(i8* noundef %6, [14 x i8]* noundef %my_string_array)
-	%8 = getelementptr inbounds [14 x i8], [14 x i8]* %my_string_array, i32 0, i32 10
-	%9 = load i8, i8* %8
-	%10 = call i32(i8*, ...) @printf(i8* noundef bitcast ([16 x i8]* @.const.10 to i8*), [14 x i8]* noundef %my_string_array, i8 noundef %9)
-	%11 = getelementptr inbounds [14 x i8], [14 x i8]* %my_string_array, i32 0, i32 10
-	store i8 111, i8* %11
-	%12 = getelementptr inbounds [14 x i8], [14 x i8]* %my_string_array, i32 0, i32 10
-	%13 = load i8, i8* %12
-	%14 = call i32(i8*, ...) @printf(i8* noundef bitcast ([16 x i8]* @.const.11 to i8*), [14 x i8]* noundef %my_string_array, i8 noundef %13)
-	%15 = load i8*, i8** @my_string_ptr
-	%16 = getelementptr inbounds i8, i8* %15, i32 0
-	%17 = load i8, i8* %16
-	%18 = call i32(i8*, ...) @printf(i8* noundef bitcast ([4 x i8]* @.const.12 to i8*), i8 noundef %17)
-	%block = alloca i8*
-	%19 = mul nuw i64 1, 3
-	%20 = call i8*(i64) @malloc(i64 noundef %19)
-	%21 = bitcast i8* %20 to i8*
-	store i8* %21, i8** %block
-	%22 = load i8*, i8** %block
-	%23 = getelementptr inbounds i8, i8* %22, i32 0
-	store i8 104, i8* %23
-	%24 = load i8*, i8** %block
-	%25 = getelementptr inbounds i8, i8* %24, i32 1
-	store i8 105, i8* %25
-	%26 = load i8*, i8** %block
-	%27 = getelementptr inbounds i8, i8* %26, i32 2
-	store i8 0, i8* %27
-	%28 = load i8*, i8** %block
-	%29 = call i32(i8*, ...) @printf(i8* noundef bitcast ([4 x i8]* @.const.13 to i8*), i8* noundef %28)
-	%30 = load i8*, i8** %block
-	%31 = bitcast i8* %30 to i8*
-	call void(i8*) @free(i8* noundef %31)
+	call void() @aoc_01_p1()
 	ret i32 0
 }
-
-@.const.7 = private unnamed_addr constant [15 x i8] c"fibonacci: %d\0A\00"
-@.const.8 = private unnamed_addr constant [9 x i8] c"gcd: %u\0A\00"
-@.const.9 = private unnamed_addr constant [14 x i8] c"i am a string\00"
-@.const.10 = private unnamed_addr constant [16 x i8] c"\22%s\22[10]: '%c'\0A\00"
-@.const.11 = private unnamed_addr constant [16 x i8] c"\22%s\22[10]: '%c'\0A\00"
-@.const.12 = private unnamed_addr constant [4 x i8] c"%c\0A\00"
-@.const.13 = private unnamed_addr constant [4 x i8] c"%s\0A\00"
 
 declare i32 @printf(i8* noundef, ...) #1
 
