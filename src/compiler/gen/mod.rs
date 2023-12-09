@@ -619,7 +619,7 @@ impl<W: Write> Generator<W> {
             Ok(value)
         }
         else {
-            match (&original_format, target_format) {
+            match (original_format.as_unqualified(), target_format.as_unqualified()) {
                 (Format::Pointer(_), Format::Pointer(_)) => {
                     let result = self.new_anonymous_register(target_format.clone());
                     self.emitter.emit_bitwise_cast(&result, &value)?;
@@ -858,14 +858,12 @@ impl<W: Write> Generator<W> {
                                     Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
                                         Format::Array { item_format, length } => {
                                             // const &*[T; N], const &*[T]
-                                            let element_pointer_format = item_format.as_ref().clone().into_pointer();
-                                            let element_pointer_format = match pointee_format.as_ref() {
-                                                Format::Constant(_) => element_pointer_format.into_constant(),
-                                                _ => element_pointer_format
+                                            let element_format = match pointee_format.as_ref() {
+                                                Format::Constant(_) => item_format.as_ref().clone().into_constant(),
+                                                _ => item_format.as_ref().clone()
                                             };
-
                                             let loaded_pointer = self.new_anonymous_register(loaded_format.clone());
-                                            let element_pointer = self.new_anonymous_register(element_pointer_format);
+                                            let element_pointer = self.new_anonymous_register(element_format.clone().into_pointer());
                                             let indices = match length {
                                                 Some(_) => vec![Value::Constant(Constant::Integer(0, Format::default_integer())), Value::Constant(rhs)],
                                                 None => vec![Value::Constant(rhs)],
@@ -881,7 +879,7 @@ impl<W: Write> Generator<W> {
 
                                             Value::Indirect {
                                                 pointer: Box::new(Value::Register(element_pointer)),
-                                                loaded_format: item_format.as_ref().clone(),
+                                                loaded_format: element_format,
                                             }
                                         },
                                         _ => return Err(cannot_index_error())
@@ -940,14 +938,12 @@ impl<W: Write> Generator<W> {
                                     Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
                                         Format::Array { item_format, length } => {
                                             // &*[T; N], &*[T]
-                                            let element_pointer_format = item_format.as_ref().clone().into_pointer();
-                                            let element_pointer_format = match pointee_format.as_ref() {
-                                                Format::Constant(_) => element_pointer_format.into_constant(),
-                                                _ => element_pointer_format
+                                            let element_format = match pointee_format.as_ref() {
+                                                Format::Constant(_) => item_format.as_ref().clone().into_constant(),
+                                                _ => item_format.as_ref().clone()
                                             };
-
                                             let loaded_pointer = self.new_anonymous_register(loaded_format.clone());
-                                            let element_pointer = self.new_anonymous_register(element_pointer_format);
+                                            let element_pointer = self.new_anonymous_register(element_format.clone().into_pointer());
                                             let indices = match length {
                                                 Some(_) => vec![Value::Constant(Constant::Integer(0, Format::default_integer())), rhs],
                                                 None => vec![rhs],
@@ -963,7 +959,7 @@ impl<W: Write> Generator<W> {
 
                                             Value::Indirect {
                                                 pointer: Box::new(Value::Register(element_pointer)),
-                                                loaded_format: item_format.as_ref().clone(),
+                                                loaded_format: element_format,
                                             }
                                         },
                                         _ => return Err(cannot_index_error())
