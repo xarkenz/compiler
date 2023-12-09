@@ -536,7 +536,7 @@ impl<W: Write> Generator<W> {
         self.next_anonymous_label_id += 1;
 
         Label {
-            name: format!(".label.{id}"),
+            name: format!(".block.{id}"),
         }
     }
 
@@ -1435,7 +1435,7 @@ impl<W: Write> Generator<W> {
                 }))?;
 
                 self.local_symbol_table.clear();
-                self.next_anonymous_register_id = 1;
+                self.next_anonymous_register_id = 0;
                 self.next_anonymous_label_id = 0;
                 let function_context = context.clone().enter_function(return_format.clone());
 
@@ -1499,6 +1499,8 @@ impl<W: Write> Generator<W> {
                     .map(|(register, _, _)| register.clone())
                     .collect();
                 self.emitter.emit_function_enter(&function_register, &return_format, &input_registers, *is_varargs)?;
+                let entry_label = self.new_anonymous_label();
+                self.emitter.emit_label(&entry_label)?;
 
                 for (input_register, symbol, pointer) in parameter_handles {
                     self.emitter.emit_local_allocation(&pointer, input_register.format())?;

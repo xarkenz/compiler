@@ -3,9 +3,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-const char* const my_string = "hello world";
 
 int32_t main() {
-    const char x = my_string[5];
+    int x = 3, y = 5;
+    bool b;
+    b = x == 3 && y == 5;
+    b = x > 2 || y > 8;
+    b = x < 4 && (y < 2 || y > 3);
     return 0;
 }
