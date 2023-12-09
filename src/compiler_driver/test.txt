@@ -1,6 +1,8 @@
 function printf(format: const *const [u8], ..) -> u32;
 function malloc(size_bytes: u64) -> *void;
 function free(alloc: *void);
+function strlen(str: *const [u8]) -> u64;
+function isdigit(char: i32) -> i32;
 
 function fibonacci(limit: i32) -> i32 {
     let a: i32 = 0;
@@ -25,30 +27,12 @@ function gcd(a: u32, b: u32) -> u32 {
     return a;
 }
 
-function is_digit(ch: u8) -> bool {
-    // oops i don't have && or || yet
-    if (ch >= '0') {
-        return ch <= '9';
-    }
-    else {
-        return false;
-    }
-}
-
-function get_str_len(str: *[u8]) -> u64 {
-    let index: u64 = 0;
-    while (str[index] != '\0') {
-        index = index + 1;
-    }
-    return index;
-}
-
 let input: const *const [u8] = "1abc2\npqr3stu8vwx\na1b2c3d4e5f\ntreb7uchet\n";
 
 function aoc_01_p1() {
     printf(input);
 
-    let input_len: u64 = get_str_len(input);
+    let input_len: u64 = strlen(input);
 
     let calibration_sum: u32 = 0;
 
@@ -57,7 +41,7 @@ function aoc_01_p1() {
         let index: u64 = start_index;
 
         // Find the first digit
-        while (!is_digit(input[index])) {
+        while (isdigit(input[index] as i32) == 0) {
             index = index + 1;
         }
         let calibration_value: u32 = (input[index] - '0') as u32;
@@ -72,7 +56,7 @@ function aoc_01_p1() {
 
         // Backtrack to find the last digit
         index = index - 1;
-        while (!is_digit(input[index])) {
+        while (isdigit(input[index] as i32) == 0) {
             index = index - 1;
         }
         calibration_value = calibration_value * 10 + (input[index] - '0') as u32;
@@ -85,7 +69,6 @@ function aoc_01_p1() {
 }
 
 function main() -> i32 {
-    input[0] = 'c';
     aoc_01_p1();
 
     return 0;
