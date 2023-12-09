@@ -201,6 +201,9 @@ define dso_local void @aoc_01_p1() #0 {
 @.const.1 = private unnamed_addr constant [38 x i8] c"[01p1] Sum of calibration values: %d\0A\00"
 
 define dso_local i32 @main() #0 {
+	%1 = load i8*, i8** @input
+	%2 = getelementptr inbounds i8, i8* %1, i32 0
+	store i8 99, i8* %2
 	call void() @aoc_01_p1()
 	ret i32 0
 }

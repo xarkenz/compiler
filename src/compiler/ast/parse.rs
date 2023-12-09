@@ -198,6 +198,26 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
     pub fn parse_type(&mut self, allowed_ends: &[Token]) -> crate::Result<TypeNode> {
         match self.get_token()? {
+            Token::Const => {
+                self.scan_token()?;
+                let const_type = self.parse_type(allowed_ends)?;
+
+                // Ignore duplicate 'const' qualifiers
+                if let TypeNode::Const(_) = const_type {
+                    Ok(const_type)
+                }
+                else {
+                    Ok(TypeNode::Const(Box::new(const_type)))
+                }
+            },
+            _ => {
+                self.parse_unqualified_type(allowed_ends)
+            }
+        }
+    }
+
+    pub fn parse_unqualified_type(&mut self, allowed_ends: &[Token]) -> crate::Result<TypeNode> {
+        match self.get_token()? {
             Token::Literal(Literal::Identifier(name)) => {
                 let name = name.clone();
                 self.scan_token()?;
@@ -205,18 +225,6 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
                 Ok(TypeNode::Named(name))
             },
-            Token::Const => {
-                self.scan_token()?;
-                let const_type = self.parse_type(allowed_ends)?;
-
-                // Ignore duplicate 'const' specifiers
-                if let TypeNode::Const(_) = const_type {
-                    Ok(const_type)
-                }
-                else {
-                    Ok(TypeNode::Const(Box::new(const_type)))
-                }
-            }
             Token::Star => {
                 self.scan_token()?;
                 let pointee_type = self.parse_type(allowed_ends)?;
@@ -225,7 +233,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
             },
             Token::SquareLeft => {
                 self.scan_token()?;
-                let item_type = Box::new(self.parse_type(&[Token::Semicolon, Token::SquareRight])?);
+                let item_type = Box::new(self.parse_unqualified_type(&[Token::Semicolon, Token::SquareRight])?);
                 let length;
                 if let Some(Token::Semicolon) = self.current_token() {
                     self.scan_token()?;
@@ -238,6 +246,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.expect_token(allowed_ends)?;
                 
                 Ok(TypeNode::Array(item_type, length))
+            },
+            Token::Const => {
+                Err(self.scanner.syntax_error(format!("'const' is not allowed here")))
             },
             token => {
                 Err(self.scanner.syntax_error(format!("expected a type, got '{token}'")))
