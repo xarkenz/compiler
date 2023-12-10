@@ -311,6 +311,7 @@ impl fmt::Display for Register {
 #[derive(Clone, PartialEq, Debug)]
 pub enum Constant {
     ZeroInitializer(Format),
+    NullPointer(Format),
     Boolean(bool),
     Integer(u64, Format),
     String(token::StringValue),
@@ -336,6 +337,7 @@ impl Constant {
     pub fn format(&self) -> Format {
         let format = match self {
             Self::ZeroInitializer(format) => format.clone(),
+            Self::NullPointer(format) => format.clone(),
             Self::Boolean(_) => Format::Boolean,
             Self::Integer(_, format) => format.clone(),
             Self::String(value) => Format::Array {
@@ -360,6 +362,7 @@ impl fmt::Display for Constant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ZeroInitializer(_) => write!(f, "zeroinitializer"),
+            Self::NullPointer(_) => write!(f, "null"),
             Self::Boolean(value) => write!(f, "{value}"),
             Self::Integer(value, _) => write!(f, "{value}"),
             Self::String(value) => write!(f, "{value}"),
@@ -445,27 +448,44 @@ impl fmt::Display for Label {
 }
 
 #[derive(Clone, Debug)]
-pub struct GenerationContext {
-    return_format: Option<Format>,
+pub struct FunctionContext {
+    return_format: Format,
+}
+
+impl FunctionContext {
+    pub fn new(return_format: Format) -> Self {
+        Self {
+            return_format,
+        }
+    }
+
+    pub fn return_format(&self) -> &Format {
+        &self.return_format
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ScopeContext {
+    function_context: Option<FunctionContext>,
     break_label: Option<Label>,
     continue_label: Option<Label>,
 }
 
-impl GenerationContext {
+impl ScopeContext {
     pub fn new() -> Self {
         Self {
-            return_format: None,
+            function_context: None,
             break_label: None,
             continue_label: None,
         }
     }
 
     pub fn is_global(&self) -> bool {
-        self.return_format.is_none()
+        self.function_context.is_none()
     }
 
-    pub fn return_format(&self) -> Option<&Format> {
-        self.return_format.as_ref()
+    pub fn function(&self) -> Option<&FunctionContext> {
+        self.function_context.as_ref()
     }
 
     pub fn break_label(&self) -> Option<&Label> {
@@ -476,17 +496,17 @@ impl GenerationContext {
         self.continue_label.as_ref()
     }
 
-    pub fn enter_function(mut self, return_format: Format) -> Self {
-        self.return_format = Some(return_format);
-
-        self
+    pub fn enter_function(&self, return_format: Format) -> Self {
+        let mut new_scope = self.clone();
+        new_scope.function_context = Some(FunctionContext::new(return_format));
+        new_scope
     }
 
-    pub fn enter_loop(mut self, break_label: Label, continue_label: Label) -> Self {
-        self.break_label = Some(break_label);
-        self.continue_label = Some(continue_label);
-
-        self
+    pub fn enter_loop(&self, break_label: Label, continue_label: Label) -> Self {
+        let mut new_scope = self.clone();
+        new_scope.break_label = Some(break_label);
+        new_scope.continue_label = Some(continue_label);
+        new_scope
     }
 }
 
@@ -507,7 +527,7 @@ impl Generator<std::fs::File> {
 }
 
 impl<W: Write> Generator<W> {
-    const DEFAULT_SYMBOL_TABLE_CAPACITY: usize = 256;
+    const DEFAULT_SYMBOL_TABLE_CAPACITY: usize = 64;
 
     pub fn new(emitter: llvm::Emitter<W>) -> Self {
         Self {
@@ -551,8 +571,8 @@ impl<W: Write> Generator<W> {
         }
     }
 
-    pub fn get_symbol_table(&self, context: &GenerationContext) -> &info::SymbolTable {
-        if context.is_global() {
+    pub fn get_symbol_table(&self, scope: &ScopeContext) -> &info::SymbolTable {
+        if scope.is_global() {
             &self.global_symbol_table
         }
         else {
@@ -560,8 +580,8 @@ impl<W: Write> Generator<W> {
         }
     }
 
-    pub fn define_symbol(&mut self, context: &GenerationContext, symbol: info::Symbol) {
-        if context.is_global() {
+    pub fn define_symbol(&mut self, scope: &ScopeContext, symbol: info::Symbol) {
+        if scope.is_global() {
             self.global_symbol_table.insert(symbol);
         }
         else {
@@ -684,7 +704,7 @@ impl<W: Write> Generator<W> {
         }
     }
 
-    pub fn generate_node(&mut self, node: &ast::Node, context: &GenerationContext, expected_format: Option<Format>) -> crate::Result<Value> {
+    pub fn generate_node(&mut self, node: &ast::Node, context: &ScopeContext, expected_format: Option<Format>) -> crate::Result<Value> {
         let result = match node {
             ast::Node::Literal(literal) => {
                 match literal {
@@ -692,7 +712,12 @@ impl<W: Write> Generator<W> {
                         self.get_symbol(name)?.value().clone()
                     },
                     token::Literal::Integer(value) => {
-                        Value::Constant(Constant::Integer(*value, expected_format.clone().unwrap_or_else(Format::default_integer)))
+                        if let (0, Some(Format::Pointer(pointee_format))) = (*value, &expected_format) {
+                            Value::Constant(Constant::NullPointer(Format::Pointer(pointee_format.clone())))
+                        }
+                        else {
+                            Value::Constant(Constant::Integer(*value, expected_format.clone().unwrap_or_else(Format::default_integer)))
+                        }
                     },
                     token::Literal::Boolean(value) => {
                         Value::Constant(Constant::Boolean(*value))
@@ -1301,7 +1326,7 @@ impl<W: Write> Generator<W> {
                 Value::Never
             },
             ast::Node::Return { value } => {
-                let return_format = context.return_format()
+                let return_format = context.function().map(|function| function.return_format())
                     .ok_or_else(|| crate::RawError::new(String::from("'return' outside of function")).into_boxed())?;
 
                 if let Some(value) = value {
@@ -1534,7 +1559,7 @@ impl<W: Write> Generator<W> {
         }
     }
 
-    fn generate_binary_arithmetic_operands(&mut self, lhs: &ast::Node, rhs: &ast::Node, context: &GenerationContext, expected_format: Option<Format>) -> crate::Result<(Register, Value, Value)> {
+    fn generate_binary_arithmetic_operands(&mut self, lhs: &ast::Node, rhs: &ast::Node, context: &ScopeContext, expected_format: Option<Format>) -> crate::Result<(Register, Value, Value)> {
         let lhs = self.generate_node(lhs, context, expected_format.clone())?;
         let lhs = self.coerce_to_rvalue(lhs)?;
 
@@ -1546,7 +1571,7 @@ impl<W: Write> Generator<W> {
         Ok((result, lhs, rhs))
     }
 
-    fn generate_comparison_operands(&mut self, lhs: &ast::Node, rhs: &ast::Node, context: &GenerationContext) -> crate::Result<(Register, Value, Value)> {
+    fn generate_comparison_operands(&mut self, lhs: &ast::Node, rhs: &ast::Node, context: &ScopeContext) -> crate::Result<(Register, Value, Value)> {
         let lhs = self.generate_node(lhs, context, None)?;
         let lhs = self.coerce_to_rvalue(lhs)?;
 
@@ -1558,7 +1583,7 @@ impl<W: Write> Generator<W> {
         Ok((result, lhs, rhs))
     }
 
-    fn generate_assignment(&mut self, lhs: &ast::Node, rhs: &ast::Node, context: &GenerationContext, expected_format: Option<Format>) -> crate::Result<Value> {
+    fn generate_assignment(&mut self, lhs: &ast::Node, rhs: &ast::Node, context: &ScopeContext, expected_format: Option<Format>) -> crate::Result<Value> {
         let lhs = self.generate_node(lhs, context, expected_format.clone())?;
 
         if let Format::Constant(_) = lhs.format() {
@@ -1583,7 +1608,7 @@ impl<W: Write> Generator<W> {
     pub fn generate<T: BufRead>(mut self, parser: &mut ast::parse::Parser<T>) -> crate::Result<()> {
         self.emitter.emit_preamble(parser.filename())?;
         
-        let global_context = GenerationContext::new();
+        let global_context = ScopeContext::new();
 
         while let Some(statement) = parser.parse_statement(false, true)? {
             self.generate_node(statement.as_ref(), &global_context, None)?;
