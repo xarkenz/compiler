@@ -121,6 +121,9 @@ impl<T: BufRead> Scanner<T> {
         else if &content == "false" {
             Ok(Some(Token::Literal(Literal::Boolean(false))))
         }
+        else if &content == "null" {
+            Ok(Some(Token::Literal(Literal::NullPointer)))
+        }
         else {
             Ok(Some(Token::Literal(Literal::Identifier(content))))
         }

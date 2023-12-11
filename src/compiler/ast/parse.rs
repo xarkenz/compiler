@@ -198,17 +198,10 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
     pub fn parse_type(&mut self, allowed_ends: &[Token]) -> crate::Result<TypeNode> {
         match self.get_token()? {
-            Token::Const => {
+            Token::Mut => {
                 self.scan_token()?;
-                let const_type = self.parse_type(allowed_ends)?;
-
-                // Ignore duplicate 'const' qualifiers
-                if let TypeNode::Const(_) = const_type {
-                    Ok(const_type)
-                }
-                else {
-                    Ok(TypeNode::Const(Box::new(const_type)))
-                }
+                let mutable_type = self.parse_unqualified_type(allowed_ends)?;
+                Ok(TypeNode::Mutable(Box::new(mutable_type)))
             },
             _ => {
                 self.parse_unqualified_type(allowed_ends)
@@ -247,8 +240,8 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 
                 Ok(TypeNode::Array(item_type, length))
             },
-            Token::Const => {
-                Err(self.scanner.syntax_error(format!("'const' is not allowed here")))
+            Token::Mut => {
+                Err(self.scanner.syntax_error(format!("'mut' is not allowed here")))
             },
             token => {
                 Err(self.scanner.syntax_error(format!("expected a type, got '{token}'")))
@@ -260,29 +253,48 @@ impl<'a, T: BufRead> Parser<'a, T> {
         match self.current_token() {
             Some(Token::Semicolon) if allow_empty => {
                 self.scan_token()?;
-                // Returning None implies that the end of the file is reached, so recursively try to parse a statement instead
+                // Returning None would imply that the end of the file was reached, so recursively try to parse a statement instead
                 self.parse_statement(is_global, allow_empty)
             },
             Some(Token::Let) => {
                 self.scan_token()?;
-                let name = self.expect_identifier()?;
-                self.scan_token()?;
-                self.expect_token(&[Token::Colon])?;
-                self.scan_token()?;
-                let value_type = self.parse_type(&[Token::Equal, Token::Semicolon])?;
-                let value = if let Some(Token::Equal) = self.current_token() {
+                if let Some(Token::Const) = self.current_token() {
                     self.scan_token()?;
-                    Some(self.parse_expression(None, &[Token::Semicolon])?)
-                } else {
-                    None
-                };
-                self.scan_token()?;
+                    let name = self.expect_identifier()?;
+                    self.scan_token()?;
+                    self.expect_token(&[Token::Colon])?;
+                    self.scan_token()?;
+                    let value_type = self.parse_type(&[Token::Equal])?;
+                    self.scan_token()?;
+                    let value = self.parse_expression(None, &[Token::Semicolon])?;
+                    self.scan_token()?;
 
-                Ok(Some(Box::new(Node::Let {
-                    name,
-                    value_type,
-                    value,
-                })))
+                    Ok(Some(Box::new(Node::Constant {
+                        name,
+                        value_type,
+                        value,
+                    })))
+                }
+                else {
+                    let name = self.expect_identifier()?;
+                    self.scan_token()?;
+                    self.expect_token(&[Token::Colon])?;
+                    self.scan_token()?;
+                    let value_type = self.parse_type(&[Token::Equal, Token::Semicolon])?;
+                    let value = if let Some(Token::Equal) = self.current_token() {
+                        self.scan_token()?;
+                        Some(self.parse_expression(None, &[Token::Semicolon])?)
+                    } else {
+                        None
+                    };
+                    self.scan_token()?;
+
+                    Ok(Some(Box::new(Node::Let {
+                        name,
+                        value_type,
+                        value,
+                    })))
+                }
             },
             Some(Token::Function) => {
                 self.scan_token()?;

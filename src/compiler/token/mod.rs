@@ -43,6 +43,7 @@ pub enum Literal {
     Identifier(String),
     Integer(u64),
     Boolean(bool),
+    NullPointer,
     String(StringValue),
 }
 
@@ -52,6 +53,7 @@ impl fmt::Display for Literal {
             Self::Identifier(name) => write!(f, "{name}"),
             Self::Integer(value) => write!(f, "{value}"),
             Self::Boolean(value) => write!(f, "{value}"),
+            Self::NullPointer => write!(f, "null"),
             Self::String(value) => write!(f, "{value}"),
         }
     }
@@ -121,6 +123,7 @@ pub enum Token {
     Let,
     Function,
     Const,
+    Mut,
     Literal(Literal),
 }
 
@@ -189,6 +192,7 @@ impl fmt::Display for Token {
             Self::Let => write!(f, "let"),
             Self::Function => write!(f, "function"),
             Self::Const => write!(f, "const"),
+            Self::Mut => write!(f, "mut"),
             Self::Literal(literal) => write!(f, "{literal}"),
         }
     }
@@ -260,6 +264,7 @@ pub const KEYWORD_TOKENS: &[(&str, Token)] = &[
     ("let", Token::Let),
     ("function", Token::Function),
     ("const", Token::Const),
+    ("mut", Token::Mut),
 ];
 
 pub fn get_symbolic_token_partial_matches(start_content: &str) -> Vec<&'static Token> {

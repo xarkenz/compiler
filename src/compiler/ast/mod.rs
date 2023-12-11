@@ -250,7 +250,7 @@ impl BinaryOperation {
             Self::DivideAssign => format!("{lhs} /= {rhs}"),
             Self::RemainderAssign => format!("{lhs} %= {rhs}"),
             Self::AddAssign => format!("{lhs} += {rhs}"),
-            Self::SubtractAssign => format!("{lhs} -={rhs}"),
+            Self::SubtractAssign => format!("{lhs} -= {rhs}"),
             Self::ShiftLeftAssign => format!("{lhs} <<= {rhs}"),
             Self::ShiftRightAssign => format!("{lhs} >>= {rhs}"),
             Self::BitwiseAndAssign => format!("{lhs} &= {rhs}"),
@@ -285,7 +285,7 @@ impl Operation {
 #[derive(Clone, Debug)]
 pub enum TypeNode {
     Named(String),
-    Const(Box<TypeNode>),
+    Mutable(Box<TypeNode>),
     Pointer(Box<TypeNode>),
     Array(Box<TypeNode>, Option<Box<Node>>),
 }
@@ -296,8 +296,8 @@ impl std::fmt::Display for TypeNode {
             Self::Named(name) => {
                 write!(f, "{name}")
             },
-            Self::Const(const_type) => {
-                write!(f, "const {const_type}")
+            Self::Mutable(mutable_type) => {
+                write!(f, "mut {mutable_type}")
             },
             Self::Pointer(pointee_type) => {
                 write!(f, "*{pointee_type}")
@@ -351,6 +351,11 @@ pub enum Node {
         value_type: TypeNode,
         value: Option<Box<Node>>,
     },
+    Constant {
+        name: String,
+        value_type: TypeNode,
+        value: Box<Node>,
+    },
     Function {
         name: String,
         parameters: Vec<(String, TypeNode)>,
@@ -392,7 +397,8 @@ impl fmt::Display for Node {
             Self::Conditional { condition, consequent, alternative } => {
                 if let Some(alternative) = alternative {
                     write!(f, " if ({condition}){consequent} else{alternative}")
-                } else {
+                }
+                else {
                     write!(f, " if ({condition}){consequent}")
                 }
             },
@@ -408,16 +414,21 @@ impl fmt::Display for Node {
             Self::Return { value } => {
                 if let Some(value) = value {
                     write!(f, " return {value};")
-                } else {
+                }
+                else {
                     write!(f, " return;")
                 }
             },
             Self::Let { name, value_type, value } => {
                 if let Some(value) = value {
                     write!(f, " let {name}: {value_type} = {value};")
-                } else {
+                }
+                else {
                     write!(f, " let {name}: {value_type};")
                 }
+            },
+            Self::Constant { name, value_type, value } => {
+                write!(f, " let const {name}: {value_type} = {value};")
             },
             Self::Function { name, parameters, is_varargs, return_type, body } => {
                 write!(f, " function {name}(")?;

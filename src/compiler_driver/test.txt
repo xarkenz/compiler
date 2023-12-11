@@ -1,19 +1,19 @@
-// *void works as a substitute for FILE* at the moment
-function fopen(filename: *const [u8], mode: const *const [u8]) -> *void;
-function fclose(file: *void) -> i32;
-function feof(file: *void) -> i32;
-function fgets(buffer: *[u8], limit: i32, file: *void) -> *[u8];
-function printf(format: const *const [u8], ..) -> u32;
+// '*mut void' works as a substitute for 'FILE*' at the moment
+function fopen(filename: *[u8], mode: *[u8]) -> *mut void;
+function fclose(file: *mut void) -> i32;
+function feof(file: *mut void) -> i32;
+function fgets(buffer: *mut [u8], limit: i32, file: *mut void) -> *mut [u8];
+function printf(format: *[u8], ..) -> u32;
 
-function malloc(size_bytes: u64) -> *void;
-function free(alloc: *void);
+function malloc(size_bytes: u64) -> *mut void;
+function free(alloc: *mut void);
 
 function strlen(str: *[u8]) -> u64;
 function isdigit(char: i32) -> i32;
 
 function fibonacci(limit: i32) -> i32 {
-    let a: i32 = 0;
-    let b: i32 = 1;
+    let a: mut i32 = 0;
+    let b: mut i32 = 1;
 
     while (b < limit) {
         let temp: i32 = a + b;
@@ -24,7 +24,7 @@ function fibonacci(limit: i32) -> i32 {
     return a;
 }
 
-function gcd(a: u32, b: u32) -> u32 {
+function gcd(a: mut u32, b: mut u32) -> u32 {
     while (b >= 1) {
         let temp: u32 = a % b;
         a = b;
@@ -34,21 +34,21 @@ function gcd(a: u32, b: u32) -> u32 {
     return a;
 }
 
-let sample_input: const *const [u8] = "1abc2\npqr3stu8vwx\na1b2c3d4e5f\ntreb7uchet\n";
+let const sample_input: *[u8] = "1abc2\npqr3stu8vwx\na1b2c3d4e5f\ntreb7uchet\n";
 
 function aoc_01_p1() {
-    let input: *void = fopen("day01.txt", "r");
-    if (input == 0) {
+    let input: *mut void = fopen("day01.txt", "r");
+    if (input == null) {
         printf("unable to open input file\n");
         return;
     }
 
-    let calibration_sum: u32 = 0;
+    let calibration_sum: mut u32 = 0;
 
-    let line: [u8; 100];
-    while (fgets(&line, 100, input) != 0) {
+    let line: mut [u8; 100];
+    while (fgets(&line, 100, input) != null) {
         // Start at the beginning of the line
-        let index: u64 = 0;
+        let index: mut u64 = 0;
 
         // Find the first digit
         while (isdigit(line[index] as i32) == 0) {
@@ -63,7 +63,7 @@ function aoc_01_p1() {
         while (isdigit(line[index] as i32) == 0) {
             index = index - 1;
         }
-        calibration_value = calibration_value * 10 + (line[index] - '0') as u32;
+        let calibration_value: u32 = calibration_value * 10 + (line[index] - '0') as u32;
 
         // Add the found value to the sum
         calibration_sum = calibration_sum + calibration_value;
