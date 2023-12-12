@@ -155,13 +155,42 @@ impl SymbolTable {
         let version = self.next_symbol_version(&identifier);
         let qualified_name = if version == 0 {
             identifier.clone()
-        } else {
+        }
+        else {
             format!("{identifier}-{version}")
         };
         let pointer = Register {
             name: qualified_name,
             format: loaded_format.clone().into_pointer(),
             is_global: self.is_global(),
+        };
+        let value = Value::Indirect {
+            pointer: Box::new(Value::Register(pointer.clone())),
+            loaded_format,
+        };
+        let symbol = Symbol {
+            identifier,
+            value,
+            scope,
+            version,
+        };
+
+        (symbol, pointer)
+    }
+
+    pub fn create_indirect_local_constant_symbol(&self, identifier: String, loaded_format: Format, function_name: &str) -> (Symbol, Register) {
+        let scope = self.current_scope().clone();
+        let version = self.next_symbol_version(&identifier);
+        let qualified_name = if version == 0 {
+            format!("{function_name}.{identifier}")
+        }
+        else {
+            format!("{function_name}.{identifier}-{version}")
+        };
+        let pointer = Register {
+            name: qualified_name,
+            format: loaded_format.clone().into_pointer(),
+            is_global: true,
         };
         let value = Value::Indirect {
             pointer: Box::new(Value::Register(pointer.clone())),

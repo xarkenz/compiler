@@ -12,7 +12,7 @@ pub struct Emitter<W: Write> {
     used_attribute_group_1: bool, // TODO: it's not that simple...
     defined_functions: Vec<Register>,
     queued_function_declarations: Vec<(Register, String)>,
-    queued_anonymous_constants: Vec<String>,
+    queued_global_declarations: Vec<String>,
 }
 
 impl Emitter<std::fs::File> {
@@ -33,7 +33,7 @@ impl<W: Write> Emitter<W> {
             used_attribute_group_1: false,
             defined_functions: Vec::new(),
             queued_function_declarations: Vec::new(),
-            queued_anonymous_constants: Vec::new(),
+            queued_global_declarations: Vec::new(),
         }
     }
 
@@ -183,57 +183,61 @@ impl<W: Write> Emitter<W> {
             .map_err(|cause| self.error(cause))?;
         
         // Write all constant declarations queued for writing
-        for constant in &self.queued_anonymous_constants {
+        for constant in &self.queued_global_declarations {
             writeln!(self.writer, "{constant}")
                 .map_err(|cause| self.error(cause))?;
         }
-        if !self.queued_anonymous_constants.is_empty() {
+        if !self.queued_global_declarations.is_empty() {
             writeln!(self.writer)
                 .map_err(|cause| self.error(cause))?;
         }
         // Dequeue all declarations which were just written
-        self.queued_anonymous_constants.clear();
+        self.queued_global_declarations.clear();
 
         self.is_global = true;
 
         Ok(())
     }
 
-    pub fn emit_global_allocation(&mut self, pointer: &Register, init_value: &Constant, constant: bool) -> crate::Result<()> {
-        if constant {
-            writeln!(
-                self.writer,
-                "{pointer} = dso_local constant {format} {init_value}\n",
-                format = init_value.format(),
+    pub fn emit_global_allocation(&mut self, pointer: &Register, value: &Constant, constant: bool) -> crate::Result<()> {
+        let declaration = if constant {
+            format!(
+                "{pointer} = dso_local constant {format} {value}\n",
+                format = value.format(),
             )
         }
         else {
-            writeln!(
-                self.writer,
-                "{pointer} = dso_local global {format} {init_value}\n",
-                format = init_value.format(),
-            )
-        }
-        .map_err(|cause| self.error(cause))
-    }
-
-    pub fn emit_anonymous_constant(&mut self, pointer: &Register, value: &Constant) -> crate::Result<()> {
-        if self.is_global {
-            // Write the constant declaration immediately
-            writeln!(
-                self.writer,
-                "{pointer} = private unnamed_addr constant {format} {value}",
+            format!(
+                "{pointer} = dso_local global {format} {value}\n",
                 format = value.format(),
             )
-            .map_err(|cause| self.error(cause))
+        };
+        if self.is_global {
+            // Write the constant declaration immediately
+            writeln!(self.writer, "{declaration}")
+                .map_err(|cause| self.error(cause))
         }
         else {
             // Enqueue the constant declaration so it will be written just after the function end
-            let constant = format!(
-                "{pointer} = private unnamed_addr constant {format} {value}",
-                format = value.format(),
-            );
-            self.queued_anonymous_constants.push(constant);
+            self.queued_global_declarations.push(declaration);
+
+            Ok(())
+        }
+    }
+
+    pub fn emit_anonymous_constant(&mut self, pointer: &Register, value: &Constant) -> crate::Result<()> {
+        let declaration = format!(
+            "{pointer} = private unnamed_addr constant {format} {value}",
+            format = value.format(),
+        );
+        if self.is_global {
+            // Write the constant declaration immediately
+            writeln!(self.writer, "{declaration}")
+                .map_err(|cause| self.error(cause))
+        }
+        else {
+            // Enqueue the constant declaration so it will be written just after the function end
+            self.queued_global_declarations.push(declaration);
 
             Ok(())
         }

@@ -32,13 +32,6 @@ pub enum Format {
 }
 
 impl Format {
-    pub fn default_integer() -> Self {
-        Self::Integer {
-            size: 4,
-            signed: true,
-        }
-    }
-
     pub fn opaque_pointer() -> Self {
         Self::Pointer(Box::new(Format::Void))
     }
@@ -230,6 +223,72 @@ impl fmt::Display for Format {
 }
 
 #[derive(Clone, PartialEq, Debug)]
+pub enum IntegerValue {
+    Signed8(i8),
+    Unsigned8(u8),
+    Signed16(i16),
+    Unsigned16(u16),
+    Signed32(i32),
+    Unsigned32(u32),
+    Signed64(i64),
+    Unsigned64(u64),
+}
+
+impl IntegerValue {
+    pub fn new(raw: u64, format: &Format) -> Option<Self> {
+        match format.as_unqualified() {
+            Format::Integer { size: 1, signed: true } => Some(Self::Signed8(raw as i8)),
+            Format::Integer { size: 1, signed: false } => Some(Self::Unsigned8(raw as u8)),
+            Format::Integer { size: 2, signed: true } => Some(Self::Signed16(raw as i16)),
+            Format::Integer { size: 2, signed: false } => Some(Self::Unsigned16(raw as u16)),
+            Format::Integer { size: 4, signed: true } => Some(Self::Signed32(raw as i32)),
+            Format::Integer { size: 4, signed: false } => Some(Self::Unsigned32(raw as u32)),
+            Format::Integer { size: 8, signed: true } => Some(Self::Signed64(raw as i64)),
+            Format::Integer { size: 8, signed: false } => Some(Self::Unsigned64(raw as u64)),
+            _ => None
+        }
+    }
+
+    pub fn size(&self) -> usize {
+        match self {
+            Self::Signed8(_) | Self::Unsigned8(_) => 1,
+            Self::Signed16(_) | Self::Unsigned16(_) => 2,
+            Self::Signed32(_) | Self::Unsigned32(_) => 4,
+            Self::Signed64(_) | Self::Unsigned64(_) => 8,
+        }
+    }
+
+    pub fn is_signed(&self) -> bool {
+        match self {
+            Self::Signed8(_) | Self::Signed16(_) | Self::Signed32(_) | Self::Signed64(_) => true,
+            Self::Unsigned8(_) | Self::Unsigned16(_) | Self::Unsigned32(_) | Self::Unsigned64(_) => false,
+        }
+    }
+
+    pub fn format(&self) -> Format {
+        Format::Integer {
+            size: self.size(),
+            signed: self.is_signed(),
+        }
+    }
+}
+
+impl fmt::Display for IntegerValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Signed8(value) => write!(f, "{value}"),
+            Self::Unsigned8(value) => write!(f, "{value}"),
+            Self::Signed16(value) => write!(f, "{value}"),
+            Self::Unsigned16(value) => write!(f, "{value}"),
+            Self::Signed32(value) => write!(f, "{value}"),
+            Self::Unsigned32(value) => write!(f, "{value}"),
+            Self::Signed64(value) => write!(f, "{value}"),
+            Self::Unsigned64(value) => write!(f, "{value}"),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct Register {
     name: String,
     format: Format,
@@ -270,7 +329,7 @@ pub enum Constant {
     ZeroInitializer(Format),
     NullPointer(Format),
     Boolean(bool),
-    Integer(u64, Format),
+    Integer(IntegerValue),
     String(token::StringValue),
     Array(Vec<Constant>, Format),
     Register(Register),
@@ -296,7 +355,7 @@ impl Constant {
             Self::ZeroInitializer(format) => format.clone(),
             Self::NullPointer(format) => format.clone(),
             Self::Boolean(_) => Format::Boolean,
-            Self::Integer(_, format) => format.clone(),
+            Self::Integer(value) => value.format(),
             Self::String(value) => Format::Array {
                 item_format: Box::new(Format::Integer { size: 1, signed: false }),
                 length: Some(value.len()),
@@ -319,7 +378,7 @@ impl fmt::Display for Constant {
             Self::ZeroInitializer(_) => write!(f, "zeroinitializer"),
             Self::NullPointer(_) => write!(f, "null"),
             Self::Boolean(value) => write!(f, "{value}"),
-            Self::Integer(value, _) => write!(f, "{value}"),
+            Self::Integer(value) => write!(f, "{value}"),
             Self::String(value) => write!(f, "{value}"),
             Self::Array(value, _) => {
                 write!(f, "[")?;
@@ -404,14 +463,20 @@ impl fmt::Display for Label {
 
 #[derive(Clone, Debug)]
 pub struct FunctionContext {
+    name: String,
     return_format: Format,
 }
 
 impl FunctionContext {
-    pub fn new(return_format: Format) -> Self {
+    pub fn new(name: String, return_format: Format) -> Self {
         Self {
+            name,
             return_format,
         }
+    }
+
+    pub fn name(&self) -> &str {
+        self.name.as_str()
     }
 
     pub fn return_format(&self) -> &Format {
@@ -451,9 +516,9 @@ impl ScopeContext {
         self.continue_label.as_ref()
     }
 
-    pub fn enter_function(&self, return_format: Format) -> Self {
+    pub fn enter_function(&self, name: String, return_format: Format) -> Self {
         let mut new_scope = self.clone();
-        new_scope.function_context = Some(FunctionContext::new(return_format));
+        new_scope.function_context = Some(FunctionContext::new(name, return_format));
         new_scope
     }
 
@@ -607,24 +672,24 @@ impl<W: Write> Generator<W> {
         Ok(format)
     }
 
-    pub fn enforce_format(&mut self, value: Value, format: &Format) -> crate::Result<Value> {
+    pub fn enforce_format(&mut self, value: Value, target_format: &Format) -> crate::Result<Value> {
         let got_format = value.format();
 
-        if &got_format == format {
+        if &got_format == target_format {
             Ok(value)
         }
-        else if got_format.can_coerce_to(format, true) {
-            if !got_format.requires_bitcast_to(format) {
+        else if got_format.can_coerce_to(target_format, true) {
+            if !got_format.requires_bitcast_to(target_format) {
                 Ok(value)
             }
             else if let Value::Constant(constant) = value {
                 Ok(Value::Constant(Constant::BitwiseCast {
                     value: Box::new(constant),
-                    to_format: format.clone(),
+                    to_format: target_format.clone(),
                 }))
             }
             else {
-                let result = self.new_anonymous_register(format.clone());
+                let result = self.new_anonymous_register(target_format.clone());
                 self.emitter.emit_bitwise_cast(&result, &value)?;
 
                 Ok(Value::Register(result))
@@ -632,8 +697,34 @@ impl<W: Write> Generator<W> {
         }
         else {
             Err(crate::RawError::new(format!(
-                "expected a value of type '{format}', got '{got_format}' instead",
-                format = format.rich_name(),
+                "expected a value of type '{target_format}', got '{got_format}' instead",
+                target_format = target_format.rich_name(),
+                got_format = got_format.rich_name(),
+            )).into_boxed())
+        }
+    }
+
+    pub fn enforce_constant_format(&self, constant: Constant, target_format: &Format) -> crate::Result<Constant> {
+        let got_format = constant.format();
+
+        if &got_format == target_format {
+            Ok(constant)
+        }
+        else if got_format.can_coerce_to(target_format, true) {
+            if got_format.requires_bitcast_to(target_format) {
+                Ok(Constant::BitwiseCast {
+                    value: Box::new(constant),
+                    to_format: target_format.clone(),
+                })
+            }
+            else {
+                Ok(constant)
+            }
+        }
+        else {
+            Err(crate::RawError::new(format!(
+                "expected a constant of type '{target_format}', got '{got_format}' instead",
+                target_format = target_format.rich_name(),
                 got_format = got_format.rich_name(),
             )).into_boxed())
         }
@@ -672,7 +763,8 @@ impl<W: Write> Generator<W> {
                 },
                 (Format::Integer { .. }, Format::Boolean) => {
                     let result = self.new_anonymous_register(Format::Boolean);
-                    self.emitter.emit_cmp_not_equal(&result, &value, &Value::Constant(Constant::Integer(0, original_format.clone())))?;
+                    let zero = IntegerValue::new(0, &original_format).unwrap();
+                    self.emitter.emit_cmp_not_equal(&result, &value, &Value::Constant(Constant::Integer(zero)))?;
                     
                     Ok(Value::Register(result))
                 },
@@ -712,173 +804,226 @@ impl<W: Write> Generator<W> {
     }
 
     pub fn generate_node(&mut self, node: &ast::Node, context: &ScopeContext, expected_format: Option<Format>) -> crate::Result<Value> {
+        if let Ok(constant) = self.generate_constant_node(node, context, expected_format.clone()) {
+            return Ok(Value::Constant(constant));
+        }
+
         let result = match node {
-            ast::Node::Literal(literal) => {
-                match literal {
-                    token::Literal::Identifier(name) => {
-                        self.get_symbol(name)?.value().clone()
-                    },
-                    token::Literal::Integer(value) => {
-                        Value::Constant(Constant::Integer(*value, expected_format.clone().unwrap_or_else(Format::default_integer)))
-                    },
-                    token::Literal::Boolean(value) => {
-                        Value::Constant(Constant::Boolean(*value))
-                    },
-                    token::Literal::NullPointer => {
-                        Value::Constant(Constant::NullPointer(expected_format.clone().unwrap_or_else(Format::opaque_pointer)))
-                    },
-                    token::Literal::String(value) => {
-                        let constant = Constant::String(value.clone());
-                        let constant_format = constant.format();
-                        let pointer = self.new_anonymous_constant(constant_format.clone());
+            ast::Node::Literal(literal) => match literal {
+                token::Literal::Identifier(name) => {
+                    self.get_symbol(name)?.value().clone()
+                },
+                token::Literal::Integer(value) => {
+                    let format = expected_format.clone().unwrap_or(Format::Integer { size: 4, signed: true });
+                    let value = IntegerValue::new(*value, &format)
+                        .ok_or_else(|| crate::RawError::new(format!("'{value}' cannot be used as a value of type '{}'", format.rich_name())).into_boxed())?;
+                    Value::Constant(Constant::Integer(value))
+                },
+                token::Literal::Boolean(value) => {
+                    Value::Constant(Constant::Boolean(*value))
+                },
+                token::Literal::NullPointer => {
+                    Value::Constant(Constant::NullPointer(expected_format.clone().unwrap_or_else(Format::opaque_pointer)))
+                },
+                token::Literal::String(value) => {
+                    let constant = Constant::String(value.clone());
+                    let pointer = self.new_anonymous_constant(constant.format());
 
-                        self.emitter.emit_anonymous_constant(&pointer, &constant)?;
+                    self.emitter.emit_anonymous_constant(&pointer, &constant)?;
 
-                        Value::Constant(Constant::Register(pointer))
+                    Value::Constant(Constant::Register(pointer))
+                },
+            },
+            ast::Node::Unary { operation, operand } => match operation {
+                ast::UnaryOperation::PostIncrement => todo!(),
+                ast::UnaryOperation::PostDecrement => todo!(),
+                ast::UnaryOperation::PreIncrement => todo!(),
+                ast::UnaryOperation::PreDecrement => todo!(),
+                ast::UnaryOperation::Positive => {
+                    let operand = self.generate_node(operand.as_ref(), context, expected_format.clone())?;
+
+                    self.coerce_to_rvalue(operand)?
+                },
+                ast::UnaryOperation::Negative => {
+                    let operand = self.generate_node(operand.as_ref(), context, expected_format.clone())?;
+                    let operand = self.coerce_to_rvalue(operand)?;
+                    let result = self.new_anonymous_register(expected_format.clone().unwrap_or(operand.format()));
+
+                    self.emitter.emit_negation(&result, &operand)?;
+
+                    Value::Register(result)
+                },
+                ast::UnaryOperation::BitwiseNot => {
+                    let operand = self.generate_node(operand.as_ref(), context, expected_format.clone())?;
+                    let operand = self.coerce_to_rvalue(operand)?;
+                    let result = self.new_anonymous_register(expected_format.clone().unwrap_or(operand.format()));
+
+                    self.emitter.emit_inversion(&result, &operand)?;
+
+                    Value::Register(result)
+                },
+                ast::UnaryOperation::LogicalNot => {
+                    let operand = self.generate_node(operand.as_ref(), context, Some(Format::Boolean))?;
+                    let operand = self.coerce_to_rvalue(operand)?;
+                    let result = self.new_anonymous_register(Format::Boolean);
+
+                    self.emitter.emit_inversion(&result, &operand)?;
+
+                    Value::Register(result)
+                },
+                ast::UnaryOperation::Reference => {
+                    let operand = self.generate_node(operand.as_ref(), context, None)?;
+
+                    if let Value::Indirect { pointer, .. } = operand {
+                        *pointer
                     }
-                }
+                    else {
+                        return Err(crate::RawError::new(String::from("operand of '&' must be an lvalue")).into_boxed());
+                    }
+                },
+                ast::UnaryOperation::Dereference => {
+                    let operand = self.generate_node(operand.as_ref(), context, expected_format.clone().map(Format::into_pointer))?;
+                    let operand = self.coerce_to_rvalue(operand)?;
+                    
+                    if let Format::Pointer(pointee_format) = operand.format().as_unqualified() {
+                        if let Value::Constant(constant) = operand {
+                            Value::Constant(Constant::Indirect {
+                                pointer: Box::new(constant),
+                                loaded_format: pointee_format.as_ref().clone(),
+                            })
+                        }
+                        else {
+                            Value::Indirect {
+                                pointer: Box::new(operand),
+                                loaded_format: pointee_format.as_ref().clone(),
+                            }
+                        }
+                    }
+                    else {
+                        return Err(crate::RawError::new(format!("cannot dereference value of type '{}'", operand.format().rich_name())).into_boxed());
+                    }
+                },
+                ast::UnaryOperation::GetSize => {
+                    if let ast::Node::Type(type_node) = operand.as_ref() {
+                        let format = self.get_format_from_node(type_node, true, false)?;
+
+                        if let Some(size) = format.size() {
+                            Value::Constant(Constant::Integer(IntegerValue::Unsigned64(size as u64)))
+                        }
+                        else {
+                            return Err(crate::RawError::new(format!("type '{type_node}' does not have a size")).into_boxed());
+                        }
+                    }
+                    else {
+                        return Err(crate::RawError::new(String::from("invalid operand for 'sizeof'")).into_boxed());
+                    }
+                },
+                ast::UnaryOperation::GetAlign => todo!(),
             },
-            ast::Node::Unary { operation, operand } => {
-                match operation {
-                    ast::UnaryOperation::PostIncrement => todo!(),
-                    ast::UnaryOperation::PostDecrement => todo!(),
-                    ast::UnaryOperation::PreIncrement => todo!(),
-                    ast::UnaryOperation::PreDecrement => todo!(),
-                    ast::UnaryOperation::Positive => {
-                        let operand = self.generate_node(operand.as_ref(), context, expected_format.clone())?;
+            ast::Node::Binary { operation, lhs, rhs } => match operation {
+                ast::BinaryOperation::Subscript => {
+                    let lhs = self.generate_node(lhs.as_ref(), context, None)?;
+                    let rhs = self.generate_node(rhs.as_ref(), context, None)?;
+                    let rhs = self.coerce_to_rvalue(rhs)?;
+                    
+                    if !(matches!(rhs.format().as_unqualified(), Format::Integer { .. })) {
+                        return Err(crate::RawError::new(String::from("expected an integer index")).into_boxed());
+                    }
 
-                        self.coerce_to_rvalue(operand)?
-                    },
-                    ast::UnaryOperation::Negative => {
-                        let operand = self.generate_node(operand.as_ref(), context, expected_format.clone())?;
-                        let operand = self.coerce_to_rvalue(operand)?;
-                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(operand.format()));
+                    // Brain hurty so I made big list:
 
-                        self.emitter.emit_negation(&result, &operand)?;
+                    // mut [T; N] <=> [N x T] : not allowed (for now) : error
+                    // mut &[T; N] <=> [N x T]* : getelementptr instruction (0, index) : indirect value
+                    // mut *[T; N] <=> [N x T]* : getelementptr instruction (0, index) : indirect value
+                    // mut &*[T; N] <=> [N x T]** : load -> getelementptr instruction (0, index) : indirect value
+                    // mut [T] <=> T : not possible : error
+                    // mut &[T] <=> T* : getelementptr instruction (index) : indirect value
+                    // mut *[T] <=> T* : getelementptr instruction (index) : indirect value
+                    // mut &*[T] <=> T** : load -> getelementptr instruction (index) : indirect value
+                    // const [T; N] <=> [N x T] : not allowed (for now) : error
+                    // const &[T; N] <=> [N x T]* : getelementptr expression (0, index) : indirect constant
+                    // const *[T; N] <=> [N x T]* : getelementptr expression (0, index) : indirect constant
+                    // const &*[T; N] <=> [N x T]** : (only in non-const context) load -> getelementptr instruction (0, index) : indirect value
+                    // const [T] <=> T : not possible : error
+                    // const &[T] <=> T* : getelementptr expression (index) : indirect constant
+                    // const *[T] <=> T* : getelementptr expression (index) : indirect constant
+                    // const &*[T] <=> T** : (only in non-const context) load -> getelementptr instruction (index) : indirect value
 
-                        Value::Register(result)
-                    },
-                    ast::UnaryOperation::BitwiseNot => {
-                        let operand = self.generate_node(operand.as_ref(), context, expected_format.clone())?;
-                        let operand = self.coerce_to_rvalue(operand)?;
-                        let result = self.new_anonymous_register(expected_format.clone().unwrap_or(operand.format()));
+                    // Inputs: lvalue/rvalue, is behind pointer, sized/unsized, lhs constant, rhs constant
+                    // Outputs: whether to load, expression vs. instruction, (0, index) vs. (index)
 
-                        self.emitter.emit_inversion(&result, &operand)?;
+                    // TL;DR: I think I've way overcomplicated this but I don't know what else to do
 
-                        Value::Register(result)
-                    },
-                    ast::UnaryOperation::LogicalNot => {
-                        let operand = self.generate_node(operand.as_ref(), context, Some(Format::Boolean))?;
-                        let operand = self.coerce_to_rvalue(operand)?;
-                        let result = self.new_anonymous_register(Format::Boolean);
+                    let lhs_format = lhs.format();
+                    let cannot_index_error = || crate::RawError::new(format!("cannot index value of type '{}'", lhs_format.rich_name())).into_boxed();
 
-                        self.emitter.emit_inversion(&result, &operand)?;
+                    // This is incredibly nasty and repetitive... could signify a need for a rethink of Value/Constant and/or Format
+                    match (lhs, rhs) {
+                        (Value::Constant(lhs), Value::Constant(rhs)) => match lhs {
+                            Constant::Indirect { pointer, loaded_format } => match loaded_format.as_unqualified() {
+                                Format::Array { item_format, length } => {
+                                    // const &[T; N], const &[T]
+                                    let indices = match length {
+                                        Some(_) => vec![Constant::Integer(IntegerValue::Signed32(0)), rhs],
+                                        None => vec![rhs],
+                                    };
 
-                        Value::Register(result)
-                    },
-                    ast::UnaryOperation::Reference => {
-                        let operand = self.generate_node(operand.as_ref(), context, None)?;
+                                    let element_pointer = Constant::GetElementPointer {
+                                        element_format: item_format.as_ref().clone().into_pointer(),
+                                        aggregate_format: loaded_format.clone(),
+                                        pointer,
+                                        indices,
+                                    };
 
-                        if let Value::Indirect { pointer, .. } = operand {
-                            *pointer
-                        }
-                        else {
-                            return Err(crate::RawError::new(String::from("operand of '&' must be an lvalue")).into_boxed());
-                        }
-                    },
-                    ast::UnaryOperation::Dereference => {
-                        let operand = self.generate_node(operand.as_ref(), context, expected_format.clone().map(Format::into_pointer))?;
-                        let operand = self.coerce_to_rvalue(operand)?;
-                        
-                        if let Format::Pointer(pointee_format) = operand.format().as_unqualified() {
-                            if let Value::Constant(constant) = operand {
-                                Value::Constant(Constant::Indirect {
-                                    pointer: Box::new(constant),
-                                    loaded_format: pointee_format.as_ref().clone(),
-                                })
-                            }
-                            else {
-                                Value::Indirect {
-                                    pointer: Box::new(operand),
-                                    loaded_format: pointee_format.as_ref().clone(),
-                                }
-                            }
-                        }
-                        else {
-                            return Err(crate::RawError::new(format!("cannot dereference value of type '{}'", operand.format().rich_name())).into_boxed());
-                        }
-                    },
-                    ast::UnaryOperation::GetSize => {
-                        if let ast::Node::Type(type_node) = operand.as_ref() {
-                            let format = self.get_format_from_node(type_node, true, false)?;
-
-                            if let Some(size) = format.size() {
-                                Value::Constant(Constant::Integer(size as u64, expected_format.clone().unwrap_or(Format::Integer { size: 8, signed: false })))
-                            }
-                            else {
-                                return Err(crate::RawError::new(format!("type '{type_node}' does not have a size")).into_boxed());
-                            }
-                        }
-                        else {
-                            return Err(crate::RawError::new(String::from("invalid operand for 'sizeof'")).into_boxed());
-                        }
-                    },
-                    ast::UnaryOperation::GetAlign => todo!(),
-                }
-            },
-            ast::Node::Binary { operation, lhs, rhs } => {
-                match operation {
-                    ast::BinaryOperation::Subscript => {
-                        let lhs = self.generate_node(lhs.as_ref(), context, None)?;
-                        let rhs = self.generate_node(rhs.as_ref(), context, None)?;
-                        let rhs = self.coerce_to_rvalue(rhs)?;
-                        
-                        if !(matches!(rhs.format().as_unqualified(), Format::Integer { .. })) {
-                            return Err(crate::RawError::new(String::from("expected an integer index")).into_boxed());
-                        }
-
-                        // Brain hurty so I made big list:
-
-                        // mut [T; N] <=> [N x T] : not allowed (for now) : error
-                        // mut &[T; N] <=> [N x T]* : getelementptr instruction (0, index) : indirect value
-                        // mut *[T; N] <=> [N x T]* : getelementptr instruction (0, index) : indirect value
-                        // mut &*[T; N] <=> [N x T]** : load -> getelementptr instruction (0, index) : indirect value
-                        // mut [T] <=> T : not possible : error
-                        // mut &[T] <=> T* : getelementptr instruction (index) : indirect value
-                        // mut *[T] <=> T* : getelementptr instruction (index) : indirect value
-                        // mut &*[T] <=> T** : load -> getelementptr instruction (index) : indirect value
-                        // const [T; N] <=> [N x T] : not allowed (for now) : error
-                        // const &[T; N] <=> [N x T]* : getelementptr expression (0, index) : indirect constant
-                        // const *[T; N] <=> [N x T]* : getelementptr expression (0, index) : indirect constant
-                        // const &*[T; N] <=> [N x T]** : (only in non-const context) load -> getelementptr instruction (0, index) : indirect value
-                        // const [T] <=> T : not possible : error
-                        // const &[T] <=> T* : getelementptr expression (index) : indirect constant
-                        // const *[T] <=> T* : getelementptr expression (index) : indirect constant
-                        // const &*[T] <=> T** : (only in non-const context) load -> getelementptr instruction (index) : indirect value
-
-                        // Inputs: lvalue/rvalue, is behind pointer, sized/unsized, lhs constant, rhs constant
-                        // Outputs: whether to load, expression vs. instruction, (0, index) vs. (index)
-
-                        // TL;DR: I think I've way overcomplicated this but I don't know what else to do
-
-                        let lhs_format = lhs.format();
-                        let cannot_index_error = || crate::RawError::new(format!("cannot index value of type '{}'", lhs_format.rich_name())).into_boxed();
-
-                        // This is incredibly nasty and repetitive... could signify a need for a rethink of Value/Constant and/or Format
-                        match (lhs, rhs) {
-                            (Value::Constant(lhs), Value::Constant(rhs)) => match lhs {
-                                Constant::Indirect { pointer, loaded_format } => match loaded_format.as_unqualified() {
+                                    Value::Constant(Constant::Indirect {
+                                        pointer: Box::new(element_pointer),
+                                        loaded_format: item_format.as_ref().clone(),
+                                    })
+                                },
+                                Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
                                     Format::Array { item_format, length } => {
-                                        // const &[T; N], const &[T]
+                                        // const &*[T; N], const &*[T]
+                                        let element_format = match pointee_format.as_ref() {
+                                            Format::Mutable(_) => item_format.as_ref().clone().into_mutable(),
+                                            _ => item_format.as_ref().clone()
+                                        };
+                                        let loaded_pointer = self.new_anonymous_register(loaded_format.clone());
+                                        let element_pointer = self.new_anonymous_register(element_format.clone().into_pointer());
                                         let indices = match length {
-                                            Some(_) => vec![Constant::Integer(0, Format::default_integer()), rhs],
+                                            Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), Value::Constant(rhs)],
+                                            None => vec![Value::Constant(rhs)],
+                                        };
+
+                                        self.emitter.emit_load(&loaded_pointer, &Value::Constant(*pointer))?;
+                                        self.emitter.emit_get_element_pointer(
+                                            &element_pointer,
+                                            pointee_format.as_ref(),
+                                            &Value::Register(loaded_pointer),
+                                            &indices,
+                                        )?;
+
+                                        Value::Indirect {
+                                            pointer: Box::new(Value::Register(element_pointer)),
+                                            loaded_format: element_format,
+                                        }
+                                    },
+                                    _ => return Err(cannot_index_error())
+                                },
+                                _ => return Err(cannot_index_error())
+                            },
+                            Constant::Register(register) => match register.format().clone().as_unqualified() {
+                                Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
+                                    Format::Array { item_format, length } => {
+                                        // const *[T; N], const *[T]
+                                        let indices = match length {
+                                            Some(_) => vec![Constant::Integer(IntegerValue::Signed32(0)), rhs],
                                             None => vec![rhs],
                                         };
 
                                         let element_pointer = Constant::GetElementPointer {
                                             element_format: item_format.as_ref().clone().into_pointer(),
-                                            aggregate_format: loaded_format.clone(),
-                                            pointer,
+                                            aggregate_format: pointee_format.as_ref().clone(),
+                                            pointer: Box::new(Constant::Register(register)),
                                             indices,
                                         };
 
@@ -887,290 +1032,237 @@ impl<W: Write> Generator<W> {
                                             loaded_format: item_format.as_ref().clone(),
                                         })
                                     },
-                                    Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
-                                        Format::Array { item_format, length } => {
-                                            // const &*[T; N], const &*[T]
-                                            let element_format = match pointee_format.as_ref() {
-                                                Format::Mutable(_) => item_format.as_ref().clone().into_mutable(),
-                                                _ => item_format.as_ref().clone()
-                                            };
-                                            let loaded_pointer = self.new_anonymous_register(loaded_format.clone());
-                                            let element_pointer = self.new_anonymous_register(element_format.clone().into_pointer());
-                                            let indices = match length {
-                                                Some(_) => vec![Value::Constant(Constant::Integer(0, Format::default_integer())), Value::Constant(rhs)],
-                                                None => vec![Value::Constant(rhs)],
-                                            };
-
-                                            self.emitter.emit_load(&loaded_pointer, &Value::Constant(*pointer))?;
-                                            self.emitter.emit_get_element_pointer(
-                                                &element_pointer,
-                                                pointee_format.as_ref(),
-                                                &Value::Register(loaded_pointer),
-                                                &indices,
-                                            )?;
-
-                                            Value::Indirect {
-                                                pointer: Box::new(Value::Register(element_pointer)),
-                                                loaded_format: element_format,
-                                            }
-                                        },
-                                        _ => return Err(cannot_index_error())
-                                    },
                                     _ => return Err(cannot_index_error())
                                 },
-                                Constant::Register(register) => match register.format().clone().as_unqualified() {
-                                    Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
-                                        Format::Array { item_format, length } => {
-                                            // const *[T; N], const *[T]
-                                            let indices = match length {
-                                                Some(_) => vec![Constant::Integer(0, Format::default_integer()), rhs],
-                                                None => vec![rhs],
-                                            };
+                                _ => return Err(cannot_index_error())
+                            },
+                            _ => return Err(cannot_index_error())
+                        },
+                        (lhs, rhs) => match lhs {
+                            Value::Indirect { pointer, loaded_format } => match loaded_format.as_unqualified() {
+                                Format::Array { item_format, length } => {
+                                    // &[T; N], &[T]
+                                    let element_pointer = self.new_anonymous_register(item_format.as_ref().clone().into_pointer());
+                                    let indices = match length {
+                                        Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), rhs],
+                                        None => vec![rhs],
+                                    };
 
-                                            let element_pointer = Constant::GetElementPointer {
-                                                element_format: item_format.as_ref().clone().into_pointer(),
-                                                aggregate_format: pointee_format.as_ref().clone(),
-                                                pointer: Box::new(Constant::Register(register)),
-                                                indices,
-                                            };
+                                    self.emitter.emit_get_element_pointer(
+                                        &element_pointer,
+                                        &loaded_format,
+                                        pointer.as_ref(),
+                                        &indices,
+                                    )?;
 
-                                            Value::Constant(Constant::Indirect {
-                                                pointer: Box::new(element_pointer),
-                                                loaded_format: item_format.as_ref().clone(),
-                                            })
-                                        },
-                                        _ => return Err(cannot_index_error())
+                                    Value::Indirect {
+                                        pointer: Box::new(Value::Register(element_pointer)),
+                                        loaded_format: item_format.as_ref().clone(),
+                                    }
+                                },
+                                Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
+                                    Format::Array { item_format, length } => {
+                                        // &*[T; N], &*[T]
+                                        let element_format = match pointee_format.as_ref() {
+                                            Format::Mutable(_) => item_format.as_ref().clone().into_mutable(),
+                                            _ => item_format.as_ref().clone()
+                                        };
+                                        let loaded_pointer = self.new_anonymous_register(loaded_format.clone());
+                                        let element_pointer = self.new_anonymous_register(element_format.clone().into_pointer());
+                                        let indices = match length {
+                                            Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), rhs],
+                                            None => vec![rhs],
+                                        };
+
+                                        self.emitter.emit_load(&loaded_pointer, pointer.as_ref())?;
+                                        self.emitter.emit_get_element_pointer(
+                                            &element_pointer,
+                                            pointee_format.as_ref(),
+                                            &Value::Register(loaded_pointer),
+                                            &indices,
+                                        )?;
+
+                                        Value::Indirect {
+                                            pointer: Box::new(Value::Register(element_pointer)),
+                                            loaded_format: element_format,
+                                        }
                                     },
                                     _ => return Err(cannot_index_error())
                                 },
                                 _ => return Err(cannot_index_error())
                             },
-                            (lhs, rhs) => match lhs {
-                                Value::Indirect { pointer, loaded_format } => match loaded_format.as_unqualified() {
+                            Value::Register(register) => match register.format().clone().as_unqualified() {
+                                Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
                                     Format::Array { item_format, length } => {
-                                        // &[T; N], &[T]
+                                        // *[T; N], *[T]
                                         let element_pointer = self.new_anonymous_register(item_format.as_ref().clone().into_pointer());
                                         let indices = match length {
-                                            Some(_) => vec![Value::Constant(Constant::Integer(0, Format::default_integer())), rhs],
+                                            Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), rhs],
                                             None => vec![rhs],
                                         };
-    
+
                                         self.emitter.emit_get_element_pointer(
                                             &element_pointer,
-                                            &loaded_format,
-                                            pointer.as_ref(),
+                                            pointee_format.as_ref(),
+                                            &Value::Register(register),
                                             &indices,
                                         )?;
-    
+
                                         Value::Indirect {
                                             pointer: Box::new(Value::Register(element_pointer)),
                                             loaded_format: item_format.as_ref().clone(),
                                         }
                                     },
-                                    Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
-                                        Format::Array { item_format, length } => {
-                                            // &*[T; N], &*[T]
-                                            let element_format = match pointee_format.as_ref() {
-                                                Format::Mutable(_) => item_format.as_ref().clone().into_mutable(),
-                                                _ => item_format.as_ref().clone()
-                                            };
-                                            let loaded_pointer = self.new_anonymous_register(loaded_format.clone());
-                                            let element_pointer = self.new_anonymous_register(element_format.clone().into_pointer());
-                                            let indices = match length {
-                                                Some(_) => vec![Value::Constant(Constant::Integer(0, Format::default_integer())), rhs],
-                                                None => vec![rhs],
-                                            };
-
-                                            self.emitter.emit_load(&loaded_pointer, pointer.as_ref())?;
-                                            self.emitter.emit_get_element_pointer(
-                                                &element_pointer,
-                                                pointee_format.as_ref(),
-                                                &Value::Register(loaded_pointer),
-                                                &indices,
-                                            )?;
-
-                                            Value::Indirect {
-                                                pointer: Box::new(Value::Register(element_pointer)),
-                                                loaded_format: element_format,
-                                            }
-                                        },
-                                        _ => return Err(cannot_index_error())
-                                    },
-                                    _ => return Err(cannot_index_error())
-                                },
-                                Value::Register(register) => match register.format().clone().as_unqualified() {
-                                    Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
-                                        Format::Array { item_format, length } => {
-                                            // *[T; N], *[T]
-                                            let element_pointer = self.new_anonymous_register(item_format.as_ref().clone().into_pointer());
-                                            let indices = match length {
-                                                Some(_) => vec![Value::Constant(Constant::Integer(0, Format::default_integer())), rhs],
-                                                None => vec![rhs],
-                                            };
-
-                                            self.emitter.emit_get_element_pointer(
-                                                &element_pointer,
-                                                pointee_format.as_ref(),
-                                                &Value::Register(register),
-                                                &indices,
-                                            )?;
-
-                                            Value::Indirect {
-                                                pointer: Box::new(Value::Register(element_pointer)),
-                                                loaded_format: item_format.as_ref().clone(),
-                                            }
-                                        },
-                                        _ => return Err(cannot_index_error())
-                                    },
                                     _ => return Err(cannot_index_error())
                                 },
                                 _ => return Err(cannot_index_error())
-                            }
+                            },
+                            _ => return Err(cannot_index_error())
                         }
-                    },
-                    ast::BinaryOperation::Access => todo!(),
-                    ast::BinaryOperation::DerefAccess => todo!(),
-                    ast::BinaryOperation::Convert => {
-                        if let ast::Node::Type(type_node) = rhs.as_ref() {
-                            let value = self.generate_node(lhs.as_ref(), context, None)?;
-                            let value = self.coerce_to_rvalue(value)?;
-                            
-                            let target_format = self.get_format_from_node(type_node, false, false)?;
-        
-                            self.change_format(value, &target_format)?
-                        }
-                        else {
-                            return Err(crate::RawError::new(String::from("expected a type following 'as'")).into_boxed());
-                        }
-                    },
-                    ast::BinaryOperation::Add => {
-                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
+                    }
+                },
+                ast::BinaryOperation::Access => todo!(),
+                ast::BinaryOperation::DerefAccess => todo!(),
+                ast::BinaryOperation::Convert => {
+                    if let ast::Node::Type(type_node) = rhs.as_ref() {
+                        let value = self.generate_node(lhs.as_ref(), context, None)?;
+                        let value = self.coerce_to_rvalue(value)?;
+                        
+                        let target_format = self.get_format_from_node(type_node, false, false)?;
+    
+                        self.change_format(value, &target_format)?
+                    }
+                    else {
+                        return Err(crate::RawError::new(String::from("expected a type following 'as'")).into_boxed());
+                    }
+                },
+                ast::BinaryOperation::Add => {
+                    let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
-                        self.emitter.emit_addition(&result, &lhs, &rhs)?;
+                    self.emitter.emit_addition(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::Subtract => {
-                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::Subtract => {
+                    let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
-                        self.emitter.emit_subtraction(&result, &lhs, &rhs)?;
+                    self.emitter.emit_subtraction(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::Multiply => {
-                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::Multiply => {
+                    let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
-                        self.emitter.emit_multiplication(&result, &lhs, &rhs)?;
+                    self.emitter.emit_multiplication(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::Divide => {
-                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::Divide => {
+                    let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
-                        self.emitter.emit_division(&result, &lhs, &rhs)?;
+                    self.emitter.emit_division(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::Remainder => {
-                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::Remainder => {
+                    let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
-                        self.emitter.emit_remainder(&result, &lhs, &rhs)?;
+                    self.emitter.emit_remainder(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::ShiftLeft => {
-                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::ShiftLeft => {
+                    let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
-                        self.emitter.emit_shift_left(&result, &lhs, &rhs)?;
+                    self.emitter.emit_shift_left(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::ShiftRight => {
-                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::ShiftRight => {
+                    let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
-                        self.emitter.emit_shift_right(&result, &lhs, &rhs)?;
+                    self.emitter.emit_shift_right(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::BitwiseAnd => {
-                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::BitwiseAnd => {
+                    let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
-                        self.emitter.emit_bitwise_and(&result, &lhs, &rhs)?;
+                    self.emitter.emit_bitwise_and(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::BitwiseOr => {
-                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::BitwiseOr => {
+                    let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
-                        self.emitter.emit_bitwise_or(&result, &lhs, &rhs)?;
+                    self.emitter.emit_bitwise_or(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::BitwiseXor => {
-                        let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::BitwiseXor => {
+                    let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?;
 
-                        self.emitter.emit_bitwise_xor(&result, &lhs, &rhs)?;
+                    self.emitter.emit_bitwise_xor(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::Equal => {
-                        let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::Equal => {
+                    let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
 
-                        self.emitter.emit_cmp_equal(&result, &lhs, &rhs)?;
+                    self.emitter.emit_cmp_equal(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::NotEqual => {
-                        let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::NotEqual => {
+                    let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
 
-                        self.emitter.emit_cmp_not_equal(&result, &lhs, &rhs)?;
+                    self.emitter.emit_cmp_not_equal(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::LessThan => {
-                        let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::LessThan => {
+                    let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
 
-                        self.emitter.emit_cmp_less_than(&result, &lhs, &rhs)?;
+                    self.emitter.emit_cmp_less_than(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::LessEqual => {
-                        let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::LessEqual => {
+                    let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
 
-                        self.emitter.emit_cmp_less_equal(&result, &lhs, &rhs)?;
+                    self.emitter.emit_cmp_less_equal(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::GreaterThan => {
-                        let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::GreaterThan => {
+                    let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
 
-                        self.emitter.emit_cmp_greater_than(&result, &lhs, &rhs)?;
+                    self.emitter.emit_cmp_greater_than(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::GreaterEqual => {
-                        let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::GreaterEqual => {
+                    let (result, lhs, rhs) = self.generate_comparison_operands(lhs.as_ref(), rhs.as_ref(), context)?;
 
-                        self.emitter.emit_cmp_greater_equal(&result, &lhs, &rhs)?;
+                    self.emitter.emit_cmp_greater_equal(&result, &lhs, &rhs)?;
 
-                        Value::Register(result)
-                    },
-                    ast::BinaryOperation::LogicalAnd => todo!(),
-                    ast::BinaryOperation::LogicalOr => todo!(),
-                    ast::BinaryOperation::Assign => {
-                        self.generate_assignment(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?
-                    },
-                    ast::BinaryOperation::MultiplyAssign => todo!(),
-                    ast::BinaryOperation::DivideAssign => todo!(),
-                    ast::BinaryOperation::RemainderAssign => todo!(),
-                    ast::BinaryOperation::AddAssign => todo!(),
-                    ast::BinaryOperation::SubtractAssign => todo!(),
-                    ast::BinaryOperation::ShiftLeftAssign => todo!(),
-                    ast::BinaryOperation::ShiftRightAssign => todo!(),
-                    ast::BinaryOperation::BitwiseAndAssign => todo!(),
-                    ast::BinaryOperation::BitwiseXorAssign => todo!(),
-                    ast::BinaryOperation::BitwiseOrAssign => todo!(),
-                }
+                    Value::Register(result)
+                },
+                ast::BinaryOperation::LogicalAnd => todo!(),
+                ast::BinaryOperation::LogicalOr => todo!(),
+                ast::BinaryOperation::Assign => {
+                    self.generate_assignment(lhs.as_ref(), rhs.as_ref(), context, expected_format.clone())?
+                },
+                ast::BinaryOperation::MultiplyAssign => todo!(),
+                ast::BinaryOperation::DivideAssign => todo!(),
+                ast::BinaryOperation::RemainderAssign => todo!(),
+                ast::BinaryOperation::AddAssign => todo!(),
+                ast::BinaryOperation::SubtractAssign => todo!(),
+                ast::BinaryOperation::ShiftLeftAssign => todo!(),
+                ast::BinaryOperation::ShiftRightAssign => todo!(),
+                ast::BinaryOperation::BitwiseAndAssign => todo!(),
+                ast::BinaryOperation::BitwiseXorAssign => todo!(),
+                ast::BinaryOperation::BitwiseOrAssign => todo!(),
             },
             ast::Node::Call { callee, arguments } => {
                 let callee = self.generate_node(callee.as_ref(), context, None)?;
@@ -1366,15 +1458,8 @@ impl<W: Write> Generator<W> {
                 let (symbol, pointer) = self.get_symbol_table(context).create_indirect_symbol(name.clone(), format.clone());
 
                 if context.is_global() {
-                    // TODO: constant folding
                     let init_value = if let Some(node) = value {
-                        let value = self.generate_node(node.as_ref(), context, Some(format.clone()))?;
-                        if let Value::Constant(constant) = value {
-                            constant
-                        }
-                        else {
-                            return Err(crate::RawError::new(String::from("initial value for global must be constant")).into_boxed());
-                        }
+                        self.generate_constant_node(node.as_ref(), context, Some(format.clone()))?
                     }
                     else {
                         Constant::ZeroInitializer(format.clone())
@@ -1394,6 +1479,28 @@ impl<W: Write> Generator<W> {
                 }
 
                 self.define_symbol(context, symbol);
+
+                Value::Void
+            },
+            ast::Node::Constant { name, value_type, value } => {
+                let format = self.get_format_from_node(value_type, false, false)?;
+
+                if let Some(function) = context.function() {
+                    let constant = self.generate_constant_node(value.as_ref(), context, Some(format.clone()))?;
+                    let (symbol, pointer) = self.get_symbol_table(context).create_indirect_local_constant_symbol(name.clone(), format.clone(), function.name());
+
+                    self.emitter.emit_global_allocation(&pointer, &constant, true)?;
+                    
+                    self.define_symbol(context, symbol);
+                }
+                else {
+                    let constant = self.generate_constant_node(value.as_ref(), context, Some(format.clone()))?;
+                    let (symbol, pointer) = self.global_symbol_table.create_indirect_symbol(name.clone(), format.clone());
+
+                    self.emitter.emit_global_allocation(&pointer, &constant, true)?;
+
+                    self.define_symbol(context, symbol);
+                }
 
                 Value::Void
             },
@@ -1459,7 +1566,7 @@ impl<W: Write> Generator<W> {
                 self.local_symbol_table.clear();
                 self.next_anonymous_register_id = 0;
                 self.next_anonymous_label_id = 0;
-                let function_context = context.clone().enter_function(return_format.clone());
+                let function_context = context.clone().enter_function(name.clone(), return_format.clone());
 
                 let parameter_handles: Vec<_> = std::iter::zip(parameter_names_iter, parameter_formats.iter())
                     .map(|(name, format)| {
@@ -1545,7 +1652,9 @@ impl<W: Write> Generator<W> {
 
                 Value::Void
             },
-            _ => return Err(crate::RawError::new(String::from("unexpected node type")).into_boxed())
+            _ => {
+                return Err(crate::RawError::new(String::from("unexpected expression")).into_boxed())
+            }
         };
 
         if let Some(expected_format) = &expected_format {
@@ -1600,6 +1709,76 @@ impl<W: Write> Generator<W> {
             _ => {
                 Err(crate::RawError::new(String::from("expected an lvalue")).into_boxed())
             }
+        }
+    }
+
+    pub fn generate_constant_node(&mut self, node: &ast::Node, _context: &ScopeContext, expected_format: Option<Format>) -> crate::Result<Constant> {
+        let mut constant_id = self.next_anonymous_constant_id;
+        let (constant, intermediate_constants) = self.fold_as_constant(node, &mut constant_id, expected_format)?;
+        self.next_anonymous_constant_id = constant_id;
+
+        for (pointer, intermediate_constant) in intermediate_constants {
+            self.emitter.emit_anonymous_constant(&pointer, &intermediate_constant)?;
+        }
+
+        Ok(constant)
+    }
+
+    pub fn fold_as_constant(&self, node: &ast::Node, constant_id: &mut usize, expected_format: Option<Format>) -> crate::Result<(Constant, Vec<(Register, Constant)>)> {
+        let mut new_intermediate_constant = |constant: Constant| {
+            let pointer = Register {
+                name: format!(".const.{}", constant_id),
+                format: constant.format().into_pointer(),
+                is_global: true,
+            };
+            *constant_id += 1;
+            (pointer, constant)
+        };
+
+        let mut intermediate_constants = Vec::new();
+
+        let constant = match node {
+            ast::Node::Literal(literal) => {
+                match literal {
+                    token::Literal::Identifier(name) => {
+                        if let Value::Constant(constant) = self.get_symbol(name)?.value() {
+                            constant.clone()
+                        }
+                        else {
+                            return Err(crate::RawError::new(format!("'{name}' is not constant and cannot be used in a constant expression")).into_boxed());
+                        }
+                    },
+                    token::Literal::Integer(value) => {
+                        let format = expected_format.clone().unwrap_or(Format::Integer { size: 4, signed: true });
+                        let value = IntegerValue::new(*value, &format)
+                            .ok_or_else(|| crate::RawError::new(format!("'{value}' cannot be used as a value of type '{}'", format.rich_name())).into_boxed())?;
+                        Constant::Integer(value)
+                    },
+                    token::Literal::Boolean(value) => {
+                        Constant::Boolean(*value)
+                    },
+                    token::Literal::NullPointer => {
+                        Constant::NullPointer(expected_format.clone().unwrap_or_else(Format::opaque_pointer))
+                    },
+                    token::Literal::String(value) => {
+                        let (pointer, constant) = new_intermediate_constant(Constant::String(value.clone()));
+                        intermediate_constants.push((pointer.clone(), constant));
+
+                        Constant::Register(pointer)
+                    },
+                }
+            },
+            _ => {
+                return Err(crate::RawError::new(String::from("unexpected expression in constant")).into_boxed())
+            }
+        };
+
+        if let Some(expected_format) = &expected_format {
+            self.enforce_constant_format(constant, expected_format)
+                .map(|constant| (constant, intermediate_constants))
+        }
+        else {
+            Ok((constant, intermediate_constants))
         }
     }
 
