@@ -74,8 +74,29 @@ function aoc_01_p1() {
     printf("[01p1] Sum of calibration values: %d\n", calibration_sum);
 }
 
+struct Student {
+    name: *[u8],
+    age: u32,
+    grades: [u32; 4],
+}
+
 function main() -> i32 {
     aoc_01_p1();
+
+    let x: mut i32 = 5;
+    let x: i32 = x;
+    let x: mut i32 = x;
+    printf("%d\n", x);
+
+    let joe: Student = Student {
+        name: "Joe Mama",
+        age: 153,
+        grades: [80, 100, 92, 47],
+    };
+
+    /*printf("Name: %s\n", joe.name);
+    printf("Age: %u\n", joe.age);
+    printf("Grades: %u, %u, %u, %u\n", joe.grades[0], joe.grades[1], joe.grades[2], joe.grades[3]);*/
 
     return 0;
 }

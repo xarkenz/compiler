@@ -122,6 +122,7 @@ pub enum Token {
     Return,
     Let,
     Function,
+    Struct,
     Const,
     Mut,
     Literal(Literal),
@@ -191,6 +192,7 @@ impl fmt::Display for Token {
             Self::Return => write!(f, "return"),
             Self::Let => write!(f, "let"),
             Self::Function => write!(f, "function"),
+            Self::Struct => write!(f, "struct"),
             Self::Const => write!(f, "const"),
             Self::Mut => write!(f, "mut"),
             Self::Literal(literal) => write!(f, "{literal}"),
@@ -263,6 +265,7 @@ pub const KEYWORD_TOKENS: &[(&str, Token)] = &[
     ("return", Token::Return),
     ("let", Token::Let),
     ("function", Token::Function),
+    ("struct", Token::Struct),
     ("const", Token::Const),
     ("mut", Token::Mut),
 ];

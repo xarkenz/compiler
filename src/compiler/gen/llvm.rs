@@ -199,6 +199,16 @@ impl<W: Write> Emitter<W> {
         Ok(())
     }
 
+    pub fn emit_type_definition(&mut self, identifier: &str, structure_format: Option<&Format>) -> crate::Result<()> {
+        if let Some(structure_format) = structure_format {
+            writeln!(self.writer, "%{identifier} = type {structure_format}\n")
+        }
+        else {
+            writeln!(self.writer, "%{identifier} = type opaque\n")
+        }
+        .map_err(|cause| self.error(cause))
+    }
+
     pub fn emit_global_allocation(&mut self, pointer: &Register, value: &Constant, constant: bool) -> crate::Result<()> {
         let declaration = if constant {
             format!(

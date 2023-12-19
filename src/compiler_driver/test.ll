@@ -158,8 +158,72 @@ define dso_local void @aoc_01_p1() #0 {
 @.const.3 = private unnamed_addr constant [27 x i8] c"unable to open input file\0A\00"
 @.const.4 = private unnamed_addr constant [38 x i8] c"[01p1] Sum of calibration values: %d\0A\00"
 
+%struct.Student = type { i8*, i32, [4 x i32] }
+
 define dso_local i32 @main() #0 {
 .block.0:
 	call void() @aoc_01_p1()
 	%x = alloca i32
-	store i32 1, i32* %x
+	store i32 5, i32* %x
+	%x-1 = alloca i32
+	%0 = load i32, i32* %x
+	store i32 %0, i32* %x-1
+	%x-2 = alloca i32
+	%1 = load i32, i32* %x-1
+	store i32 %1, i32* %x-2
+	%2 = load i32, i32* %x-2
+	%3 = call i32(i8*, ...) @printf(i8* noundef bitcast ([4 x i8]* @.const.5 to i8*), i32 noundef %2)
+	%joe = alloca %struct.Student
+	store %struct.Student { i8* bitcast ([9 x i8]* @.const.6 to i8*), i32 153, [4 x i32] [ i32 80, i32 100, i32 92, i32 47 ] }, %struct.Student* %joe
+	ret i32 0
+}
+
+@.const.5 = private unnamed_addr constant [4 x i8] c"%d\0A\00"
+@.const.6 = private unnamed_addr constant [9 x i8] c"Joe Mama\00"
+
+declare i8* @fopen(i8* noundef, i8* noundef) #1
+
+declare i32 @fclose(i8* noundef) #1
+
+declare i32 @feof(i8* noundef) #1
+
+declare i8* @fgets(i8* noundef, i32 noundef, i8* noundef) #1
+
+declare i32 @printf(i8* noundef, ...) #1
+
+declare i8* @malloc(i64 noundef) #1
+
+declare void @free(i8* noundef) #1
+
+declare i64 @strlen(i8* noundef) #1
+
+declare i32 @isdigit(i32 noundef) #1
+
+attributes #0 = {
+	noinline nounwind optnone uwtable
+	"frame-pointer"="all"
+	"min-legal-vector-width"="0"
+	"no-trapping-math"="true"
+	"stack-protector-buffer-size"="8"
+	"target-cpu"="x86-64"
+	"target-features"="+cx8,+fxsr,+mmx,+sse,+sse2,+x87"
+	"tune-cpu"="generic"
+}
+
+attributes #1 = {
+	"frame-pointer"="all"
+	"no-trapping-math"="true"
+	"stack-protector-buffer-size"="8"
+	"target-cpu"="x86-64"
+	"target-features"="+cx8,+fxsr,+mmx,+sse,+sse2,+x87"
+	"tune-cpu"="generic"
+}
+
+!llvm.module.flags = !{ !0, !1, !2, !3, !4 }
+!llvm.ident = !{ !5 }
+!0 = !{ i32 1, !"wchar_size", i32 4 }
+!1 = !{ i32 7, !"PIC Level", i32 2 }
+!2 = !{ i32 7, !"PIE Level", i32 2 }
+!3 = !{ i32 7, !"uwtable", i32 1 }
+!4 = !{ i32 7, !"frame-pointer", i32 2 }
+!5 = !{ !"Ubuntu clang version 14.0.0-1ubuntu1.1" }

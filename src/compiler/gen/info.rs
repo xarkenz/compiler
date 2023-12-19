@@ -206,6 +206,19 @@ impl SymbolTable {
         (symbol, pointer)
     }
 
+    pub fn create_type_definition_symbol(&self, identifier: String, definition_format: Format) -> Symbol {
+        let scope = self.current_scope().clone();
+        let version = self.next_symbol_version(&identifier);
+        let symbol = Symbol {
+            identifier,
+            value: Value::TypeDefinition(definition_format),
+            scope,
+            version,
+        };
+
+        symbol
+    }
+
     pub fn insert(&mut self, symbol: Symbol) {
         let index = self.hash_index(symbol.identifier());
         

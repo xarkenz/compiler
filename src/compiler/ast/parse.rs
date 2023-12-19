@@ -97,6 +97,23 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 Token::Literal(literal) => {
                     Box::new(Node::Literal(literal.clone()))
                 },
+                Token::SquareLeft => {
+                    self.scan_token()?;
+                    let mut items = Vec::new();
+                    while !(matches!(self.current_token(), Some(Token::SquareRight))) {
+                        let item = self.parse_expression(None, &[Token::Comma, Token::SquareRight])?;
+                        items.push(item);
+
+                        if let Some(Token::Comma) = self.current_token() {
+                            self.scan_token()?;
+                        }
+                    }
+                    self.scan_token()?;
+
+                    Box::new(Node::Array {
+                        items,
+                    })
+                },
                 _ => {
                     return Err(self.scanner.syntax_error(format!("expected an operand, got {token}")));
                 }
@@ -158,7 +175,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 });
             }
             else if let Token::ParenLeft = token {
-                // Left parenthesis indicates the function call operation
+                // Left parenthesis indicates a function call
                 if let Some(parent_precedence) = parent_precedence {
                     if parent_precedence >= Precedence::Postfix {
                         // Parent operation should be made into a subtree of the call operation (which has postfix precedence)
@@ -182,6 +199,37 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 lhs = Box::new(Node::Call {
                     callee: lhs,
                     arguments,
+                });
+            }
+            else if let Token::CurlyLeft = token {
+                // Left curly brace indicates a structure literal
+                if let Some(parent_precedence) = parent_precedence {
+                    if parent_precedence >= Precedence::Postfix {
+                        // Parent operation should be made into a subtree of the operation (which has postfix precedence)
+                        // Usually the parent operation is a static member access, e.g. `my::Struct {}`
+                        break;
+                    }
+                }
+
+                self.scan_token()?;
+                let mut members = Vec::new();
+                while !(matches!(self.current_token(), Some(Token::CurlyRight))) {
+                    let member_name = self.expect_identifier()?;
+                    self.scan_token()?;
+                    self.expect_token(&[Token::Colon])?;
+                    self.scan_token()?;
+                    let member_value = self.parse_expression(None, &[Token::Comma, Token::CurlyRight])?;
+                    members.push((member_name, member_value));
+
+                    if let Some(Token::Comma) = self.current_token() {
+                        self.scan_token()?;
+                    }
+                }
+                self.scan_token()?;
+
+                lhs = Box::new(Node::Structure {
+                    type_name: lhs,
+                    members,
                 });
             }
             else {
@@ -296,7 +344,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     })))
                 }
             },
-            Some(Token::Function) => {
+            Some(Token::Function) if is_global => {
                 self.scan_token()?;
                 let name = self.expect_identifier()?;
                 self.scan_token()?;
@@ -350,6 +398,33 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     body,
                 })))
             },
+            Some(Token::Struct) if is_global => {
+                self.scan_token()?;
+                let name = self.expect_identifier()?;
+                self.scan_token()?;
+                self.expect_token(&[Token::CurlyLeft])?;
+                self.scan_token()?;
+
+                let mut members = Vec::new();
+                while !(matches!(self.current_token(), Some(Token::CurlyRight))) {
+                    let member_name = self.expect_identifier()?;
+                    self.scan_token()?;
+                    self.expect_token(&[Token::Colon])?;
+                    self.scan_token()?;
+                    let member_type = self.parse_unqualified_type(&[Token::Comma, Token::CurlyRight])?;
+                    members.push((member_name, member_type));
+
+                    if let Some(Token::Comma) = self.current_token() {
+                        self.scan_token()?;
+                    }
+                }
+                self.scan_token()?;
+
+                Ok(Some(Box::new(Node::StructureDefinition {
+                    name,
+                    members,
+                })))
+            }
             Some(got_token) if is_global => {
                 Err(self.scanner.syntax_error(expected_token_error_message(&[Token::Semicolon, Token::Let, Token::Function], got_token)))
             },

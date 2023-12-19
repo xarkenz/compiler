@@ -329,6 +329,13 @@ pub enum Node {
         callee: Box<Node>,
         arguments: Vec<Box<Node>>,
     },
+    Array {
+        items: Vec<Box<Node>>,
+    },
+    Structure {
+        type_name: Box<Node>,
+        members: Vec<(String, Box<Node>)>,
+    },
     Scope {
         statements: Vec<Box<Node>>,
     },
@@ -363,6 +370,10 @@ pub enum Node {
         return_type: TypeNode,
         body: Option<Box<Node>>,
     },
+    StructureDefinition {
+        name: String,
+        members: Vec<(String, TypeNode)>,
+    },
 }
 
 impl fmt::Display for Node {
@@ -382,10 +393,37 @@ impl fmt::Display for Node {
             },
             Self::Call { callee, arguments } => {
                 write!(f, "({callee}(")?;
-                for argument in arguments {
-                    write!(f, "{argument}, ")?;
+                let mut arguments_iter = arguments.iter();
+                if let Some(argument) = arguments_iter.next() {
+                    write!(f, "{argument}")?;
+                    for argument in arguments_iter {
+                        write!(f, ", {argument}")?;
+                    }
                 }
                 write!(f, "))")
+            },
+            Self::Array { items } => {
+                write!(f, "[")?;
+                let mut items_iter = items.iter();
+                if let Some(item) = items_iter.next() {
+                    write!(f, "{item}")?;
+                    for item in items_iter {
+                        write!(f, ", {item}")?;
+                    }
+                }
+                write!(f, "]")
+            },
+            Self::Structure { type_name, members } => {
+                write!(f, "({type_name} {{")?;
+                let mut members_iter = members.iter();
+                if let Some((member_name, member_value)) = members_iter.next() {
+                    write!(f, " {member_name}: {member_value}")?;
+                    for (member_name, member_value) in members_iter {
+                        write!(f, ", {member_name}: {member_value}")?;
+                    }
+                    write!(f, " ")?;
+                }
+                write!(f, "}})")
             },
             Self::Scope { statements } => {
                 write!(f, " {{")?;
@@ -451,6 +489,18 @@ impl fmt::Display for Node {
                 else {
                     write!(f, ") -> {return_type};")
                 }
+            },
+            Self::StructureDefinition { name, members } => {
+                write!(f, " struct {name} {{")?;
+                let mut members_iter = members.iter();
+                if let Some((member_name, member_type)) = members_iter.next() {
+                    write!(f, " {member_name}: {member_type}")?;
+                    for (member_name, member_type) in members_iter {
+                        write!(f, ", {member_name}: {member_type}")?;
+                    }
+                    write!(f, " ")?;
+                }
+                write!(f, "}}")
             },
         }
     }
