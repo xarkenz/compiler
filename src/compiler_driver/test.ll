@@ -175,11 +175,33 @@ define dso_local i32 @main() #0 {
 	%3 = call i32(i8*, ...) @printf(i8* noundef bitcast ([4 x i8]* @.const.5 to i8*), i32 noundef %2)
 	%joe = alloca %struct.Student
 	store %struct.Student { i8* bitcast ([9 x i8]* @.const.6 to i8*), i32 153, [4 x i32] [ i32 80, i32 100, i32 92, i32 47 ] }, %struct.Student* %joe
+	%4 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 0
+	%5 = load i8*, i8** %4
+	%6 = call i32(i8*, ...) @printf(i8* noundef bitcast ([10 x i8]* @.const.7 to i8*), i8* noundef %5)
+	%7 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 1
+	%8 = load i32, i32* %7
+	%9 = call i32(i8*, ...) @printf(i8* noundef bitcast ([9 x i8]* @.const.8 to i8*), i32 noundef %8)
+	%10 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 2
+	%11 = getelementptr inbounds [4 x i32], [4 x i32]* %10, i32 0, i32 0
+	%12 = load i32, i32* %11
+	%13 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 2
+	%14 = getelementptr inbounds [4 x i32], [4 x i32]* %13, i32 0, i32 1
+	%15 = load i32, i32* %14
+	%16 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 2
+	%17 = getelementptr inbounds [4 x i32], [4 x i32]* %16, i32 0, i32 2
+	%18 = load i32, i32* %17
+	%19 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 2
+	%20 = getelementptr inbounds [4 x i32], [4 x i32]* %19, i32 0, i32 3
+	%21 = load i32, i32* %20
+	%22 = call i32(i8*, ...) @printf(i8* noundef bitcast ([24 x i8]* @.const.9 to i8*), i32 noundef %12, i32 noundef %15, i32 noundef %18, i32 noundef %21)
 	ret i32 0
 }
 
 @.const.5 = private unnamed_addr constant [4 x i8] c"%d\0A\00"
 @.const.6 = private unnamed_addr constant [9 x i8] c"Joe Mama\00"
+@.const.7 = private unnamed_addr constant [10 x i8] c"Name: %s\0A\00"
+@.const.8 = private unnamed_addr constant [9 x i8] c"Age: %u\0A\00"
+@.const.9 = private unnamed_addr constant [24 x i8] c"Grades: %u, %u, %u, %u\0A\00"
 
 declare i8* @fopen(i8* noundef, i8* noundef) #1
 

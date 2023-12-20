@@ -1064,19 +1064,21 @@ impl<W: Write> Generator<W> {
                 if let Value::TypeDefinition(structure_format) = definition {
                     if let Format::Identified { type_name, member_names, format, .. } = &structure_format {
                         if let Format::Structure { member_formats } = format.as_ref().clone() {
-                            let mut remaining_members = Vec::from_iter(std::iter::zip(member_names, member_formats));
+                            let mut initializer_members = members.clone();
 
-                            let members: Vec<Value> = Result::from_iter(members.iter().map(|(member_name, member_value)| {
-                                let member_index = remaining_members.iter().position(|(name, _)| member_name == *name)
-                                    .ok_or_else(|| crate::RawError::new(format!("struct '{type_name}' does not have a member '{member_name}'")).into_boxed())?;
-                                let (_, member_format) = &remaining_members[member_index];
+                            let members: Vec<Value> = Result::from_iter(std::iter::zip(member_names, member_formats).map(|(member_name, member_format)| {
+                                let initializer_index = initializer_members.iter().position(|(name, _)| member_name == name)
+                                    .ok_or_else(|| crate::RawError::new(format!("missing member '{member_name}' in initializer of struct '{type_name}'")).into_boxed())?;
+
+                                let (_, member_value) = &initializer_members[initializer_index];
                                 let member_value = self.generate_node(member_value.as_ref(), context, Some(member_format.clone()))?;
-                                remaining_members.swap_remove(member_index);
+
+                                initializer_members.swap_remove(initializer_index);
                                 Ok(member_value)
                             }))?;
 
-                            if !remaining_members.is_empty() {
-                                return Err(crate::RawError::new(format!("not all members of struct '{type_name}' are present")).into_boxed());
+                            if !initializer_members.is_empty() {
+                                return Err(crate::RawError::new(format!("extraneous members for struct '{type_name}'")).into_boxed());
                             }
 
                             Value::Structure {
@@ -1772,7 +1774,52 @@ impl<W: Write> Generator<W> {
                     }
                 }
             },
-            ast::BinaryOperation::Access => todo!(),
+            ast::BinaryOperation::Access => {
+                let structure = self.generate_node(lhs, context, None)?;
+
+                let structure_format = structure.format();
+                let cannot_access_error = || crate::RawError::new(format!("cannot access members of non-struct type '{}'", structure_format.rich_name())).into_boxed();
+
+                if let ast::Node::Literal(token::Literal::Identifier(member_name)) = rhs {
+                    match structure {
+                        Value::Indirect { pointer, loaded_format } => match loaded_format.as_unqualified() {
+                            Format::Identified { type_name, member_names, format, .. } => match format.as_unqualified() {
+                                Format::Structure { member_formats } => {
+                                    let member_index = member_names.iter().position(|name| name == member_name)
+                                        .ok_or_else(|| crate::RawError::new(format!("member '{member_name}' does not exist in struct '{type_name}'")).into_boxed())?;
+                                    let member_format = match &loaded_format {
+                                        Format::Mutable(_) => member_formats[member_index].clone().into_mutable(),
+                                        _ => member_formats[member_index].clone()
+                                    };
+                                    let member_pointer = self.new_anonymous_register(member_format.clone().into_pointer());
+                                    let indices = &[
+                                        Value::Constant(Constant::Integer(IntegerValue::Signed32(0))),
+                                        Value::Constant(Constant::Integer(IntegerValue::Signed32(member_index as i32))),
+                                    ];
+
+                                    self.emitter.emit_get_element_pointer(
+                                        &member_pointer,
+                                        &loaded_format,
+                                        pointer.as_ref(),
+                                        indices,
+                                    )?;
+
+                                    Value::Indirect {
+                                        pointer: Box::new(Value::Register(member_pointer)),
+                                        loaded_format: member_format,
+                                    }
+                                },
+                                _ => return Err(cannot_access_error())
+                            },
+                            _ => return Err(cannot_access_error())
+                        },
+                        _ => return Err(cannot_access_error())
+                    }
+                }
+                else {
+                    return Err(crate::RawError::new(String::from("invalid member name for operation '.'")).into_boxed());
+                }
+            },
             ast::BinaryOperation::DerefAccess => todo!(),
             ast::BinaryOperation::Convert => {
                 if let ast::Node::Type(type_node) = rhs {

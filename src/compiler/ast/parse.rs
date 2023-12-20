@@ -108,7 +108,6 @@ impl<'a, T: BufRead> Parser<'a, T> {
                             self.scan_token()?;
                         }
                     }
-                    self.scan_token()?;
 
                     Box::new(Node::Array {
                         items,
