@@ -323,6 +323,41 @@ impl<W: Write> Emitter<W> {
             .map_err(|cause| self.error(cause))
     }
 
+    pub fn emit_extract_value(&mut self, result: &Register, aggregate: &Value, indices: &[Value]) -> crate::Result<()> {
+        write!(
+            self.writer,
+            "\t{result} = extractvalue {aggregate_format} {aggregate}",
+            aggregate_format = aggregate.format(),
+        )
+        .map_err(|cause| self.error(cause))?;
+
+        for index in indices {
+            write!(self.writer, ", {index}")
+                .map_err(|cause| self.error(cause))?;
+        }
+
+        writeln!(self.writer)
+            .map_err(|cause| self.error(cause))
+    }
+
+    pub fn emit_insert_value(&mut self, result: &Register, aggregate: &Value, value: &Value, indices: &[Value]) -> crate::Result<()> {
+        write!(
+            self.writer,
+            "\t{result} = insertvalue {aggregate_format} {aggregate}, {value_format} {value}",
+            aggregate_format = aggregate.format(),
+            value_format = value.format(),
+        )
+        .map_err(|cause| self.error(cause))?;
+
+        for index in indices {
+            write!(self.writer, ", {index}")
+                .map_err(|cause| self.error(cause))?;
+        }
+
+        writeln!(self.writer)
+            .map_err(|cause| self.error(cause))
+    }
+
     pub fn emit_bitwise_cast(&mut self, result: &Register, value: &Value) -> crate::Result<()> {
         writeln!(
             self.writer,

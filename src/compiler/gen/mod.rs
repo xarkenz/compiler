@@ -406,6 +406,8 @@ impl fmt::Display for Register {
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Constant {
+    Undefined(Format),
+    Poison(Format),
     ZeroInitializer(Format),
     NullPointer(Format),
     Boolean(bool),
@@ -439,6 +441,8 @@ pub enum Constant {
 impl Constant {
     pub fn format(&self) -> Format {
         match self {
+            Self::Undefined(format) => format.clone(),
+            Self::Poison(format) => format.clone(),
             Self::ZeroInitializer(format) => format.clone(),
             Self::NullPointer(format) => format.clone(),
             Self::Boolean(_) => Format::Boolean,
@@ -463,6 +467,8 @@ impl Constant {
 impl fmt::Display for Constant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Undefined(_) => write!(f, "undef"),
+            Self::Poison(_) => write!(f, "poison"),
             Self::ZeroInitializer(_) => write!(f, "zeroinitializer"),
             Self::NullPointer(_) => write!(f, "null"),
             Self::Boolean(value) => write!(f, "{value}"),
@@ -1044,14 +1050,52 @@ impl<W: Write> Generator<W> {
                 }
             },
             ast::Node::Array { items } => {
-                if let Some(Format::Array { item_format, .. }) = &expected_format {
-                    let items: Vec<Value> = Result::from_iter(items.iter().map(|item| {
-                        self.generate_node(item.as_ref(), context, Some(item_format.as_ref().clone()))
-                    }))?;
+                if let Some(array_format) = &expected_format {
+                    if let Format::Array { item_format, .. } = array_format {
+                        let mut non_constant_items = Vec::new();
 
-                    Value::Array {
-                        items,
-                        item_format: item_format.as_ref().clone(),
+                        let constant_items: Vec<Constant> = Result::from_iter(items.iter().enumerate().map(|(index, item)| {
+                            let item_value = self.generate_node(item.as_ref(), context, Some(item_format.as_ref().clone()))?;
+
+                            if let Value::Constant(item_constant) = item_value {
+                                Ok(item_constant)
+                            }
+                            else {
+                                let item_value = self.coerce_to_rvalue(item_value)?;
+                                non_constant_items.push((index, item_value));
+
+                                Ok(Constant::Undefined(item_format.as_ref().clone()))
+                            }
+                        }))?;
+
+                        let array_pointer = self.new_anonymous_register(array_format.clone().into_pointer());
+                        let initial_value = Value::Constant(Constant::Array {
+                            items: constant_items,
+                            item_format: item_format.as_ref().clone(),
+                        });
+
+                        self.emitter.emit_local_allocation(&array_pointer, array_format)?;
+
+                        let array_pointer = Value::Register(array_pointer);
+
+                        self.emitter.emit_store(&initial_value, &array_pointer)?;
+                        
+                        for (index, member) in non_constant_items {
+                            let item_pointer = self.new_anonymous_register(member.format().into_pointer());
+                            let zero = Value::Constant(Constant::Integer(IntegerValue::Signed32(0)));
+                            let index = Value::Constant(Constant::Integer(IntegerValue::Unsigned64(index as u64)));
+
+                            self.emitter.emit_get_element_pointer(&item_pointer, array_format, &array_pointer, &[zero, index])?;
+                            self.emitter.emit_store(&member, &Value::Register(item_pointer))?;
+                        }
+
+                        Value::Indirect {
+                            pointer: Box::new(array_pointer),
+                            loaded_format: array_format.clone(),
+                        }
+                    }
+                    else {
+                        return Err(crate::RawError::new(String::from("unknown array format")).into_boxed());
                     }
                 }
                 else {
@@ -1065,8 +1109,9 @@ impl<W: Write> Generator<W> {
                     if let Format::Identified { type_name, member_names, format, .. } = &structure_format {
                         if let Format::Structure { member_formats } = format.as_ref().clone() {
                             let mut initializer_members = members.clone();
+                            let mut non_constant_members = Vec::new();
 
-                            let members: Vec<Value> = Result::from_iter(std::iter::zip(member_names, member_formats).map(|(member_name, member_format)| {
+                            let constant_members: Vec<Constant> = Result::from_iter(std::iter::zip(member_names, member_formats).enumerate().map(|(index, (member_name, member_format))| {
                                 let initializer_index = initializer_members.iter().position(|(name, _)| member_name == name)
                                     .ok_or_else(|| crate::RawError::new(format!("missing member '{member_name}' in initializer of struct '{type_name}'")).into_boxed())?;
 
@@ -1074,16 +1119,46 @@ impl<W: Write> Generator<W> {
                                 let member_value = self.generate_node(member_value.as_ref(), context, Some(member_format.clone()))?;
 
                                 initializer_members.swap_remove(initializer_index);
-                                Ok(member_value)
+
+                                if let Value::Constant(member_constant) = member_value {
+                                    Ok(member_constant)
+                                }
+                                else {
+                                    let member_value = self.coerce_to_rvalue(member_value)?;
+                                    non_constant_members.push((index, member_value));
+
+                                    Ok(Constant::Undefined(member_format.clone()))
+                                }
                             }))?;
 
                             if !initializer_members.is_empty() {
                                 return Err(crate::RawError::new(format!("extraneous members for struct '{type_name}'")).into_boxed());
                             }
 
-                            Value::Structure {
-                                members,
-                                format: structure_format,
+                            let structure_pointer = self.new_anonymous_register(structure_format.clone().into_pointer());
+                            let initial_value = Value::Constant(Constant::Structure {
+                                members: constant_members,
+                                format: structure_format.clone(),
+                            });
+
+                            self.emitter.emit_local_allocation(&structure_pointer, &structure_format)?;
+
+                            let structure_pointer = Value::Register(structure_pointer);
+
+                            self.emitter.emit_store(&initial_value, &structure_pointer)?;
+                            
+                            for (index, member) in non_constant_members {
+                                let member_pointer = self.new_anonymous_register(member.format().into_pointer());
+                                let zero = Value::Constant(Constant::Integer(IntegerValue::Signed32(0)));
+                                let index = Value::Constant(Constant::Integer(IntegerValue::Signed32(index as i32)));
+
+                                self.emitter.emit_get_element_pointer(&member_pointer, &structure_format, &structure_pointer, &[zero, index])?;
+                                self.emitter.emit_store(&member, &Value::Register(member_pointer))?;
+                            }
+
+                            Value::Indirect {
+                                pointer: Box::new(structure_pointer),
+                                loaded_format: structure_format,
                             }
                         }
                         else {
@@ -1104,9 +1179,10 @@ impl<W: Write> Generator<W> {
                 let mut result = Value::Void;
                 for statement in statements {
                     let statement_value = self.generate_node(statement.as_ref(), context, None)?;
-                    if let Value::Never = statement_value {
+
+                    if let Format::Never = statement_value.format() {
                         // The rest of the statements in the block will never be executed, so they don't need to be generated
-                        result = Value::Never;
+                        result = statement_value;
                         break;
                     }
                 }
@@ -2013,9 +2089,9 @@ impl<W: Write> Generator<W> {
         }
     }
 
-    pub fn generate_constant_node(&mut self, node: &ast::Node, _context: &ScopeContext, expected_format: Option<Format>) -> crate::Result<Constant> {
+    pub fn generate_constant_node(&mut self, node: &ast::Node, context: &ScopeContext, expected_format: Option<Format>) -> crate::Result<Constant> {
         let mut constant_id = self.next_anonymous_constant_id;
-        let (constant, intermediate_constants) = self.fold_as_constant(node, &mut constant_id, expected_format)?;
+        let (constant, intermediate_constants) = self.fold_as_constant(node, &mut constant_id, context, expected_format)?;
         self.next_anonymous_constant_id = constant_id;
 
         for (pointer, intermediate_constant) in intermediate_constants {
@@ -2025,7 +2101,7 @@ impl<W: Write> Generator<W> {
         Ok(constant)
     }
 
-    pub fn fold_as_constant(&self, node: &ast::Node, constant_id: &mut usize, expected_format: Option<Format>) -> crate::Result<(Constant, Vec<(Register, Constant)>)> {
+    pub fn fold_as_constant(&self, node: &ast::Node, constant_id: &mut usize, context: &ScopeContext, expected_format: Option<Format>) -> crate::Result<(Constant, Vec<(Register, Constant)>)> {
         let mut new_intermediate_constant = |constant: Constant| {
             let pointer = Register {
                 name: format!(".const.{}", constant_id),
@@ -2067,6 +2143,69 @@ impl<W: Write> Generator<W> {
 
                         Constant::Register(pointer)
                     },
+                }
+            },
+            ast::Node::Array { items } => {
+                if let Some(Format::Array { item_format, .. }) = &expected_format {
+                    let items: Vec<Constant> = Result::from_iter(items.iter().map(|item| {
+                        let (item, mut constants) = self.fold_as_constant(item.as_ref(), constant_id, context, Some(item_format.as_ref().clone()))?;
+
+                        intermediate_constants.append(&mut constants);
+                        Ok(item)
+                    }))?;
+
+                    Constant::Array {
+                        items,
+                        item_format: item_format.as_ref().clone(),
+                    }
+                }
+                else {
+                    // TODO
+                    return Err(crate::RawError::new(String::from("unknown array format")).into_boxed());
+                }
+            },
+            ast::Node::Structure { type_name, members } => {
+                if let ast::Node::Literal(token::Literal::Identifier(name)) = type_name.as_ref() {
+                    if let Value::TypeDefinition(structure_format) = self.get_symbol(name)?.value() {
+                        if let Format::Identified { type_name, member_names, format, .. } = structure_format {
+                            if let Format::Structure { member_formats } = format.as_ref().clone() {
+                                let mut initializer_members = members.clone();
+    
+                                let members: Vec<Constant> = Result::from_iter(std::iter::zip(member_names, member_formats).map(|(member_name, member_format)| {
+                                    let initializer_index = initializer_members.iter().position(|(name, _)| member_name == name)
+                                        .ok_or_else(|| crate::RawError::new(format!("missing member '{member_name}' in initializer of struct '{type_name}'")).into_boxed())?;
+    
+                                    let (_, member_value) = &initializer_members[initializer_index];
+                                    let (member_value, mut constants) = self.fold_as_constant(member_value.as_ref(), constant_id, context, Some(member_format.clone()))?;
+    
+                                    intermediate_constants.append(&mut constants);
+                                    initializer_members.swap_remove(initializer_index);
+                                    Ok(member_value)
+                                }))?;
+    
+                                if !initializer_members.is_empty() {
+                                    return Err(crate::RawError::new(format!("extraneous members for struct '{name}'")).into_boxed());
+                                }
+    
+                                Constant::Structure {
+                                    members,
+                                    format: structure_format.clone(),
+                                }
+                            }
+                            else {
+                                return Err(crate::RawError::new(format!("invalid type definition for '{name}'")).into_boxed());
+                            }
+                        }
+                        else {
+                            return Err(crate::RawError::new(String::from("invalid type definition")).into_boxed());
+                        }
+                    }
+                    else {
+                        return Err(crate::RawError::new(format!("expected struct name, got '{name}'")).into_boxed());
+                    }
+                }
+                else {
+                    return Err(crate::RawError::new(String::from("expected struct name")).into_boxed());
                 }
             },
             _ => {

@@ -88,9 +88,12 @@ function main() -> i32 {
     let x: mut i32 = x;
     printf("%d\n", x);
 
+    let joe_age: u32 = 97;
+    let joe_calculus_grade_before_curve: u32 = 47;
+
     let joe: Student = Student {
-        age: 153,
-        grades: [80, 100, 92, 47],
+        age: joe_age,
+        grades: [80, 100, 92, joe_calculus_grade_before_curve + 15],
         name: "Joe Mama",
     };
 

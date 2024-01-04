@@ -5,81 +5,81 @@ target triple = "x86_64-pc-linux-gnu"
 
 %struct.MyStruct = type { i32, i64, i8 }
 
-@__const.main.my_init_struct = private unnamed_addr constant %struct.MyStruct { i32 1, i64 2, i8 3 }, align 8
 @my_global_struct = dso_local global %struct.MyStruct zeroinitializer, align 8
 
 ; Function Attrs: noinline nounwind optnone uwtable
 define dso_local i32 @main() #0 {
   %1 = alloca i32, align 4
-  %2 = alloca %struct.MyStruct, align 8
-  %3 = alloca %struct.MyStruct, align 8
-  %4 = alloca i32, align 4
-  %5 = alloca i32, align 4
-  %6 = alloca i8, align 1
+  %2 = alloca i32, align 4
+  %3 = alloca i32, align 4
+  %4 = alloca i8, align 1
+  %5 = alloca i64, align 8
+  %6 = alloca %struct.MyStruct, align 8
   store i32 0, i32* %1, align 4
-  %7 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %2, i32 0, i32 2
-  store i8 5, i8* %7, align 8
-  %8 = bitcast %struct.MyStruct* %3 to i8*
-  call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %8, i8* align 8 bitcast (%struct.MyStruct* @__const.main.my_init_struct to i8*), i64 24, i1 false)
-  store i64 7, i64* getelementptr inbounds (%struct.MyStruct, %struct.MyStruct* @my_global_struct, i32 0, i32 1), align 8
-  store i32 3, i32* %4, align 4
-  store i32 5, i32* %5, align 4
-  %9 = load i32, i32* %4, align 4
-  %10 = icmp eq i32 %9, 3
-  br i1 %10, label %11, label %14
+  store i32 3, i32* %2, align 4
+  store i32 5, i32* %3, align 4
+  %7 = load i32, i32* %2, align 4
+  %8 = icmp eq i32 %7, 3
+  br i1 %8, label %9, label %12
 
-11:                                               ; preds = %0
-  %12 = load i32, i32* %5, align 4
-  %13 = icmp eq i32 %12, 5
-  br label %14
+9:                                                ; preds = %0
+  %10 = load i32, i32* %3, align 4
+  %11 = icmp eq i32 %10, 5
+  br label %12
 
-14:                                               ; preds = %11, %0
-  %15 = phi i1 [ false, %0 ], [ %13, %11 ]
-  %16 = zext i1 %15 to i8
-  store i8 %16, i8* %6, align 1
-  %17 = load i32, i32* %4, align 4
-  %18 = icmp sgt i32 %17, 2
-  br i1 %18, label %22, label %19
+12:                                               ; preds = %9, %0
+  %13 = phi i1 [ false, %0 ], [ %11, %9 ]
+  %14 = zext i1 %13 to i8
+  store i8 %14, i8* %4, align 1
+  %15 = load i32, i32* %2, align 4
+  %16 = icmp sgt i32 %15, 2
+  br i1 %16, label %20, label %17
 
-19:                                               ; preds = %14
-  %20 = load i32, i32* %5, align 4
-  %21 = icmp sgt i32 %20, 8
-  br label %22
+17:                                               ; preds = %12
+  %18 = load i32, i32* %3, align 4
+  %19 = icmp sgt i32 %18, 8
+  br label %20
 
-22:                                               ; preds = %19, %14
-  %23 = phi i1 [ true, %14 ], [ %21, %19 ]
-  %24 = zext i1 %23 to i8
-  store i8 %24, i8* %6, align 1
-  %25 = load i32, i32* %4, align 4
-  %26 = icmp slt i32 %25, 4
-  br i1 %26, label %27, label %35
+20:                                               ; preds = %17, %12
+  %21 = phi i1 [ true, %12 ], [ %19, %17 ]
+  %22 = zext i1 %21 to i8
+  store i8 %22, i8* %4, align 1
+  %23 = load i32, i32* %2, align 4
+  %24 = icmp slt i32 %23, 4
+  br i1 %24, label %25, label %33
 
-27:                                               ; preds = %22
-  %28 = load i32, i32* %5, align 4
-  %29 = icmp slt i32 %28, 2
-  br i1 %29, label %33, label %30
+25:                                               ; preds = %20
+  %26 = load i32, i32* %3, align 4
+  %27 = icmp slt i32 %26, 2
+  br i1 %27, label %31, label %28
 
-30:                                               ; preds = %27
-  %31 = load i32, i32* %5, align 4
-  %32 = icmp sgt i32 %31, 3
+28:                                               ; preds = %25
+  %29 = load i32, i32* %3, align 4
+  %30 = icmp sgt i32 %29, 3
+  br label %31
+
+31:                                               ; preds = %28, %25
+  %32 = phi i1 [ true, %25 ], [ %30, %28 ]
   br label %33
 
-33:                                               ; preds = %30, %27
-  %34 = phi i1 [ true, %27 ], [ %32, %30 ]
-  br label %35
-
-35:                                               ; preds = %33, %22
-  %36 = phi i1 [ false, %22 ], [ %34, %33 ]
-  %37 = zext i1 %36 to i8
-  store i8 %37, i8* %6, align 1
+33:                                               ; preds = %31, %20
+  %34 = phi i1 [ false, %20 ], [ %32, %31 ]
+  %35 = zext i1 %34 to i8
+  store i8 %35, i8* %4, align 1
+  store i64 34, i64* %5, align 8
+  %36 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %6, i32 0, i32 0
+  store i32 12, i32* %36, align 8
+  %37 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %6, i32 0, i32 1
+  %38 = load i64, i64* %5, align 8
+  store i64 %38, i64* %37, align 8
+  %39 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %6, i32 0, i32 2
+  store i8 56, i8* %39, align 8
+  %40 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %6, i32 0, i32 0
+  store i32 5, i32* %40, align 8
   ret i32 0
 }
 
-; Function Attrs: argmemonly nofree nounwind willreturn
-declare void @llvm.memcpy.p0i8.p0i8.i64(i8* noalias nocapture writeonly, i8* noalias nocapture readonly, i64, i1 immarg) #1
-
 attributes #0 = { noinline nounwind optnone uwtable "frame-pointer"="all" "min-legal-vector-width"="0" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" }
-attributes #1 = { argmemonly nofree nounwind willreturn }
 
 !llvm.module.flags = !{!0, !1, !2, !3, !4}
 !llvm.ident = !{!5}

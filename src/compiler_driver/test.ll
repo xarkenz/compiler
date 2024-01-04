@@ -173,27 +173,46 @@ define dso_local i32 @main() #0 {
 	store i32 %1, i32* %x-2
 	%2 = load i32, i32* %x-2
 	%3 = call i32(i8*, ...) @printf(i8* noundef bitcast ([4 x i8]* @.const.5 to i8*), i32 noundef %2)
+	%joe_age = alloca i32
+	store i32 97, i32* %joe_age
+	%joe_calculus_grade_before_curve = alloca i32
+	store i32 47, i32* %joe_calculus_grade_before_curve
 	%joe = alloca %struct.Student
-	store %struct.Student { i8* bitcast ([9 x i8]* @.const.6 to i8*), i32 153, [4 x i32] [ i32 80, i32 100, i32 92, i32 47 ] }, %struct.Student* %joe
-	%4 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 0
-	%5 = load i8*, i8** %4
-	%6 = call i32(i8*, ...) @printf(i8* noundef bitcast ([10 x i8]* @.const.7 to i8*), i8* noundef %5)
-	%7 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 1
-	%8 = load i32, i32* %7
-	%9 = call i32(i8*, ...) @printf(i8* noundef bitcast ([9 x i8]* @.const.8 to i8*), i32 noundef %8)
-	%10 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 2
-	%11 = getelementptr inbounds [4 x i32], [4 x i32]* %10, i32 0, i32 0
-	%12 = load i32, i32* %11
-	%13 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 2
-	%14 = getelementptr inbounds [4 x i32], [4 x i32]* %13, i32 0, i32 1
-	%15 = load i32, i32* %14
-	%16 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 2
-	%17 = getelementptr inbounds [4 x i32], [4 x i32]* %16, i32 0, i32 2
+	%4 = load i32, i32* %joe_age
+	%5 = load i32, i32* %joe_calculus_grade_before_curve
+	%6 = add nuw i32 %5, 15
+	%7 = alloca [4 x i32]
+	store [4 x i32] [ i32 80, i32 100, i32 92, i32 undef ], [4 x i32]* %7
+	%8 = getelementptr inbounds [4 x i32], [4 x i32]* %7, i32 0, i64 3
+	store i32 %6, i32* %8
+	%9 = load [4 x i32], [4 x i32]* %7
+	%10 = alloca %struct.Student
+	store %struct.Student { i8* bitcast ([9 x i8]* @.const.6 to i8*), i32 undef, [4 x i32] undef }, %struct.Student* %10
+	%11 = getelementptr inbounds %struct.Student, %struct.Student* %10, i32 0, i32 1
+	store i32 %4, i32* %11
+	%12 = getelementptr inbounds %struct.Student, %struct.Student* %10, i32 0, i32 2
+	store [4 x i32] %9, [4 x i32]* %12
+	%13 = load %struct.Student, %struct.Student* %10
+	store %struct.Student %13, %struct.Student* %joe
+	%14 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 0
+	%15 = load i8*, i8** %14
+	%16 = call i32(i8*, ...) @printf(i8* noundef bitcast ([10 x i8]* @.const.7 to i8*), i8* noundef %15)
+	%17 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 1
 	%18 = load i32, i32* %17
-	%19 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 2
-	%20 = getelementptr inbounds [4 x i32], [4 x i32]* %19, i32 0, i32 3
-	%21 = load i32, i32* %20
-	%22 = call i32(i8*, ...) @printf(i8* noundef bitcast ([24 x i8]* @.const.9 to i8*), i32 noundef %12, i32 noundef %15, i32 noundef %18, i32 noundef %21)
+	%19 = call i32(i8*, ...) @printf(i8* noundef bitcast ([9 x i8]* @.const.8 to i8*), i32 noundef %18)
+	%20 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 2
+	%21 = getelementptr inbounds [4 x i32], [4 x i32]* %20, i32 0, i32 0
+	%22 = load i32, i32* %21
+	%23 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 2
+	%24 = getelementptr inbounds [4 x i32], [4 x i32]* %23, i32 0, i32 1
+	%25 = load i32, i32* %24
+	%26 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 2
+	%27 = getelementptr inbounds [4 x i32], [4 x i32]* %26, i32 0, i32 2
+	%28 = load i32, i32* %27
+	%29 = getelementptr inbounds %struct.Student, %struct.Student* %joe, i32 0, i32 2
+	%30 = getelementptr inbounds [4 x i32], [4 x i32]* %29, i32 0, i32 3
+	%31 = load i32, i32* %30
+	%32 = call i32(i8*, ...) @printf(i8* noundef bitcast ([24 x i8]* @.const.9 to i8*), i32 noundef %22, i32 noundef %25, i32 noundef %28, i32 noundef %31)
 	ret i32 0
 }
 
