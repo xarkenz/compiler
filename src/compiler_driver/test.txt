@@ -1,8 +1,9 @@
-// '*mut void' works as a substitute for 'FILE*' at the moment
-function fopen(filename: *[u8], mode: *[u8]) -> *mut void;
-function fclose(file: *mut void) -> i32;
-function feof(file: *mut void) -> i32;
-function fgets(buffer: *mut [u8], limit: i32, file: *mut void) -> *mut [u8];
+struct CFile;
+
+function fopen(filename: *[u8], mode: *[u8]) -> *mut CFile;
+function fclose(file: *mut CFile) -> i32;
+function feof(file: *mut CFile) -> i32;
+function fgets(buffer: *mut [u8], limit: i32, file: *mut CFile) -> *mut [u8];
 function printf(format: *[u8], ..) -> u32;
 
 function malloc(size_bytes: u64) -> *mut void;
@@ -37,7 +38,7 @@ function gcd(a: mut u32, b: mut u32) -> u32 {
 let const sample_input: *[u8] = "1abc2\npqr3stu8vwx\na1b2c3d4e5f\ntreb7uchet\n";
 
 function aoc_01_p1() {
-    let input: *mut void = fopen("day01.txt", "r");
+    let input: *mut CFile = fopen("day01.txt", "r");
     if (input == null) {
         printf("unable to open input file\n");
         return;
@@ -74,6 +75,38 @@ function aoc_01_p1() {
     printf("[01p1] Sum of calibration values: %d\n", calibration_sum);
 }
 
+struct Node {
+    value: *[u8],
+    next: *mut Node,
+}
+
+function omg_linked_list(values: *[*[u8]], value_count: u64) {
+    let head: mut *mut Node = null;
+
+    let index: mut u64 = 0;
+    while (index < value_count) {
+        let node: *mut Node = malloc(sizeof(Node)) as *mut Node;
+        *node = Node {
+            value: values[index],
+            next: head,
+        };
+        head = node;
+
+        index = index + 1;
+    }
+
+    printf("Reversed:\n");
+    while (head != null) {
+        let node: *mut Node = head;
+
+        // I don't have the -> operator implemented yet :P
+        printf("%s\n", (*node).value);
+        head = (*node).next;
+
+        free(node as *mut void);
+    }
+}
+
 struct Student {
     name: *[u8],
     age: u32,
@@ -100,6 +133,15 @@ function main() -> i32 {
     printf("Name: %s\n", joe.name);
     printf("Age: %u\n", joe.age);
     printf("Grades: %u, %u, %u, %u\n", joe.grades[0], joe.grades[1], joe.grades[2], joe.grades[3]);
+
+    let values: [*[u8]; 4] = [
+        "Value 1",
+        "Value 2",
+        "Value 3",
+        "Value 4",
+    ];
+
+    omg_linked_list(&values, 4);
 
     return 0;
 }

@@ -1,5 +1,6 @@
 use super::*;
 
+use std::collections::{BTreeSet, BTreeMap};
 use std::io::Write;
 
 use indoc::writedoc;
@@ -9,9 +10,11 @@ pub struct Emitter<W: Write> {
     writer: W,
     is_global: bool,
     used_attribute_group_0: bool,
-    used_attribute_group_1: bool, // TODO: it's not that simple...
-    defined_functions: Vec<Register>,
-    queued_function_declarations: Vec<(Register, String)>,
+    used_attribute_group_1: bool,
+    defined_functions: BTreeSet<Register>,
+    queued_function_declarations: BTreeMap<Register, String>,
+    defined_types: BTreeSet<String>,
+    queued_type_declarations: BTreeMap<String, String>,
     queued_global_declarations: Vec<String>,
 }
 
@@ -31,8 +34,10 @@ impl<W: Write> Emitter<W> {
             is_global: true,
             used_attribute_group_0: false,
             used_attribute_group_1: false,
-            defined_functions: Vec::new(),
-            queued_function_declarations: Vec::new(),
+            defined_functions: BTreeSet::new(),
+            queued_function_declarations: BTreeMap::new(),
+            defined_types: BTreeSet::new(),
+            queued_type_declarations: BTreeMap::new(),
             queued_global_declarations: Vec::new(),
         }
     }
@@ -53,16 +58,23 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_postamble(&mut self) -> crate::Result<()> {
-        // Any emitted declarations will use attributes #1
+        // FIXME: this attributes #0/#1 stuff is not accurate lol
+        // Any emitted function declarations will use attributes #1
         if !self.queued_function_declarations.is_empty() {
             self.used_attribute_group_1 = true;
         }
-        // Write all function declarations queued for writing
-        for (_, declaration) in &self.queued_function_declarations {
+        // Write all queued type declarations
+        for declaration in self.queued_type_declarations.values() {
+            writeln!(self.writer, "{declaration}\n")
+                .map_err(|cause| self.error(cause))?;
+        }
+        // Write all queued function declarations
+        for declaration in self.queued_function_declarations.values() {
             writeln!(self.writer, "{declaration}\n")
                 .map_err(|cause| self.error(cause))?;
         }
         // Dequeue all declarations which were just written
+        self.queued_type_declarations.clear();
         self.queued_function_declarations.clear();
 
         if self.used_attribute_group_0 {
@@ -110,9 +122,7 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn queue_function_declaration(&mut self, function: &Register, return_format: &Format, parameter_formats: &[Format], is_varargs: bool) {
-        if !self.defined_functions.contains(function) && (
-            !self.queued_function_declarations.iter().any(|(declared_function, _)| declared_function == function)
-        ) {
+        if !self.defined_functions.contains(function) && !self.queued_function_declarations.contains_key(function) {
             // Not a fan of .unwrap() spam, but write!() on a String shouldn't fail
             use std::fmt::Write;
             let mut declaration = String::new();
@@ -137,13 +147,13 @@ impl<W: Write> Emitter<W> {
 
             // Enqueue the declaration which was just generated, which will be written before the module postamble
             // --that is, unless the function is defined later in the file
-            self.queued_function_declarations.push((function.clone(), declaration));
+            self.queued_function_declarations.insert(function.clone(), declaration);
         }
     }
 
     pub fn emit_function_enter(&mut self, function: &Register, return_format: &Format, parameters: &[Register], is_varargs: bool) -> crate::Result<()> {
         // Remove any forward declarations of this function from the declaration queue
-        self.queued_function_declarations.retain(|(declared_function, _)| declared_function.name() != function.name());
+        self.queued_function_declarations.remove(function);
 
         write!(self.writer, "define dso_local {return_format} {function}(")
             .map_err(|cause| self.error(cause))?;
@@ -199,14 +209,21 @@ impl<W: Write> Emitter<W> {
         Ok(())
     }
 
-    pub fn emit_type_definition(&mut self, identifier: &str, structure_format: Option<&Format>) -> crate::Result<()> {
-        if let Some(structure_format) = structure_format {
-            writeln!(self.writer, "%{identifier} = type {structure_format}\n")
+    pub fn queue_type_declaration(&mut self, identifier: &str) {
+        if !self.defined_types.contains(identifier) && !self.queued_type_declarations.contains_key(identifier) {
+            let declaration = format!("%{identifier} = type opaque");
+            // Enqueue the declaration, which will be written before the module postamble
+            // --that is, unless the type is defined later in the file
+            self.queued_type_declarations.insert(identifier.into(), declaration);
         }
-        else {
-            writeln!(self.writer, "%{identifier} = type opaque\n")
-        }
-        .map_err(|cause| self.error(cause))
+    }
+
+    pub fn emit_type_definition(&mut self, identifier: &str, structure_format: &Format) -> crate::Result<()> {
+        // Remove any forward declarations of this type from the declaration queue
+        self.queued_type_declarations.remove(identifier);
+
+        writeln!(self.writer, "%{identifier} = type {structure_format}\n")
+            .map_err(|cause| self.error(cause))
     }
 
     pub fn emit_global_allocation(&mut self, pointer: &Register, value: &Constant, constant: bool) -> crate::Result<()> {

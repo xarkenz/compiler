@@ -372,7 +372,7 @@ pub enum Node {
     },
     StructureDefinition {
         name: String,
-        members: Vec<(String, TypeNode)>,
+        members: Option<Vec<(String, TypeNode)>>,
     },
 }
 
@@ -491,16 +491,21 @@ impl fmt::Display for Node {
                 }
             },
             Self::StructureDefinition { name, members } => {
-                write!(f, " struct {name} {{")?;
-                let mut members_iter = members.iter();
-                if let Some((member_name, member_type)) = members_iter.next() {
-                    write!(f, " {member_name}: {member_type}")?;
-                    for (member_name, member_type) in members_iter {
-                        write!(f, ", {member_name}: {member_type}")?;
+                if let Some(members) = members {
+                    write!(f, " struct {name} {{")?;
+                    let mut members_iter = members.iter();
+                    if let Some((member_name, member_type)) = members_iter.next() {
+                        write!(f, " {member_name}: {member_type}")?;
+                        for (member_name, member_type) in members_iter {
+                            write!(f, ", {member_name}: {member_type}")?;
+                        }
+                        write!(f, " ")?;
                     }
-                    write!(f, " ")?;
+                    write!(f, "}}")
                 }
-                write!(f, "}}")
+                else {
+                    write!(f, " struct {name};")
+                }
             },
         }
     }

@@ -206,7 +206,7 @@ impl SymbolTable {
         (symbol, pointer)
     }
 
-    pub fn create_type_definition_symbol(&self, identifier: String, definition_format: Format) -> Symbol {
+    pub fn create_type_definition_symbol(&self, identifier: String, definition_format: Option<Format>) -> Symbol {
         let scope = self.current_scope().clone();
         let version = self.next_symbol_version(&identifier);
         let symbol = Symbol {

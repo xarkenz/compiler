@@ -41,7 +41,7 @@ impl fmt::Display for StringValue {
 #[derive(Clone, PartialEq, Debug)]
 pub enum Literal {
     Identifier(String),
-    Integer(u64),
+    Integer(i128),
     Boolean(bool),
     NullPointer,
     String(StringValue),

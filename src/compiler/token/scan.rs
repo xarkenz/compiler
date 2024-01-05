@@ -94,7 +94,7 @@ impl<T: BufRead> Scanner<T> {
 
         let mut value = 0;
         for digit in content.chars() {
-            value = 10 * value + digit as u64 - '0' as u64;
+            value = 10 * value + digit as i128 - '0' as i128;
         }
 
         Ok(Some(Token::Literal(Literal::Integer(value))))
@@ -236,7 +236,7 @@ impl<T: BufRead> Scanner<T> {
             .ok_or_else(|| self.syntax_error(String::from("unclosed character literal")))?;
 
         match self.next_char()? {
-            Some('\'') => Ok(Some(Token::Literal(Literal::Integer(byte as u64)))),
+            Some('\'') => Ok(Some(Token::Literal(Literal::Integer(byte as i128)))),
             Some(_) => Err(self.syntax_error(String::from("expected single quote to close character literal"))),
             None => Err(self.syntax_error(String::from("unclosed character literal"))),
         }

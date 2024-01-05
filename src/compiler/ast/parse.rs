@@ -401,29 +401,37 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.scan_token()?;
                 let name = self.expect_identifier()?;
                 self.scan_token()?;
-                self.expect_token(&[Token::CurlyLeft])?;
-                self.scan_token()?;
-
-                let mut members = Vec::new();
-                while !(matches!(self.current_token(), Some(Token::CurlyRight))) {
-                    let member_name = self.expect_identifier()?;
+                self.expect_token(&[Token::CurlyLeft, Token::Semicolon])?;
+                let members = if let Some(Token::CurlyLeft) = self.current_token() {
                     self.scan_token()?;
-                    self.expect_token(&[Token::Colon])?;
-                    self.scan_token()?;
-                    let member_type = self.parse_unqualified_type(&[Token::Comma, Token::CurlyRight])?;
-                    members.push((member_name, member_type));
 
-                    if let Some(Token::Comma) = self.current_token() {
+                    let mut members = Vec::new();
+                    while !(matches!(self.current_token(), Some(Token::CurlyRight))) {
+                        let member_name = self.expect_identifier()?;
                         self.scan_token()?;
+                        self.expect_token(&[Token::Colon])?;
+                        self.scan_token()?;
+                        let member_type = self.parse_unqualified_type(&[Token::Comma, Token::CurlyRight])?;
+                        members.push((member_name, member_type));
+
+                        if let Some(Token::Comma) = self.current_token() {
+                            self.scan_token()?;
+                        }
                     }
+
+                    self.scan_token()?;
+                    Some(members)
                 }
-                self.scan_token()?;
+                else {
+                    self.scan_token()?;
+                    None
+                };
 
                 Ok(Some(Box::new(Node::StructureDefinition {
                     name,
                     members,
                 })))
-            }
+            },
             Some(got_token) if is_global => {
                 Err(self.scanner.syntax_error(expected_token_error_message(&[Token::Semicolon, Token::Let, Token::Function], got_token)))
             },
