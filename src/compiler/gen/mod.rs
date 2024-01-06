@@ -1492,252 +1492,30 @@ impl<W: Write> Generator<W> {
     fn generate_binary_operation(&mut self, operation: ast::BinaryOperation, lhs: &ast::Node, rhs: &ast::Node, context: &ScopeContext, expected_format: Option<&Format>) -> crate::Result<Value> {
         let result = match operation {
             ast::BinaryOperation::Subscript => {
-                let lhs = self.generate_node(lhs, context, None)?;
-                let rhs = self.generate_node(rhs, context, None)?;
-                let rhs = self.coerce_to_rvalue(rhs)?;
-                
-                if !(matches!(rhs.format().as_unqualified(), Format::Integer { .. })) {
-                    return Err(crate::RawError::new(String::from("expected an integer index")).into_boxed());
-                }
-
-                // Brain hurty so I made big list:
-
-                // mut [T; N] <=> [N x T] : not allowed (for now) : error
-                // mut &[T; N] <=> [N x T]* : getelementptr instruction (0, index) : indirect value
-                // mut *[T; N] <=> [N x T]* : getelementptr instruction (0, index) : indirect value
-                // mut &*[T; N] <=> [N x T]** : load -> getelementptr instruction (0, index) : indirect value
-                // mut [T] <=> T : not possible : error
-                // mut &[T] <=> T* : getelementptr instruction (index) : indirect value
-                // mut *[T] <=> T* : getelementptr instruction (index) : indirect value
-                // mut &*[T] <=> T** : load -> getelementptr instruction (index) : indirect value
-                // const [T; N] <=> [N x T] : not allowed (for now) : error
-                // const &[T; N] <=> [N x T]* : getelementptr expression (0, index) : indirect constant
-                // const *[T; N] <=> [N x T]* : getelementptr expression (0, index) : indirect constant
-                // const &*[T; N] <=> [N x T]** : (only in non-const context) load -> getelementptr instruction (0, index) : indirect value
-                // const [T] <=> T : not possible : error
-                // const &[T] <=> T* : getelementptr expression (index) : indirect constant
-                // const *[T] <=> T* : getelementptr expression (index) : indirect constant
-                // const &*[T] <=> T** : (only in non-const context) load -> getelementptr instruction (index) : indirect value
-
-                // Inputs: lvalue/rvalue, is behind pointer, sized/unsized, lhs constant, rhs constant
-                // Outputs: whether to load, expression vs. instruction, (0, index) vs. (index)
-
-                // TL;DR: I think I've way overcomplicated this but I don't know what else to do
-
-                let lhs_format = lhs.format();
-                let cannot_index_error = || crate::RawError::new(format!("cannot index value of type '{}'", lhs_format.rich_name())).into_boxed();
-
-                // This is incredibly nasty and repetitive... could signify a need for a rethink of Value/Constant and/or Format
-                match (lhs, rhs) {
-                    (Value::Constant(lhs), Value::Constant(rhs)) => match lhs {
-                        Constant::Indirect { pointer, loaded_format } => match loaded_format.as_unqualified() {
-                            Format::Array { item_format, length } => {
-                                // const &[T; N], const &[T]
-                                let indices = match length {
-                                    Some(_) => vec![Constant::Integer(IntegerValue::Signed32(0)), rhs],
-                                    None => vec![rhs],
-                                };
-
-                                let element_pointer = Constant::GetElementPointer {
-                                    element_format: item_format.as_ref().clone().into_pointer(),
-                                    aggregate_format: loaded_format.clone(),
-                                    pointer,
-                                    indices,
-                                };
-
-                                Value::Constant(Constant::Indirect {
-                                    pointer: Box::new(element_pointer),
-                                    loaded_format: item_format.as_ref().clone(),
-                                })
-                            },
-                            Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
-                                Format::Array { item_format, length } => {
-                                    // const &*[T; N], const &*[T]
-                                    let element_format = match pointee_format.as_ref() {
-                                        Format::Mutable(_) => item_format.as_ref().clone().into_mutable(),
-                                        _ => item_format.as_ref().clone()
-                                    };
-                                    let loaded_pointer = self.new_anonymous_register(loaded_format.clone());
-                                    let element_pointer = self.new_anonymous_register(element_format.clone().into_pointer());
-                                    let indices = match length {
-                                        Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), Value::Constant(rhs)],
-                                        None => vec![Value::Constant(rhs)],
-                                    };
-
-                                    self.emitter.emit_load(&loaded_pointer, &Value::Constant(*pointer))?;
-                                    self.emitter.emit_get_element_pointer(
-                                        &element_pointer,
-                                        pointee_format.as_ref(),
-                                        &Value::Register(loaded_pointer),
-                                        &indices,
-                                    )?;
-
-                                    Value::Indirect {
-                                        pointer: Box::new(Value::Register(element_pointer)),
-                                        loaded_format: element_format,
-                                    }
-                                },
-                                _ => return Err(cannot_index_error())
-                            },
-                            _ => return Err(cannot_index_error())
-                        },
-                        Constant::Register(register) => match register.format().clone().as_unqualified() {
-                            Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
-                                Format::Array { item_format, length } => {
-                                    // const *[T; N], const *[T]
-                                    let indices = match length {
-                                        Some(_) => vec![Constant::Integer(IntegerValue::Signed32(0)), rhs],
-                                        None => vec![rhs],
-                                    };
-
-                                    let element_pointer = Constant::GetElementPointer {
-                                        element_format: item_format.as_ref().clone().into_pointer(),
-                                        aggregate_format: pointee_format.as_ref().clone(),
-                                        pointer: Box::new(Constant::Register(register)),
-                                        indices,
-                                    };
-
-                                    Value::Constant(Constant::Indirect {
-                                        pointer: Box::new(element_pointer),
-                                        loaded_format: item_format.as_ref().clone(),
-                                    })
-                                },
-                                _ => return Err(cannot_index_error())
-                            },
-                            _ => return Err(cannot_index_error())
-                        },
-                        _ => return Err(cannot_index_error())
-                    },
-                    (lhs, rhs) => match lhs {
-                        Value::Indirect { pointer, loaded_format } => match loaded_format.as_unqualified() {
-                            Format::Array { item_format, length } => {
-                                // &[T; N], &[T]
-                                let element_pointer = self.new_anonymous_register(item_format.as_ref().clone().into_pointer());
-                                let indices = match length {
-                                    Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), rhs],
-                                    None => vec![rhs],
-                                };
-
-                                self.emitter.emit_get_element_pointer(
-                                    &element_pointer,
-                                    &loaded_format,
-                                    pointer.as_ref(),
-                                    &indices,
-                                )?;
-
-                                Value::Indirect {
-                                    pointer: Box::new(Value::Register(element_pointer)),
-                                    loaded_format: item_format.as_ref().clone(),
-                                }
-                            },
-                            Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
-                                Format::Array { item_format, length } => {
-                                    // &*[T; N], &*[T]
-                                    let element_format = match pointee_format.as_ref() {
-                                        Format::Mutable(_) => item_format.as_ref().clone().into_mutable(),
-                                        _ => item_format.as_ref().clone()
-                                    };
-                                    let loaded_pointer = self.new_anonymous_register(loaded_format.clone());
-                                    let element_pointer = self.new_anonymous_register(element_format.clone().into_pointer());
-                                    let indices = match length {
-                                        Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), rhs],
-                                        None => vec![rhs],
-                                    };
-
-                                    self.emitter.emit_load(&loaded_pointer, pointer.as_ref())?;
-                                    self.emitter.emit_get_element_pointer(
-                                        &element_pointer,
-                                        pointee_format.as_ref(),
-                                        &Value::Register(loaded_pointer),
-                                        &indices,
-                                    )?;
-
-                                    Value::Indirect {
-                                        pointer: Box::new(Value::Register(element_pointer)),
-                                        loaded_format: element_format,
-                                    }
-                                },
-                                _ => return Err(cannot_index_error())
-                            },
-                            _ => return Err(cannot_index_error())
-                        },
-                        Value::Register(register) => match register.format().clone().as_unqualified() {
-                            Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
-                                Format::Array { item_format, length } => {
-                                    // *[T; N], *[T]
-                                    let element_pointer = self.new_anonymous_register(item_format.as_ref().clone().into_pointer());
-                                    let indices = match length {
-                                        Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), rhs],
-                                        None => vec![rhs],
-                                    };
-
-                                    self.emitter.emit_get_element_pointer(
-                                        &element_pointer,
-                                        pointee_format.as_ref(),
-                                        &Value::Register(register),
-                                        &indices,
-                                    )?;
-
-                                    Value::Indirect {
-                                        pointer: Box::new(Value::Register(element_pointer)),
-                                        loaded_format: item_format.as_ref().clone(),
-                                    }
-                                },
-                                _ => return Err(cannot_index_error())
-                            },
-                            _ => return Err(cannot_index_error())
-                        },
-                        _ => return Err(cannot_index_error())
-                    }
-                }
+                self.generate_subscript_operation(lhs, rhs, context)?
             },
             ast::BinaryOperation::Access => {
                 let structure = self.generate_node(lhs, context, None)?;
 
-                let structure_format = structure.format();
-                let cannot_access_error = || crate::RawError::new(format!("cannot access members of non-struct type '{}'", structure_format.rich_name())).into_boxed();
+                self.generate_member_access(structure, rhs, context)?
+            },
+            ast::BinaryOperation::DerefAccess => {
+                let pointer = self.generate_node(lhs, context, None)?;
+                let pointer = self.coerce_to_rvalue(pointer)?;
+                let pointer_format = pointer.format();
 
-                if let ast::Node::Literal(token::Literal::Identifier(member_name)) = rhs {
-                    match structure {
-                        Value::Indirect { pointer, loaded_format } => match loaded_format.as_unqualified() {
-                            Format::Identified { type_name, .. } => match self.get_definition_format(type_name)?.as_unqualified() {
-                                Format::Structure { members, .. } => {
-                                    let member_index = members.iter().position(|(name, _)| name == member_name)
-                                        .ok_or_else(|| crate::RawError::new(format!("member '{member_name}' does not exist in struct '{type_name}'")).into_boxed())?;
-                                    let member_format = match &loaded_format {
-                                        Format::Mutable(_) => members[member_index].1.clone().into_mutable(),
-                                        _ => members[member_index].1.clone()
-                                    };
-                                    let member_pointer = self.new_anonymous_register(member_format.clone().into_pointer());
-                                    let indices = &[
-                                        Value::Constant(Constant::Integer(IntegerValue::Signed32(0))),
-                                        Value::Constant(Constant::Integer(IntegerValue::Signed32(member_index as i32))),
-                                    ];
+                if let Format::Pointer(pointee_format) = pointer_format.as_unqualified() {
+                    let structure = Value::Indirect {
+                        pointer: Box::new(pointer),
+                        loaded_format: pointee_format.as_ref().clone(),
+                    };
 
-                                    self.emitter.emit_get_element_pointer(
-                                        &member_pointer,
-                                        &loaded_format,
-                                        pointer.as_ref(),
-                                        indices,
-                                    )?;
-
-                                    Value::Indirect {
-                                        pointer: Box::new(Value::Register(member_pointer)),
-                                        loaded_format: member_format,
-                                    }
-                                },
-                                _ => return Err(cannot_access_error())
-                            },
-                            _ => return Err(cannot_access_error())
-                        },
-                        _ => return Err(cannot_access_error())
-                    }
+                    self.generate_member_access(structure, rhs, context)?
                 }
                 else {
-                    return Err(crate::RawError::new(String::from("invalid member name for operation '.'")).into_boxed());
+                    return Err(crate::RawError::new(format!("cannot dereference value of type '{}'", pointer_format.rich_name())).into_boxed());
                 }
             },
-            ast::BinaryOperation::DerefAccess => todo!(),
             ast::BinaryOperation::Convert => {
                 if let ast::Node::Type(type_node) = rhs {
                     let value = self.generate_node(lhs, context, None)?;
@@ -1968,6 +1746,232 @@ impl<W: Write> Generator<W> {
         };
 
         Ok(result)
+    }
+
+    fn generate_subscript_operation(&mut self, lhs: &ast::Node, rhs: &ast::Node, context: &ScopeContext) -> crate::Result<Value> {
+        let lhs = self.generate_node(lhs, context, None)?;
+        let rhs = self.generate_node(rhs, context, None)?;
+        let rhs = self.coerce_to_rvalue(rhs)?;
+        
+        if !(matches!(rhs.format().as_unqualified(), Format::Integer { .. })) {
+            return Err(crate::RawError::new(String::from("expected an integer index")).into_boxed());
+        }
+
+        let lhs_format = lhs.format();
+        let cannot_index_error = || crate::RawError::new(format!("cannot index value of type '{}'", lhs_format.rich_name())).into_boxed();
+
+        // This is incredibly nasty and repetitive... could signify a need for a rethink of Value/Constant and/or Format
+        match (lhs, rhs) {
+            (Value::Constant(lhs), Value::Constant(rhs)) => match lhs {
+                Constant::Indirect { pointer, loaded_format } => match loaded_format.as_unqualified() {
+                    Format::Array { item_format, length } => {
+                        // const &[T; N], const &[T]
+                        let indices = match length {
+                            Some(_) => vec![Constant::Integer(IntegerValue::Signed32(0)), rhs],
+                            None => vec![rhs],
+                        };
+
+                        let element_pointer = Constant::GetElementPointer {
+                            element_format: item_format.as_ref().clone().into_pointer(),
+                            aggregate_format: loaded_format.clone(),
+                            pointer,
+                            indices,
+                        };
+
+                        Ok(Value::Constant(Constant::Indirect {
+                            pointer: Box::new(element_pointer),
+                            loaded_format: item_format.as_ref().clone(),
+                        }))
+                    },
+                    Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
+                        Format::Array { item_format, length } => {
+                            // const &*[T; N], const &*[T]
+                            let element_format = match pointee_format.as_ref() {
+                                Format::Mutable(_) => item_format.as_ref().clone().into_mutable(),
+                                _ => item_format.as_ref().clone()
+                            };
+                            let loaded_pointer = self.new_anonymous_register(loaded_format.clone());
+                            let element_pointer = self.new_anonymous_register(element_format.clone().into_pointer());
+                            let indices = match length {
+                                Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), Value::Constant(rhs)],
+                                None => vec![Value::Constant(rhs)],
+                            };
+
+                            self.emitter.emit_load(&loaded_pointer, &Value::Constant(*pointer))?;
+                            self.emitter.emit_get_element_pointer(
+                                &element_pointer,
+                                pointee_format.as_ref(),
+                                &Value::Register(loaded_pointer),
+                                &indices,
+                            )?;
+
+                            Ok(Value::Indirect {
+                                pointer: Box::new(Value::Register(element_pointer)),
+                                loaded_format: element_format,
+                            })
+                        },
+                        _ => Err(cannot_index_error())
+                    },
+                    _ => Err(cannot_index_error())
+                },
+                Constant::Register(register) => match register.format().clone().as_unqualified() {
+                    Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
+                        Format::Array { item_format, length } => {
+                            // const *[T; N], const *[T]
+                            let indices = match length {
+                                Some(_) => vec![Constant::Integer(IntegerValue::Signed32(0)), rhs],
+                                None => vec![rhs],
+                            };
+
+                            let element_pointer = Constant::GetElementPointer {
+                                element_format: item_format.as_ref().clone().into_pointer(),
+                                aggregate_format: pointee_format.as_ref().clone(),
+                                pointer: Box::new(Constant::Register(register)),
+                                indices,
+                            };
+
+                            Ok(Value::Constant(Constant::Indirect {
+                                pointer: Box::new(element_pointer),
+                                loaded_format: item_format.as_ref().clone(),
+                            }))
+                        },
+                        _ => Err(cannot_index_error())
+                    },
+                    _ => Err(cannot_index_error())
+                },
+                _ => Err(cannot_index_error())
+            },
+            (lhs, rhs) => match lhs {
+                Value::Indirect { pointer, loaded_format } => match loaded_format.as_unqualified() {
+                    Format::Array { item_format, length } => {
+                        // &[T; N], &[T]
+                        let element_pointer = self.new_anonymous_register(item_format.as_ref().clone().into_pointer());
+                        let indices = match length {
+                            Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), rhs],
+                            None => vec![rhs],
+                        };
+
+                        self.emitter.emit_get_element_pointer(
+                            &element_pointer,
+                            &loaded_format,
+                            pointer.as_ref(),
+                            &indices,
+                        )?;
+
+                        Ok(Value::Indirect {
+                            pointer: Box::new(Value::Register(element_pointer)),
+                            loaded_format: item_format.as_ref().clone(),
+                        })
+                    },
+                    Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
+                        Format::Array { item_format, length } => {
+                            // &*[T; N], &*[T]
+                            let element_format = match pointee_format.as_ref() {
+                                Format::Mutable(_) => item_format.as_ref().clone().into_mutable(),
+                                _ => item_format.as_ref().clone()
+                            };
+                            let loaded_pointer = self.new_anonymous_register(loaded_format.clone());
+                            let element_pointer = self.new_anonymous_register(element_format.clone().into_pointer());
+                            let indices = match length {
+                                Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), rhs],
+                                None => vec![rhs],
+                            };
+
+                            self.emitter.emit_load(&loaded_pointer, pointer.as_ref())?;
+                            self.emitter.emit_get_element_pointer(
+                                &element_pointer,
+                                pointee_format.as_ref(),
+                                &Value::Register(loaded_pointer),
+                                &indices,
+                            )?;
+
+                            Ok(Value::Indirect {
+                                pointer: Box::new(Value::Register(element_pointer)),
+                                loaded_format: element_format,
+                            })
+                        },
+                        _ => Err(cannot_index_error())
+                    },
+                    _ => Err(cannot_index_error())
+                },
+                Value::Register(register) => match register.format().clone().as_unqualified() {
+                    Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
+                        Format::Array { item_format, length } => {
+                            // *[T; N], *[T]
+                            let element_pointer = self.new_anonymous_register(item_format.as_ref().clone().into_pointer());
+                            let indices = match length {
+                                Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), rhs],
+                                None => vec![rhs],
+                            };
+
+                            self.emitter.emit_get_element_pointer(
+                                &element_pointer,
+                                pointee_format.as_ref(),
+                                &Value::Register(register),
+                                &indices,
+                            )?;
+
+                            Ok(Value::Indirect {
+                                pointer: Box::new(Value::Register(element_pointer)),
+                                loaded_format: item_format.as_ref().clone(),
+                            })
+                        },
+                        _ => Err(cannot_index_error())
+                    },
+                    _ => Err(cannot_index_error())
+                },
+                _ => Err(cannot_index_error())
+            }
+        }
+    }
+
+    fn generate_member_access(&mut self, structure: Value, member_name: &ast::Node, _context: &ScopeContext) -> crate::Result<Value> {
+        let structure_format = structure.format();
+
+        let cannot_access_error = || crate::RawError::new(format!(
+            "cannot access members of non-struct type '{format}'",
+            format = structure_format.rich_name(),
+        )).into_boxed();
+
+        if let ast::Node::Literal(token::Literal::Identifier(member_name)) = member_name {
+            match structure {
+                Value::Indirect { pointer, loaded_format } => match loaded_format.as_unqualified() {
+                    Format::Identified { type_name, .. } => match self.get_definition_format(type_name)?.as_unqualified() {
+                        Format::Structure { members, .. } => {
+                            let member_index = members.iter().position(|(name, _)| name == member_name)
+                                .ok_or_else(|| crate::RawError::new(format!("member '{member_name}' does not exist in struct '{type_name}'")).into_boxed())?;
+                            let member_format = match &loaded_format {
+                                Format::Mutable(_) => members[member_index].1.clone().into_mutable(),
+                                _ => members[member_index].1.clone()
+                            };
+                            let member_pointer = self.new_anonymous_register(member_format.clone().into_pointer());
+                            let indices = &[
+                                Value::Constant(Constant::Integer(IntegerValue::Signed32(0))),
+                                Value::Constant(Constant::Integer(IntegerValue::Signed32(member_index as i32))),
+                            ];
+
+                            self.emitter.emit_get_element_pointer(
+                                &member_pointer,
+                                &loaded_format,
+                                pointer.as_ref(),
+                                indices,
+                            )?;
+
+                            Ok(Value::Indirect {
+                                pointer: Box::new(Value::Register(member_pointer)),
+                                loaded_format: member_format,
+                            })
+                        },
+                        _ => Err(cannot_access_error())
+                    },
+                    _ => Err(cannot_access_error())
+                },
+                _ => Err(cannot_access_error())
+            }
+        }
+        else {
+            return Err(crate::RawError::new(String::from("expected a struct member name")).into_boxed());
+        }
     }
 
     fn generate_binary_arithmetic_operands(&mut self, lhs: &ast::Node, rhs: &ast::Node, context: &ScopeContext, expected_format: Option<&Format>) -> crate::Result<(Register, Value, Value)> {

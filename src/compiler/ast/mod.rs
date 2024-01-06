@@ -216,6 +216,7 @@ impl BinaryOperation {
             Token::AngleRightEqual => Some(Self::GreaterEqual),
             Token::AngleRight2 => Some(Self::ShiftRight),
             Token::AngleRight2Equal => Some(Self::ShiftRightAssign),
+            Token::RightArrow => Some(Self::DerefAccess),
             Token::As => Some(Self::Convert),
             _ => None
         }

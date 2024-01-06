@@ -99,9 +99,8 @@ function omg_linked_list(values: *[*[u8]], value_count: u64) {
     while (head != null) {
         let node: *mut Node = head;
 
-        // I don't have the -> operator implemented yet :P
-        printf("%s\n", (*node).value);
-        head = (*node).next;
+        printf("%s\n", node->value);
+        head = node->next;
 
         free(node as *mut void);
     }
