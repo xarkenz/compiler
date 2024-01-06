@@ -8,9 +8,72 @@ function printf(format: *[u8], ..) -> u32;
 
 function malloc(size_bytes: u64) -> *mut void;
 function free(alloc: *mut void);
+function memcpy(dest: *mut void, src: *void, count: u64) -> *mut void;
 
 function strlen(str: *[u8]) -> u64;
 function isdigit(char: i32) -> i32;
+
+function u64_max(self: u64, other: u64) -> u64 {
+    if (self > other) {
+        return self;
+    } else {
+        return other;
+    }
+}
+
+struct Str {
+    ptr: *[u8],
+    length: u64,
+}
+
+struct MutStr {
+    ptr: *mut [u8],
+    length: u64,
+}
+
+struct String {
+    str: MutStr,
+    capacity: u64,
+}
+
+function String_new() -> String {
+    return String {
+        str: MutStr {
+            ptr: null,
+            length: 0,
+        },
+        capacity: 0,
+    };
+}
+
+function String_del(self: String) {
+    free(self.str.ptr as *mut void);
+}
+
+function String_as_str(self: *String) -> Str {
+    return Str {
+        ptr: self->str.ptr,
+        length: self->str.length,
+    };
+}
+
+function String_grow_by(self: *mut String, additional: u64) {
+    let required_capacity: u64 = self->capacity + additional;
+    let capacity: u64 = u64_max(self->capacity * 2, required_capacity);
+    let ptr: *mut [u8] = malloc(sizeof(u8) * capacity) as *mut [u8];
+    memcpy(ptr as *mut void, self->str.ptr as *void, self->str.length);
+    free(self->str.ptr as *mut void);
+    self->str.ptr = ptr;
+    self->capacity = capacity;
+}
+
+function String_push(self: *mut String, ch: u8) {
+    if (self->str.length == self->capacity) {
+        String_grow_by(self, 1);
+    }
+    self->str.ptr[self->str.length] = ch;
+    self->str.length += 1;
+}
 
 function fibonacci(limit: i32) -> i32 {
     let a: mut i32 = 0;
@@ -34,8 +97,6 @@ function gcd(a: mut u32, b: mut u32) -> u32 {
 
     return a;
 }
-
-let const sample_input: *[u8] = "1abc2\npqr3stu8vwx\na1b2c3d4e5f\ntreb7uchet\n";
 
 function aoc_01_p1() {
     let input: *mut CFile = fopen("day01.txt", "r");
@@ -112,14 +173,7 @@ struct Student {
     grades: [u32; 4],
 }
 
-function main() -> i32 {
-    aoc_01_p1();
-
-    let x: mut i32 = 5;
-    let x: i32 = x;
-    let x: mut i32 = x;
-    printf("%d\n", x);
-
+function student_stuff() {
     let joe_age: u32 = 97;
     let joe_calculus_grade_before_curve: u32 = 47;
 
@@ -132,6 +186,12 @@ function main() -> i32 {
     printf("Name: %s\n", joe.name);
     printf("Age: %u\n", joe.age);
     printf("Grades: %u, %u, %u, %u\n", joe.grades[0], joe.grades[1], joe.grades[2], joe.grades[3]);
+}
+
+function main() -> i32 {
+    aoc_01_p1();
+
+    student_stuff();
 
     let values: [*[u8]; 4] = [
         "Value 1",
@@ -141,6 +201,24 @@ function main() -> i32 {
     ];
 
     omg_linked_list(&values, 4);
+
+    let string: mut String = String_new();
+    String_push(&string, 'H');
+    String_push(&string, 'e');
+    String_push(&string, 'l');
+    String_push(&string, 'l');
+    String_push(&string, 'o');
+    String_push(&string, ' ');
+    String_push(&string, 'w');
+    String_push(&string, 'o');
+    String_push(&string, 'r');
+    String_push(&string, 'l');
+    String_push(&string, 'd');
+    String_push(&string, '!');
+    String_push(&string, '\0');
+    let str: Str = String_as_str(&string);
+    printf("%s\n", str.ptr);
+    String_del(string);
 
     return 0;
 }

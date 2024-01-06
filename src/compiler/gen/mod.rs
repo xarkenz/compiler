@@ -1106,15 +1106,15 @@ impl<W: Write> Generator<W> {
                     self.emitter.emit_label(&consequent_label)?;
                     let consequent_value = self.generate_node(consequent.as_ref(), context, None)?;
                     if consequent_value.format() != Format::Never {
-                        tail_label = tail_label.or_else(|| Some(self.new_anonymous_label()));
-                        self.emitter.emit_unconditional_branch(tail_label.as_ref().unwrap())?;
+                        let tail_label = tail_label.get_or_insert_with(|| self.new_anonymous_label());
+                        self.emitter.emit_unconditional_branch(tail_label)?;
                     }
 
                     self.emitter.emit_label(&alternative_label)?;
                     let alternative_value = self.generate_node(alternative.as_ref(), context, None)?;
                     if alternative_value.format() != Format::Never {
-                        tail_label = tail_label.or_else(|| Some(self.new_anonymous_label()));
-                        self.emitter.emit_unconditional_branch(tail_label.as_ref().unwrap())?;
+                        let tail_label = tail_label.get_or_insert_with(|| self.new_anonymous_label());
+                        self.emitter.emit_unconditional_branch(tail_label)?;
                     }
 
                     if let Some(tail_label) = tail_label {
@@ -1128,8 +1128,10 @@ impl<W: Write> Generator<W> {
                 }
                 else {
                     self.emitter.emit_label(&consequent_label)?;
-                    self.generate_node(consequent.as_ref(), context, None)?;
-                    self.emitter.emit_unconditional_branch(&alternative_label)?;
+                    let consequent_value = self.generate_node(consequent.as_ref(), context, None)?;
+                    if consequent_value.format() != Format::Never {
+                        self.emitter.emit_unconditional_branch(&alternative_label)?;
+                    }
 
                     self.emitter.emit_label(&alternative_label)?;
 
@@ -1168,7 +1170,7 @@ impl<W: Write> Generator<W> {
                 self.emitter.emit_unconditional_branch(break_label)?;
 
                 // Consume an anonymous ID corresponding to the implicit label inserted after the terminator instruction
-                self.next_anonymous_register_id += 1;
+                // self.next_anonymous_register_id += 1;
 
                 Value::Break
             },
@@ -1179,7 +1181,7 @@ impl<W: Write> Generator<W> {
                 self.emitter.emit_unconditional_branch(continue_label)?;
 
                 // Consume an anonymous ID corresponding to the implicit label inserted after the terminator instruction
-                self.next_anonymous_register_id += 1;
+                // self.next_anonymous_register_id += 1;
 
                 Value::Continue
             },
@@ -1208,7 +1210,7 @@ impl<W: Write> Generator<W> {
                 }
 
                 // Consume an anonymous ID corresponding to the implicit label inserted after the terminator instruction
-                self.next_anonymous_register_id += 1;
+                // self.next_anonymous_register_id += 1;
 
                 Value::Never
             },
