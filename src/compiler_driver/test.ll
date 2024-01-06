@@ -140,9 +140,9 @@ define dso_local void @aoc_01_p1() #0 {
 	%39 = zext i8 %38 to i32
 	%40 = add nuw i32 %34, %39
 	store i32 %40, i32* %calibration_value-1
-	%41 = load i32, i32* %calibration_sum
-	%42 = load i32, i32* %calibration_value-1
-	%43 = add nuw i32 %41, %42
+	%41 = load i32, i32* %calibration_value-1
+	%42 = load i32, i32* %calibration_sum
+	%43 = add nuw i32 %42, %41
 	store i32 %43, i32* %calibration_sum
 	br label %.block.3
 .block.5:

@@ -117,6 +117,10 @@ impl Format {
         }
     }
 
+    pub fn is_mutable(&self) -> bool {
+        matches!(self, Format::Mutable(_))
+    }
+
     pub fn is_function(&self) -> bool {
         matches!(self, Format::Function { .. })
     }
@@ -603,6 +607,22 @@ impl Value {
             Self::Register(register) => register.format().clone(),
             Self::Indirect { loaded_format, .. } => loaded_format.clone(),
             Self::TypeDefinition(_) => Format::Type,
+        }
+    }
+
+    pub fn into_mutable_lvalue(self) -> crate::Result<(Self, Format)> {
+        match self {
+            Self::Indirect { pointer, loaded_format } => {
+                if loaded_format.is_mutable() {
+                    Ok((*pointer, loaded_format))
+                }
+                else {
+                    Err(crate::RawError::new(format!("cannot mutate value of type '{}' as it is not 'mut'", loaded_format.rich_name())).into_boxed())
+                }
+            },
+            _ => {
+                Err(crate::RawError::new(String::from("expected an lvalue")).into_boxed())
+            }
         }
     }
 }
@@ -1732,70 +1752,70 @@ impl<W: Write> Generator<W> {
                 }
             },
             ast::BinaryOperation::Add => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format.clone())?;
+                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format)?;
 
                 self.emitter.emit_addition(&result, &lhs, &rhs)?;
 
                 Value::Register(result)
             },
             ast::BinaryOperation::Subtract => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format.clone())?;
+                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format)?;
 
                 self.emitter.emit_subtraction(&result, &lhs, &rhs)?;
 
                 Value::Register(result)
             },
             ast::BinaryOperation::Multiply => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format.clone())?;
+                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format)?;
 
                 self.emitter.emit_multiplication(&result, &lhs, &rhs)?;
 
                 Value::Register(result)
             },
             ast::BinaryOperation::Divide => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format.clone())?;
+                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format)?;
 
                 self.emitter.emit_division(&result, &lhs, &rhs)?;
 
                 Value::Register(result)
             },
             ast::BinaryOperation::Remainder => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format.clone())?;
+                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format)?;
 
                 self.emitter.emit_remainder(&result, &lhs, &rhs)?;
 
                 Value::Register(result)
             },
             ast::BinaryOperation::ShiftLeft => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format.clone())?;
+                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format)?;
 
                 self.emitter.emit_shift_left(&result, &lhs, &rhs)?;
 
                 Value::Register(result)
             },
             ast::BinaryOperation::ShiftRight => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format.clone())?;
+                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format)?;
 
                 self.emitter.emit_shift_right(&result, &lhs, &rhs)?;
 
                 Value::Register(result)
             },
             ast::BinaryOperation::BitwiseAnd => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format.clone())?;
+                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format)?;
 
                 self.emitter.emit_bitwise_and(&result, &lhs, &rhs)?;
 
                 Value::Register(result)
             },
             ast::BinaryOperation::BitwiseOr => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format.clone())?;
+                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format)?;
 
                 self.emitter.emit_bitwise_or(&result, &lhs, &rhs)?;
 
                 Value::Register(result)
             },
             ast::BinaryOperation::BitwiseXor => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format.clone())?;
+                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, context, expected_format)?;
 
                 self.emitter.emit_bitwise_xor(&result, &lhs, &rhs)?;
 
@@ -1846,18 +1866,105 @@ impl<W: Write> Generator<W> {
             ast::BinaryOperation::LogicalAnd => todo!(),
             ast::BinaryOperation::LogicalOr => todo!(),
             ast::BinaryOperation::Assign => {
-                self.generate_assignment(lhs, rhs, context, expected_format.clone())?
+                let lhs = self.generate_node(lhs, context, expected_format.cloned())?;
+                let (pointer, loaded_format) = lhs.into_mutable_lvalue()?;
+                let rhs = self.generate_node(rhs, context, Some(loaded_format))?;
+                let rhs = self.coerce_to_rvalue(rhs)?;
+
+                self.emitter.emit_store(&rhs, &pointer)?;
+
+                rhs
             },
-            ast::BinaryOperation::MultiplyAssign => todo!(),
-            ast::BinaryOperation::DivideAssign => todo!(),
-            ast::BinaryOperation::RemainderAssign => todo!(),
-            ast::BinaryOperation::AddAssign => todo!(),
-            ast::BinaryOperation::SubtractAssign => todo!(),
-            ast::BinaryOperation::ShiftLeftAssign => todo!(),
-            ast::BinaryOperation::ShiftRightAssign => todo!(),
-            ast::BinaryOperation::BitwiseAndAssign => todo!(),
-            ast::BinaryOperation::BitwiseXorAssign => todo!(),
-            ast::BinaryOperation::BitwiseOrAssign => todo!(),
+            ast::BinaryOperation::MultiplyAssign => {
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, context, expected_format)?;
+
+                self.emitter.emit_multiplication(&result, &lhs, &rhs)?;
+                let result = Value::Register(result);
+                self.emitter.emit_store(&result, &pointer)?;
+
+                result
+            },
+            ast::BinaryOperation::DivideAssign => {
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, context, expected_format)?;
+
+                self.emitter.emit_division(&result, &lhs, &rhs)?;
+                let result = Value::Register(result);
+                self.emitter.emit_store(&result, &pointer)?;
+
+                result
+            },
+            ast::BinaryOperation::RemainderAssign => {
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, context, expected_format)?;
+
+                self.emitter.emit_remainder(&result, &lhs, &rhs)?;
+                let result = Value::Register(result);
+                self.emitter.emit_store(&result, &pointer)?;
+
+                result
+            },
+            ast::BinaryOperation::AddAssign => {
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, context, expected_format)?;
+
+                self.emitter.emit_addition(&result, &lhs, &rhs)?;
+                let result = Value::Register(result);
+                self.emitter.emit_store(&result, &pointer)?;
+
+                result
+            },
+            ast::BinaryOperation::SubtractAssign => {
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, context, expected_format)?;
+
+                self.emitter.emit_subtraction(&result, &lhs, &rhs)?;
+                let result = Value::Register(result);
+                self.emitter.emit_store(&result, &pointer)?;
+
+                result
+            },
+            ast::BinaryOperation::ShiftLeftAssign => {
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, context, expected_format)?;
+
+                self.emitter.emit_shift_left(&result, &lhs, &rhs)?;
+                let result = Value::Register(result);
+                self.emitter.emit_store(&result, &pointer)?;
+
+                result
+            },
+            ast::BinaryOperation::ShiftRightAssign => {
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, context, expected_format)?;
+
+                self.emitter.emit_shift_right(&result, &lhs, &rhs)?;
+                let result = Value::Register(result);
+                self.emitter.emit_store(&result, &pointer)?;
+
+                result
+            },
+            ast::BinaryOperation::BitwiseAndAssign => {
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, context, expected_format)?;
+
+                self.emitter.emit_bitwise_and(&result, &lhs, &rhs)?;
+                let result = Value::Register(result);
+                self.emitter.emit_store(&result, &pointer)?;
+
+                result
+            },
+            ast::BinaryOperation::BitwiseXorAssign => {
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, context, expected_format)?;
+
+                self.emitter.emit_bitwise_xor(&result, &lhs, &rhs)?;
+                let result = Value::Register(result);
+                self.emitter.emit_store(&result, &pointer)?;
+
+                result
+            },
+            ast::BinaryOperation::BitwiseOrAssign => {
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, context, expected_format)?;
+
+                self.emitter.emit_bitwise_or(&result, &lhs, &rhs)?;
+                let result = Value::Register(result);
+                self.emitter.emit_store(&result, &pointer)?;
+
+                result
+            },
         };
 
         Ok(result)
@@ -1887,27 +1994,19 @@ impl<W: Write> Generator<W> {
         Ok((result, lhs, rhs))
     }
 
-    fn generate_assignment(&mut self, lhs: &ast::Node, rhs: &ast::Node, context: &ScopeContext, expected_format: Option<&Format>) -> crate::Result<Value> {
+    fn generate_assignment_operands(&mut self, lhs: &ast::Node, rhs: &ast::Node, context: &ScopeContext, expected_format: Option<&Format>) -> crate::Result<(Register, Value, Value, Value)> {
         let lhs = self.generate_node(lhs, context, expected_format.cloned())?;
+        let (pointer, loaded_format) = lhs.into_mutable_lvalue()?;
 
-        match lhs {
-            Value::Indirect { pointer, loaded_format } => {
-                if let Format::Mutable(_) = &loaded_format {
-                    let rhs = self.generate_node(rhs, context, Some(loaded_format))?;
-                    let rhs = self.coerce_to_rvalue(rhs)?;
+        let rhs = self.generate_node(rhs, context, Some(loaded_format.clone()))?;
+        let rhs = self.coerce_to_rvalue(rhs)?;
 
-                    self.emitter.emit_store(&rhs, pointer.as_ref())?;
+        let lhs = self.new_anonymous_register(loaded_format.clone());
+        let result = self.new_anonymous_register(loaded_format);
 
-                    Ok(rhs)
-                }
-                else {
-                    Err(crate::RawError::new(format!("cannot mutate value of type '{}' as it is not 'mut'", loaded_format.rich_name())).into_boxed())
-                }
-            },
-            _ => {
-                Err(crate::RawError::new(String::from("expected an lvalue")).into_boxed())
-            }
-        }
+        self.emitter.emit_load(&lhs, &pointer)?;
+
+        Ok((result, pointer, Value::Register(lhs), rhs))
     }
 
     fn generate_call_operation(&mut self, callee: &ast::Node, arguments: &[Box<ast::Node>], context: &ScopeContext) -> crate::Result<Value> {

@@ -12,70 +12,76 @@ define dso_local i32 @main() #0 {
   %1 = alloca i32, align 4
   %2 = alloca i32, align 4
   %3 = alloca i32, align 4
-  %4 = alloca i8, align 1
-  %5 = alloca i64, align 8
-  %6 = alloca %struct.MyStruct, align 8
+  %4 = alloca i32, align 4
+  %5 = alloca i8, align 1
+  %6 = alloca i64, align 8
+  %7 = alloca %struct.MyStruct, align 8
   store i32 0, i32* %1, align 4
   store i32 3, i32* %2, align 4
-  store i32 5, i32* %3, align 4
-  %7 = load i32, i32* %2, align 4
-  %8 = icmp eq i32 %7, 3
-  br i1 %8, label %9, label %12
+  store i32 2, i32* %3, align 4
+  %8 = load i32, i32* %2, align 4
+  %9 = load i32, i32* %3, align 4
+  %10 = add nsw i32 %9, %8
+  store i32 %10, i32* %3, align 4
+  store i32 %10, i32* %4, align 4
+  %11 = load i32, i32* %2, align 4
+  %12 = icmp eq i32 %11, 3
+  br i1 %12, label %13, label %16
 
-9:                                                ; preds = %0
-  %10 = load i32, i32* %3, align 4
-  %11 = icmp eq i32 %10, 5
-  br label %12
+13:                                               ; preds = %0
+  %14 = load i32, i32* %3, align 4
+  %15 = icmp eq i32 %14, 5
+  br label %16
 
-12:                                               ; preds = %9, %0
-  %13 = phi i1 [ false, %0 ], [ %11, %9 ]
-  %14 = zext i1 %13 to i8
-  store i8 %14, i8* %4, align 1
-  %15 = load i32, i32* %2, align 4
-  %16 = icmp sgt i32 %15, 2
-  br i1 %16, label %20, label %17
+16:                                               ; preds = %13, %0
+  %17 = phi i1 [ false, %0 ], [ %15, %13 ]
+  %18 = zext i1 %17 to i8
+  store i8 %18, i8* %5, align 1
+  %19 = load i32, i32* %2, align 4
+  %20 = icmp sgt i32 %19, 2
+  br i1 %20, label %24, label %21
 
-17:                                               ; preds = %12
-  %18 = load i32, i32* %3, align 4
-  %19 = icmp sgt i32 %18, 8
-  br label %20
+21:                                               ; preds = %16
+  %22 = load i32, i32* %3, align 4
+  %23 = icmp sgt i32 %22, 8
+  br label %24
 
-20:                                               ; preds = %17, %12
-  %21 = phi i1 [ true, %12 ], [ %19, %17 ]
-  %22 = zext i1 %21 to i8
-  store i8 %22, i8* %4, align 1
-  %23 = load i32, i32* %2, align 4
-  %24 = icmp slt i32 %23, 4
-  br i1 %24, label %25, label %33
+24:                                               ; preds = %21, %16
+  %25 = phi i1 [ true, %16 ], [ %23, %21 ]
+  %26 = zext i1 %25 to i8
+  store i8 %26, i8* %5, align 1
+  %27 = load i32, i32* %2, align 4
+  %28 = icmp slt i32 %27, 4
+  br i1 %28, label %29, label %37
 
-25:                                               ; preds = %20
-  %26 = load i32, i32* %3, align 4
-  %27 = icmp slt i32 %26, 2
-  br i1 %27, label %31, label %28
+29:                                               ; preds = %24
+  %30 = load i32, i32* %3, align 4
+  %31 = icmp slt i32 %30, 2
+  br i1 %31, label %35, label %32
 
-28:                                               ; preds = %25
-  %29 = load i32, i32* %3, align 4
-  %30 = icmp sgt i32 %29, 3
-  br label %31
+32:                                               ; preds = %29
+  %33 = load i32, i32* %3, align 4
+  %34 = icmp sgt i32 %33, 3
+  br label %35
 
-31:                                               ; preds = %28, %25
-  %32 = phi i1 [ true, %25 ], [ %30, %28 ]
-  br label %33
+35:                                               ; preds = %32, %29
+  %36 = phi i1 [ true, %29 ], [ %34, %32 ]
+  br label %37
 
-33:                                               ; preds = %31, %20
-  %34 = phi i1 [ false, %20 ], [ %32, %31 ]
-  %35 = zext i1 %34 to i8
-  store i8 %35, i8* %4, align 1
-  store i64 34, i64* %5, align 8
-  %36 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %6, i32 0, i32 0
-  store i32 12, i32* %36, align 8
-  %37 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %6, i32 0, i32 1
-  %38 = load i64, i64* %5, align 8
-  store i64 %38, i64* %37, align 8
-  %39 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %6, i32 0, i32 2
-  store i8 56, i8* %39, align 8
-  %40 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %6, i32 0, i32 0
-  store i32 5, i32* %40, align 8
+37:                                               ; preds = %35, %24
+  %38 = phi i1 [ false, %24 ], [ %36, %35 ]
+  %39 = zext i1 %38 to i8
+  store i8 %39, i8* %5, align 1
+  store i64 34, i64* %6, align 8
+  %40 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %7, i32 0, i32 0
+  store i32 12, i32* %40, align 8
+  %41 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %7, i32 0, i32 1
+  %42 = load i64, i64* %6, align 8
+  store i64 %42, i64* %41, align 8
+  %43 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %7, i32 0, i32 2
+  store i8 56, i8* %43, align 8
+  %44 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %7, i32 0, i32 0
+  store i32 5, i32* %44, align 8
   ret i32 0
 }
 

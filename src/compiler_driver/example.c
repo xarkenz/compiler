@@ -12,7 +12,8 @@ struct MyStruct {
 struct MyStruct my_global_struct;
 
 int32_t main() {
-    int x = 3, y = 5;
+    int x = 3, y = 2;
+    int z = (y += x);
     bool b;
     b = x == 3 && y == 5;
     b = x > 2 || y > 8;

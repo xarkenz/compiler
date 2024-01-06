@@ -53,7 +53,7 @@ function aoc_01_p1() {
 
         // Find the first digit
         while (isdigit(line[index] as i32) == 0) {
-            index = index + 1;
+            index += 1;
         }
         let calibration_value: u32 = (line[index] - '0') as u32;
         
@@ -62,12 +62,12 @@ function aoc_01_p1() {
 
         // Backtrack to find the last digit
         while (isdigit(line[index] as i32) == 0) {
-            index = index - 1;
+            index -= 1;
         }
         let calibration_value: u32 = calibration_value * 10 + (line[index] - '0') as u32;
 
         // Add the found value to the sum
-        calibration_sum = calibration_sum + calibration_value;
+        calibration_sum += calibration_value;
     }
 
     fclose(input);
@@ -92,7 +92,7 @@ function omg_linked_list(values: *[*[u8]], value_count: u64) {
         };
         head = node;
 
-        index = index + 1;
+        index += 1;
     }
 
     printf("Reversed:\n");
