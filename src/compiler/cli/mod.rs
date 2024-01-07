@@ -36,10 +36,6 @@ pub fn invoke(args: CompilerArgs) -> crate::Result<()> {
         let mut scanner = crate::token::scan::Scanner::from_filename(source_filename.clone())?;
         let mut parser = crate::ast::parse::Parser::new(&mut scanner)?;
 
-        // while let Some(statement) = parser.parse_statement(true, true)? {
-        //     println!("STATEMENT:{statement}");
-        // }
-
         let output_filename = args.output_path();
         crate::gen::Generator::from_filename(output_filename.to_owned())?
             .generate(&mut parser)?;
