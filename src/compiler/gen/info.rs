@@ -3,6 +3,35 @@ use super::*;
 use std::fmt;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FunctionSignature {
+    return_format: Format,
+    parameter_formats: Vec<Format>,
+    is_varargs: bool,
+}
+
+impl FunctionSignature {
+    pub fn new(return_format: Format, parameter_formats: Vec<Format>, is_varargs: bool) -> Self {
+        Self {
+            return_format,
+            parameter_formats,
+            is_varargs,
+        }
+    }
+
+    pub fn return_format(&self) -> &Format {
+        &self.return_format
+    }
+
+    pub fn parameter_formats(&self) -> &[Format] {
+        &self.parameter_formats
+    }
+
+    pub fn is_varargs(&self) -> bool {
+        self.is_varargs
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Format {
     Never,
     Void,
@@ -25,13 +54,7 @@ pub enum Format {
         identifier: String,
         type_name: String,
     },
-    Function {
-        is_defined: bool,
-        return_format: Box<Format>,
-        parameters: Vec<Format>,
-        is_varargs: bool,
-    },
-    Type,
+    Function(Box<FunctionSignature>),
 }
 
 impl Format {
@@ -48,39 +71,32 @@ impl Format {
             Self::Integer { size, .. } => Some(*size),
             Self::Pointer(_) => Some(8),
             Self::Array { length, item_format } => {
-                length.and_then(|length| item_format.size(symbol_table).map(|item_size| item_size * length))
+                Some(length.clone()? * item_format.size(symbol_table)?)
             },
             Self::Structure { members, .. } => {
                 let mut current_size = 0;
                 let mut max_alignment = 0;
 
                 for (_name, format) in members {
-                    let alignment = format.alignment(symbol_table).unwrap();
+                    let alignment = format.alignment(symbol_table)?;
                     max_alignment = max_alignment.max(alignment);
 
                     // Calculate padding
                     let intermediate_size = current_size + alignment - 1;
                     let padded_size = intermediate_size - intermediate_size % alignment;
-                    current_size = padded_size + format.size(symbol_table).unwrap();
+                    current_size = padded_size + format.size(symbol_table)?;
                 }
 
                 // Pad for the largest member alignment
                 let intermediate_size = current_size + max_alignment - 1;
                 let padded_size = intermediate_size - intermediate_size % max_alignment;
+                
                 Some(padded_size)
             },
             Self::Identified { type_name, .. } => {
-                symbol_table.find(type_name).and_then(|symbol| {
-                    if let Value::TypeDefinition(Some(format)) = symbol.value() {
-                        format.size(symbol_table)
-                    }
-                    else {
-                        None
-                    }
-                })
+                symbol_table.find(type_name)?.type_value()??.size(symbol_table)
             },
             Self::Function { .. } => None,
-            Self::Type => None,
         }
     }
 
@@ -94,20 +110,14 @@ impl Format {
             Self::Pointer(_) => Some(8),
             Self::Array { item_format, .. } => item_format.alignment(symbol_table),
             Self::Structure { members, .. } => {
-                members.iter().map(|(_name, format)| format.alignment(symbol_table).unwrap()).max()
+                members.iter()
+                    .map(|(_name, format)| format.alignment(symbol_table).unwrap())
+                    .max()
             },
             Self::Identified { type_name, .. } => {
-                symbol_table.find(type_name).and_then(|symbol| {
-                    if let Value::TypeDefinition(Some(format)) = symbol.value() {
-                        format.size(symbol_table)
-                    }
-                    else {
-                        None
-                    }
-                })
+                symbol_table.find(type_name)?.type_value()??.alignment(symbol_table)
             },
             Self::Function { .. } => None,
-            Self::Type => None,
         }
     }
 
@@ -117,10 +127,6 @@ impl Format {
 
     pub fn is_function(&self) -> bool {
         matches!(self, Format::Function { .. })
-    }
-
-    pub fn is_type(&self) -> bool {
-        matches!(self, Format::Type)
     }
 
     pub fn into_mutable(self) -> Self {
@@ -235,25 +241,22 @@ impl Format {
             Self::Identified { type_name, .. } => {
                 type_name.clone()
             },
-            Self::Function { return_format, parameters, is_varargs, .. } => {
+            Self::Function(signature) => {
                 let mut name = String::from("function(");
-                let mut parameters_iter = parameters.iter();
+                let mut parameters_iter = signature.parameter_formats().iter();
                 if let Some(parameter) = parameters_iter.next() {
                     name = format!("{name}{parameter}", parameter = parameter.rich_name());
                     for parameter in parameters_iter {
                         name = format!("{name}, {parameter}", parameter = parameter.rich_name());
                     }
-                    if *is_varargs {
+                    if signature.is_varargs() {
                         name = format!("{name}, ..");
                     }
                 }
-                else if *is_varargs {
+                else if signature.is_varargs() {
                     name = format!("{name}..");
                 }
-                format!("{name}) -> {return_format}", return_format = return_format.rich_name())
-            },
-            Self::Type => {
-                String::from("type")
+                format!("{name}) -> {return_format}", return_format = signature.return_format().rich_name())
             },
         }
     }
@@ -303,25 +306,22 @@ impl fmt::Display for Format {
             Self::Identified { identifier, .. } => {
                 write!(f, "%{identifier}")
             },
-            Self::Function { return_format, parameters, is_varargs, .. } => {
-                write!(f, "{return_format}(")?;
-                let mut parameters_iter = parameters.iter();
+            Self::Function(signature) => {
+                write!(f, "{return_format}(", return_format = signature.return_format())?;
+                let mut parameters_iter = signature.parameter_formats().iter();
                 if let Some(parameter) = parameters_iter.next() {
                     write!(f, "{parameter}")?;
                     for parameter in parameters_iter {
                         write!(f, ", {parameter}")?;
                     }
-                    if *is_varargs {
+                    if signature.is_varargs() {
                         write!(f, ", ...")?;
                     }
                 }
-                else if *is_varargs {
+                else if signature.is_varargs() {
                     write!(f, "...")?;
                 }
                 write!(f, ")")
-            },
-            Self::Type => {
-                write!(f, "<ERROR type format>")
             },
         }
     }
@@ -436,10 +436,6 @@ impl Register {
 
     pub fn format(&self) -> &Format {
         &self.format
-    }
-
-    pub fn format_mut(&mut self) -> &mut Format {
-        &mut self.format
     }
 
     pub fn is_global(&self) -> bool {
@@ -586,21 +582,12 @@ pub enum Value {
     Break,
     Continue,
     Void,
-    Array {
-        items: Vec<Value>,
-        item_format: Format,
-    },
-    Structure {
-        members: Vec<Value>,
-        format: Format,
-    },
     Constant(Constant),
     Register(Register),
     Indirect {
         pointer: Box<Value>,
         loaded_format: Format,
     },
-    TypeDefinition(Option<Format>),
 }
 
 impl Value {
@@ -608,15 +595,9 @@ impl Value {
         match self {
             Self::Never | Self::Break | Self::Continue => Format::Never,
             Self::Void => Format::Void,
-            Self::Array { items, item_format } => Format::Array {
-                item_format: Box::new(item_format.clone()),
-                length: Some(items.len()),
-            },
-            Self::Structure { format, .. } => format.clone(),
             Self::Constant(constant) => constant.format(),
             Self::Register(register) => register.format().clone(),
             Self::Indirect { loaded_format, .. } => loaded_format.clone(),
-            Self::TypeDefinition(_) => Format::Type,
         }
     }
 
@@ -642,34 +623,9 @@ impl fmt::Display for Value {
         match self {
             Self::Never | Self::Break | Self::Continue => write!(f, "<ERROR never value>"),
             Self::Void => write!(f, "<ERROR void value>"),
-            Self::Array { items, .. } => {
-                write!(f, "[")?;
-                let mut items_iter = items.iter();
-                if let Some(item) = items_iter.next() {
-                    write!(f, " {format} {item}", format = item.format())?;
-                    for item in items_iter {
-                        write!(f, ", {format} {item}", format = item.format())?;
-                    }
-                    write!(f, " ")?;
-                }
-                write!(f, "]")
-            },
-            Self::Structure { members, .. } => {
-                write!(f, "{{")?;
-                let mut members_iter = members.iter();
-                if let Some(member) = members_iter.next() {
-                    write!(f, " {format} {member}", format = member.format())?;
-                    for member in members_iter {
-                        write!(f, ", {format} {member}", format = member.format())?;
-                    }
-                    write!(f, " ")?;
-                }
-                write!(f, "}}")
-            },
             Self::Constant(constant) => write!(f, "{constant}"),
             Self::Register(register) => write!(f, "{register}"),
             Self::Indirect { .. } => write!(f, "<ERROR indirect value>"),
-            Self::TypeDefinition(_) => write!(f, "<ERROR type value>"),
         }
     }
 }
@@ -685,7 +641,7 @@ impl Label {
             name,
         }
     }
-    
+
     pub fn name(&self) -> &str {
         self.name.as_str()
     }
@@ -709,36 +665,60 @@ impl Scope {
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub struct Symbol {
-    identifier: String,
-    value: Value,
-    scope: Scope,
-    version: usize,
+pub enum Symbol {
+    Global {
+        name: String,
+        value: Value,
+    },
+    Local {
+        name: String,
+        value: Value,
+        scope: Scope,
+        version: usize,
+    },
+    Function {
+        name: String,
+        register: Register,
+        signature: FunctionSignature,
+        is_defined: bool,
+    },
+    Type {
+        name: String,
+        format: Option<Format>,
+    },
 }
 
 impl Symbol {
-    pub fn identifier(&self) -> &str {
-        self.identifier.as_str()
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Global { name, .. } => name.as_str(),
+            Self::Local { name, .. } => name.as_str(),
+            Self::Function { name, .. } => name.as_str(),
+            Self::Type { name, .. } => name.as_str(),
+        }
     }
 
-    pub fn value(&self) -> &Value {
-        &self.value
+    pub fn value(&self) -> Option<Value> {
+        match self {
+            Self::Global { value, .. } => Some(value.clone()),
+            Self::Local { value, .. } => Some(value.clone()),
+            Self::Function { register, .. } => Some(Value::Register(register.clone())),
+            _ => None
+        }
     }
 
-    pub fn value_mut(&mut self) -> &mut Value {
-        &mut self.value
+    pub fn function_value(&self) -> Option<(&Register, &FunctionSignature, bool)> {
+        match self {
+            Self::Function { register, signature, is_defined, .. } => Some((register, signature, *is_defined)),
+            _ => None
+        }
     }
 
-    pub fn scope(&self) -> &Scope {
-        &self.scope
-    }
-
-    pub fn version(&self) -> usize {
-        self.version
-    }
-
-    pub fn format(&self) -> Format {
-        self.value.format()
+    pub fn type_value(&self) -> Option<Option<&Format>> {
+        match self {
+            Self::Type { format, .. } => Some(format.as_ref()),
+            _ => None
+        }
     }
 }
 
@@ -750,36 +730,24 @@ struct SymbolTableNode {
 
 #[derive(Debug)]
 pub struct SymbolTable {
-    is_global: bool,
-    hash_table_bins: Vec<Option<SymbolTableNode>>,
+    hash_table_buckets: Vec<Option<Box<SymbolTableNode>>>,
     active_scopes: Vec<Scope>,
     next_scope_id: usize,
 }
 
 impl SymbolTable {
-    pub fn new(capacity: usize, is_global: bool) -> Self {
+    pub fn new(capacity: usize) -> Self {
         let mut hash_table_bins = Vec::new();
-        hash_table_bins.resize_with(capacity, Default::default);
+        hash_table_bins.resize_with(capacity, || None);
         Self {
-            is_global,
-            hash_table_bins,
+            hash_table_buckets: hash_table_bins,
             active_scopes: vec![Scope { id: 0 }],
             next_scope_id: 1,
         }
     }
 
-    pub fn is_global(&self) -> bool {
-        self.is_global
-    }
-
     pub fn capacity(&self) -> usize {
-        self.hash_table_bins.len()
-    }
-
-    pub fn clear(&mut self) {
-        for root_node in self.hash_table_bins.iter_mut() {
-            *root_node = None;
-        }
+        self.hash_table_buckets.len()
     }
 
     pub fn current_scope(&self) -> &Scope {
@@ -797,6 +765,7 @@ impl SymbolTable {
             self.active_scopes.pop();
         }
         else {
+            // This is a programmer error and should never happen
             panic!("attempted to leave outermost scope");
         }
     }
@@ -805,68 +774,102 @@ impl SymbolTable {
         self.active_scopes.contains(scope)
     }
 
-    pub fn find(&self, identifier: &str) -> Option<&Symbol> {
-        let index = self.hash_index(identifier);
+    pub fn find(&self, name: &str) -> Option<&Symbol> {
+        let index = self.hash_index(name);
 
-        self.find_in_bin(index, identifier, true)
+        self.find_in_bucket(index, name)
     }
 
-    pub fn find_mut(&mut self, identifier: &str) -> Option<&mut Symbol> {
-        let index = self.hash_index(identifier);
+    pub fn find_mut(&mut self, name: &str) -> Option<&mut Symbol> {
+        let index = self.hash_index(name);
 
-        self.find_in_bin_mut(index, identifier, true)
+        self.find_in_bucket_mut(index, name)
     }
 
-    pub fn next_symbol_version(&self, identifier: &str) -> usize {
-        let index = self.hash_index(identifier);
-
-        self.find_in_bin(index, identifier, false)
-            .map_or(0, |symbol| symbol.version() + 1)
+    pub fn clear_locals(&mut self) {
+        for mut current_node_link in self.hash_table_buckets.iter_mut() {
+            // FIXME: preferably could avoid the .as_mut().unwrap() with pattern matching but the borrow checker is weird
+            // i opened a stackoverflow question about it so we'll see haha
+            while current_node_link.is_some() {
+                if let Symbol::Local { .. } = current_node_link.as_ref().unwrap().symbol {
+                    // Remove the node by replacing the link to the current node with the link to the next node
+                    let next_node_link = current_node_link.as_mut().unwrap().next_node.take();
+                    *current_node_link = next_node_link;
+                    // current_node_link already points to the next node, so it doesn't need to be advanced
+                }
+                else {
+                    current_node_link = &mut current_node_link.as_mut().unwrap().next_node;
+                }
+            }
+        }
     }
 
-    pub fn create_register_symbol(&self, identifier: String, format: Format) -> (Symbol, Register) {
-        let scope = self.current_scope().clone();
-        let version = self.next_symbol_version(&identifier);
-        let qualified_name = if version == 0 {
-            identifier.clone()
-        } else {
-            format!("{identifier}-{version}")
-        };
+    pub fn next_local_symbol_version(&self, name: &str) -> usize {
+        let index = self.hash_index(name);
+
+        self.find_local_in_bucket(index, name)
+            .map_or(0, |(_, _, version)| version + 1)
+    }
+
+    pub fn create_function_symbol(&self, name: String, signature: FunctionSignature, is_defined: bool) -> (Symbol, Register) {
         let register = Register {
-            name: qualified_name,
-            format,
-            is_global: self.is_global(),
+            name: name.clone(),
+            format: Format::Function(Box::new(signature.clone())),
+            is_global: true,
         };
-        let symbol = Symbol {
-            identifier,
-            value: Value::Register(register.clone()),
-            scope,
-            version,
+        let symbol = Symbol::Function {
+            name,
+            register: register.clone(),
+            is_defined,
+            signature,
         };
 
         (symbol, register)
     }
 
-    pub fn create_indirect_symbol(&self, identifier: String, loaded_format: Format) -> (Symbol, Register) {
-        let scope = self.current_scope().clone();
-        let version = self.next_symbol_version(&identifier);
-        let qualified_name = if version == 0 {
-            identifier.clone()
+    pub fn create_type_definition_symbol(&self, name: String, format: Option<Format>) -> Symbol {
+        Symbol::Type {
+            name,
+            format,
         }
-        else {
-            format!("{identifier}-{version}")
-        };
+    }
+
+    pub fn create_global_indirect_symbol(&self, name: String, loaded_format: Format) -> (Symbol, Register) {
         let pointer = Register {
-            name: qualified_name,
+            name: name.clone(),
             format: loaded_format.clone().into_pointer(),
-            is_global: self.is_global(),
+            is_global: true,
         };
         let value = Value::Indirect {
             pointer: Box::new(Value::Register(pointer.clone())),
             loaded_format,
         };
-        let symbol = Symbol {
-            identifier,
+        let symbol = Symbol::Global {
+            name,
+            value,
+        };
+
+        (symbol, pointer)
+    }
+
+    pub fn create_local_indirect_symbol(&self, name: String, loaded_format: Format) -> (Symbol, Register) {
+        let scope = self.current_scope().clone();
+        let version = self.next_local_symbol_version(&name);
+        let qualified_name = match version {
+            0 => format!("{name}"),
+            _ => format!("{name}-{version}"),
+        };
+        let pointer = Register {
+            name: qualified_name,
+            format: loaded_format.clone().into_pointer(),
+            is_global: false,
+        };
+        let value = Value::Indirect {
+            pointer: Box::new(Value::Register(pointer.clone())),
+            loaded_format,
+        };
+        let symbol = Symbol::Local {
+            name,
             value,
             scope,
             version,
@@ -875,14 +878,12 @@ impl SymbolTable {
         (symbol, pointer)
     }
 
-    pub fn create_indirect_local_constant_symbol(&self, identifier: String, loaded_format: Format, function_name: &str) -> (Symbol, Register) {
+    pub fn create_indirect_local_constant_symbol(&self, name: String, loaded_format: Format, function_name: &str) -> (Symbol, Register) {
         let scope = self.current_scope().clone();
-        let version = self.next_symbol_version(&identifier);
-        let qualified_name = if version == 0 {
-            format!("{function_name}.{identifier}")
-        }
-        else {
-            format!("{function_name}.{identifier}-{version}")
+        let version = self.next_local_symbol_version(&name);
+        let qualified_name = match version {
+            0 => format!("{function_name}.{name}"),
+            _ => format!("{function_name}.{name}-{version}"),
         };
         let pointer = Register {
             name: qualified_name,
@@ -893,8 +894,8 @@ impl SymbolTable {
             pointer: Box::new(Value::Register(pointer.clone())),
             loaded_format,
         };
-        let symbol = Symbol {
-            identifier,
+        let symbol = Symbol::Local {
+            name,
             value,
             scope,
             version,
@@ -903,28 +904,15 @@ impl SymbolTable {
         (symbol, pointer)
     }
 
-    pub fn create_type_definition_symbol(&self, identifier: String, definition_format: Option<Format>) -> Symbol {
-        let scope = self.current_scope().clone();
-        let version = self.next_symbol_version(&identifier);
-        let symbol = Symbol {
-            identifier,
-            value: Value::TypeDefinition(definition_format),
-            scope,
-            version,
-        };
-
-        symbol
-    }
-
     pub fn insert(&mut self, symbol: Symbol) {
-        let index = self.hash_index(symbol.identifier());
+        let index = self.hash_index(symbol.name());
         
-        let root_node = &mut self.hash_table_bins[index];
+        let root_node = &mut self.hash_table_buckets[index];
         let node_to_insert = SymbolTableNode {
             symbol,
-            next_node: root_node.take().map(|node| Box::new(node)),
+            next_node: root_node.take(),
         };
-        *root_node = Some(node_to_insert);
+        *root_node = Some(Box::new(node_to_insert));
     }
 
     fn hash_index(&self, key: &str) -> usize {
@@ -942,12 +930,16 @@ impl SymbolTable {
         hash as usize % self.capacity()
     }
 
-    fn find_in_bin(&self, index: usize, identifier: &str, check_scope: bool) -> Option<&Symbol> {
-        let mut next_node = self.hash_table_bins.get(index)?.as_ref();
+    fn find_in_bucket(&self, index: usize, name: &str) -> Option<&Symbol> {
+        let mut next_node = self.hash_table_buckets.get(index)?.as_deref();
 
         while let Some(current_node) = next_node {
-            let is_in_scope = !check_scope || self.active_scopes.contains(current_node.symbol.scope());
-            if current_node.symbol.identifier() == identifier && is_in_scope {
+            if let Symbol::Local { name: symbol_name, scope, .. } = &current_node.symbol {
+                if symbol_name == name && self.active_scopes.contains(scope) {
+                    return Some(&current_node.symbol);
+                }
+            }
+            else if current_node.symbol.name() == name {
                 return Some(&current_node.symbol);
             }
             next_node = current_node.next_node.as_deref();
@@ -956,16 +948,34 @@ impl SymbolTable {
         None
     }
 
-    fn find_in_bin_mut(&mut self, index: usize, identifier: &str, check_scope: bool) -> Option<&mut Symbol> {
-        let mut next_node = self.hash_table_bins.get_mut(index)?.as_mut();
+    fn find_in_bucket_mut(&mut self, index: usize, name: &str) -> Option<&mut Symbol> {
+        let mut next_node = self.hash_table_buckets.get_mut(index)?.as_deref_mut();
 
         while let Some(current_node) = next_node {
-            // I would use self.scope_is_active() here, but that requires an immutable borrow of *self, not just self.active_scopes
-            let is_in_scope = !check_scope || self.active_scopes.contains(current_node.symbol.scope());
-            if current_node.symbol.identifier() == identifier && is_in_scope {
+            if let Symbol::Local { name: symbol_name, scope, .. } = &current_node.symbol {
+                if symbol_name == name && self.active_scopes.contains(scope) {
+                    return Some(&mut current_node.symbol);
+                }
+            }
+            else if current_node.symbol.name() == name {
                 return Some(&mut current_node.symbol);
             }
             next_node = current_node.next_node.as_deref_mut();
+        }
+
+        None
+    }
+
+    fn find_local_in_bucket(&self, index: usize, name: &str) -> Option<(&Value, &Scope, usize)> {
+        let mut next_node = self.hash_table_buckets.get(index)?.as_deref();
+
+        while let Some(current_node) = next_node {
+            if let Symbol::Local { name: symbol_name, value, scope, version } = &current_node.symbol {
+                if symbol_name == name {
+                    return Some((value, scope, *version));
+                }
+            }
+            next_node = current_node.next_node.as_deref();
         }
 
         None
