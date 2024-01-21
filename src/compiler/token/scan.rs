@@ -1,7 +1,5 @@
 use super::*;
 
-use crate::Error;
-
 use std::io::{BufRead, BufReader};
 use std::fs::File;
 
@@ -9,58 +7,69 @@ use utf8_chars::BufReadCharsExt;
 
 #[derive(Debug)]
 pub struct Scanner<T: BufRead> {
-    filename: String,
+    file_id: usize,
+    next_index: usize,
     line: usize,
     source: T,
     put_backs: Vec<char>,
 }
 
 impl Scanner<BufReader<File>> {
-    pub fn from_filename(filename: String) -> crate::Result<Self> {
-        File::open(filename.clone())
-            .map(|file| Self::new(filename.clone(), BufReader::new(file)))
-            .map_err(|cause| crate::FileError::new(filename.clone(), None, cause).into_boxed())
+    pub fn from_filename(file_id: usize, filename: String) -> crate::Result<Self> {
+        File::open(filename)
+            .map(|file| Self::new(file_id, BufReader::new(file)))
+            .map_err(|cause| Box::new(crate::Error::SourceFileOpen { file_id, cause }))
     }
 }
 
 impl<T: BufRead> Scanner<T> {
-    pub fn new(filename: String, source: T) -> Self {
+    pub fn new(file_id: usize, source: T) -> Self {
         Self {
-            filename,
+            file_id,
+            next_index: 0,
             line: 1,
             source,
             put_backs: Vec::new(),
         }
     }
 
-    pub fn filename(&self) -> &str {
-        self.filename.as_str()
+    pub fn file_id(&self) -> usize {
+        self.file_id
     }
 
     pub fn line(&self) -> usize {
         self.line
     }
 
-    pub fn file_error(&self, cause: std::io::Error) -> Box<dyn Error> {
-        crate::FileError::new(self.filename.to_owned(), Some(self.line), cause).into_boxed()
+    pub fn next_index(&self) -> usize {
+        self.next_index
     }
 
-    pub fn syntax_error(&self, message: String) -> Box<dyn Error> {
-        crate::SyntaxError::new(self.filename.to_owned(), self.line, message).into_boxed()
+    pub fn create_span(&self, start_index: usize, end_index: usize) -> crate::Span {
+        crate::Span {
+            file_id: self.file_id,
+            start_index,
+            length: end_index - start_index,
+        }
     }
 
     fn next_char(&mut self) -> crate::Result<Option<char>> {
         if let Some(ch) = self.put_backs.pop() {
+            self.next_index += 1;
             Ok(Some(ch))
-        } else {
+        }
+        else {
             let read = self.source.read_char()
-                .map_err(|cause| self.file_error(cause))?;
+                .map_err(|cause| Box::new(crate::Error::SourceFileRead { file_id: self.file_id, line: self.line, cause }))?;
+
             if let Some(ch) = read {
                 if ch == '\n' {
                     self.line += 1;
                 }
+                self.next_index += 1;
                 Ok(Some(ch))
-            } else {
+            }
+            else {
                 Ok(None)
             }
         }
@@ -68,6 +77,7 @@ impl<T: BufRead> Scanner<T> {
 
     fn put_back(&mut self, ch: char) {
         self.put_backs.push(ch);
+        self.next_index -= 1;
     }
 
     fn next_non_space_char(&mut self) -> crate::Result<Option<char>> {
@@ -80,7 +90,8 @@ impl<T: BufRead> Scanner<T> {
         Ok(None)
     }
 
-    fn scan_integer_literal(&mut self) -> crate::Result<Option<Token>> {
+    fn scan_integer_literal(&mut self) -> crate::Result<Option<(crate::Span, Token)>> {
+        let start_index = self.next_index;
         let mut content = String::new();
 
         while let Some(ch) = self.next_char()? {
@@ -94,42 +105,46 @@ impl<T: BufRead> Scanner<T> {
 
         let mut value = 0;
         for digit in content.chars() {
-            value = 10 * value + digit as i128 - '0' as i128;
+            value = 10 * value + (digit as i128 - '0' as i128);
         }
 
-        Ok(Some(Token::Literal(Literal::Integer(value))))
+        let span = self.create_span(start_index, self.next_index);
+        Ok(Some((span, Token::Literal(Literal::Integer(value)))))
     }
 
-    fn scan_identifier_literal(&mut self) -> crate::Result<Option<Token>> {
+    fn scan_identifier_literal(&mut self) -> crate::Result<Option<(crate::Span, Token)>> {
+        let start_index = self.next_index;
         let mut content = String::new();
 
         while let Some(ch) = self.next_char()? {
             if ch == '_' || ch.is_ascii_alphanumeric() {
                 content.push(ch);
-            } else {
+            }
+            else {
                 self.put_back(ch);
                 break;
             }
         }
 
+        let span = self.create_span(start_index, self.next_index);
+
         if let Some(keyword_token) = get_keyword_token_match(&content) {
-            Ok(Some(keyword_token.clone()))
-        }
-        else if &content == "true" {
-            Ok(Some(Token::Literal(Literal::Boolean(true))))
-        }
-        else if &content == "false" {
-            Ok(Some(Token::Literal(Literal::Boolean(false))))
-        }
-        else if &content == "null" {
-            Ok(Some(Token::Literal(Literal::NullPointer)))
+            Ok(Some((span, keyword_token.clone())))
         }
         else {
-            Ok(Some(Token::Literal(Literal::Identifier(content))))
+            let literal = match content.as_str() {
+                "true" => Literal::Boolean(true),
+                "false" => Literal::Boolean(false),
+                "null" => Literal::NullPointer,
+                _ => Literal::Identifier(content)
+            };
+
+            Ok(Some((span, Token::Literal(literal))))
         }
     }
 
-    fn scan_symbolic_literal(&mut self) -> crate::Result<Option<Token>> {
+    fn scan_symbolic_literal(&mut self) -> crate::Result<Option<(crate::Span, Token)>> {
+        let start_index = self.next_index;
         let mut content = String::new();
 
         while let Some(ch) = self.next_char()? {
@@ -143,14 +158,18 @@ impl<T: BufRead> Scanner<T> {
         while let Some(ch) = content.pop() {
             self.put_back(ch);
             if let Some(symbolic_token) = get_symbolic_token_match(content.as_str()) {
-                return Ok(Some(symbolic_token.clone()));
+                let span = self.create_span(start_index, self.next_index);
+                return Ok(Some((span, symbolic_token.clone())));
             }
         }
 
-        Err(self.syntax_error(String::from("unrecognized token")))
+        let span = self.create_span(start_index, start_index);
+        Err(Box::new(crate::Error::InvalidToken { span }))
     }
 
     fn scan_escaped_char(&mut self) -> crate::Result<Option<u8>> {
+        let start_index = self.next_index;
+
         if let Some(ch) = self.next_char()? {
             if ch == '\\' {
                 match self.next_char()? {
@@ -182,7 +201,10 @@ impl<T: BufRead> Scanner<T> {
                                     '0'..='9' => ch as u8 - b'0',
                                     'A'..='F' => ch as u8 - b'A' + 10,
                                     'a'..='f' => ch as u8 - b'a' + 10,
-                                    _ => return Err(self.syntax_error(format!("invalid hexadecimal digit '{ch}'")))
+                                    _ => {
+                                        let span = self.create_span(start_index, start_index + 4);
+                                        return Err(Box::new(crate::Error::InvalidHexEscapeDigit { span, what: ch }));
+                                    }
                                 };
                             }
                             else {
@@ -191,8 +213,9 @@ impl<T: BufRead> Scanner<T> {
                         }
                         Ok(Some(byte))
                     },
-                    Some(escape_ch) => {
-                        Err(self.syntax_error(format!("unrecognized escape character '{escape_ch}'")))
+                    Some(ch) => {
+                        let span = self.create_span(start_index, self.next_index);
+                        Err(Box::new(crate::Error::InvalidEscape { span, what: ch }))
                     },
                     None => {
                         Ok(None)
@@ -203,7 +226,8 @@ impl<T: BufRead> Scanner<T> {
                 Ok(Some(ch as u8))
             }
             else {
-                Err(self.syntax_error(format!("non-ASCII character '{ch}' in literal")))
+                let span = self.create_span(start_index, start_index);
+                Err(Box::new(crate::Error::NonAsciiCharacter { span, what: ch }))
             }
         }
         else {
@@ -211,34 +235,45 @@ impl<T: BufRead> Scanner<T> {
         }
     }
 
-    fn scan_string_literal(&mut self) -> crate::Result<Option<Token>> {
+    fn scan_string_literal(&mut self) -> crate::Result<Option<(crate::Span, Token)>> {
+        let start_index = self.next_index - 1;
         let mut bytes = Vec::new();
 
         while let Some(ch) = self.next_char()? {
             if ch == '"' {
+                let span = self.create_span(start_index, self.next_index);
                 // Add the NUL byte at the end
                 // TODO: syntax like r"hello" to opt out?
                 bytes.push(0);
-                return Ok(Some(Token::Literal(Literal::String(StringValue::new(bytes)))));
+                return Ok(Some((span, Token::Literal(Literal::String(StringValue::new(bytes))))));
             }
             else {
                 self.put_back(ch);
-                bytes.push(self.scan_escaped_char()?
-                    .ok_or_else(|| self.syntax_error(String::from("unclosed string literal")))?);
+                bytes.push(self.scan_escaped_char()?.ok_or_else(|| {
+                    let span = self.create_span(start_index, start_index);
+                    Box::new(crate::Error::UnclosedString { span })
+                })?);
             }
         }
 
-        Err(self.syntax_error(String::from("unclosed string literal")))
+        let span = self.create_span(start_index, start_index);
+        Err(Box::new(crate::Error::UnclosedString { span }))
     }
 
-    fn scan_character_literal(&mut self) -> crate::Result<Option<Token>> {
-        let byte = self.scan_escaped_char()?
-            .ok_or_else(|| self.syntax_error(String::from("unclosed character literal")))?;
+    fn scan_character_literal(&mut self) -> crate::Result<Option<(crate::Span, Token)>> {
+        let start_index = self.next_index - 1;
+        let byte = self.scan_escaped_char()?.ok_or_else(|| {
+            let span = self.create_span(self.next_index, self.next_index);
+            Box::new(crate::Error::UnclosedCharacter { span })
+        })?;
 
-        match self.next_char()? {
-            Some('\'') => Ok(Some(Token::Literal(Literal::Integer(byte as i128)))),
-            Some(_) => Err(self.syntax_error(String::from("expected single quote to close character literal"))),
-            None => Err(self.syntax_error(String::from("unclosed character literal"))),
+        if let Some('\'') = self.next_char()? {
+            let span = self.create_span(start_index, self.next_index);
+            Ok(Some((span, Token::Literal(Literal::Integer(byte as i128)))))
+        }
+        else {
+            let span = self.create_span(self.next_index, self.next_index);
+            Err(Box::new(crate::Error::UnclosedCharacter { span }))
         }
     }
 
@@ -266,6 +301,8 @@ impl<T: BufRead> Scanner<T> {
     }
 
     fn skip_block_comment(&mut self) -> crate::Result<()> {
+        // TODO: recursive block comments
+        let start_index = self.next_index - 2;
         let mut escape_next_char = false;
 
         while let Some(ch) = self.next_char()? {
@@ -284,10 +321,11 @@ impl<T: BufRead> Scanner<T> {
             }
         }
 
-        Err(self.syntax_error(String::from("unclosed block comment")))
+        let span = self.create_span(start_index, start_index + 2);
+        Err(Box::new(crate::Error::UnclosedComment { span }))
     }
 
-    pub fn next_token(&mut self) -> crate::Result<Option<Token>> {
+    pub fn next_token(&mut self) -> crate::Result<Option<(crate::Span, Token)>> {
         if let Some(ch) = self.next_non_space_char()? {
             if ch.is_ascii_digit() {
                 self.put_back(ch);

@@ -29,16 +29,16 @@ pub fn parse_command_line_args() -> CompilerArgs {
     CompilerArgs::parse()
 }
 
-pub fn invoke(args: CompilerArgs) -> crate::Result<()> {
-    for source_filename in args.source_paths() {
+pub fn invoke(args: &CompilerArgs) -> crate::Result<()> {
+    for (file_id, source_filename) in args.source_paths().iter().enumerate() {
         println!("Compiling '{source_filename}':");
 
-        let mut scanner = crate::token::scan::Scanner::from_filename(source_filename.clone())?;
+        let mut scanner = crate::token::scan::Scanner::from_filename(file_id, source_filename.clone())?;
         let mut parser = crate::ast::parse::Parser::new(&mut scanner)?;
 
         let output_filename = args.output_path();
         crate::gen::Generator::from_filename(output_filename.to_owned())?
-            .generate(&mut parser)?;
+            .generate(&mut parser, args.source_paths())?;
         println!("LLVM successfully written to '{output_filename}'.");
     }
 

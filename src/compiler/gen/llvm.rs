@@ -6,7 +6,7 @@ use std::io::Write;
 use indoc::writedoc;
 
 pub struct Emitter<W: Write> {
-    name: String,
+    filename: String,
     writer: W,
     is_global: bool,
     used_attribute_group_0: bool,
@@ -22,14 +22,14 @@ impl Emitter<std::fs::File> {
     pub fn from_filename(filename: String) -> crate::Result<Self> {
         std::fs::File::create(&filename)
             .map(|file| Self::new(filename.clone(), file))
-            .map_err(|cause| crate::FileError::new(filename, None, cause).into_boxed())
+            .map_err(|cause| Box::new(crate::Error::OutputFileWrite { filename: filename.clone(), cause }))
     }
 }
 
 impl<W: Write> Emitter<W> {
-    pub fn new(name: String, writer: W) -> Self {
+    pub fn new(filename: String, writer: W) -> Self {
         Self {
-            name,
+            filename,
             writer,
             is_global: true,
             used_attribute_group_0: false,
@@ -42,12 +42,17 @@ impl<W: Write> Emitter<W> {
         }
     }
 
-    fn error(&self, cause: std::io::Error) -> Box<dyn crate::Error> {
-        crate::FileError::new(self.name.clone(), None, cause).into_boxed()
+    pub fn filename(&self) -> &str {
+        self.filename.as_str()
     }
 
-    pub fn emit_preamble(&mut self, source_filename: &str) -> crate::Result<()> {
+    fn error(&self, cause: std::io::Error) -> Box<crate::Error> {
+        Box::new(crate::Error::OutputFileWrite { filename: self.filename.clone(), cause })
+    }
+
+    pub fn emit_preamble(&mut self, module_id: usize, source_filename: &str) -> crate::Result<()> {
         writedoc!(self.writer, "
+            ; module_id = {module_id}
             source_filename = \"{source_filename}\"
 
             target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128\"

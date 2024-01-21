@@ -5,7 +5,6 @@ use info::*;
 use llvm::*;
 use crate::token;
 use crate::ast;
-use crate::Error;
 
 use std::io::{Write, BufRead};
 
@@ -135,18 +134,18 @@ impl<W: Write> Generator<W> {
     }
 
     pub fn get_symbol(&self, name: &str) -> crate::Result<&Symbol> {
-        self.symbol_table.find(name).ok_or_else(|| crate::RawError::new(format!("undefined symbol '{name}'")).into_boxed())
+        self.symbol_table.find(name).ok_or_else(|| Box::new(crate::Error::UndefinedSymbol { name: name.into() }))
     }
 
     pub fn get_definition_format(&self, type_name: &str) -> crate::Result<Format> {
         if let Some(definition_format) = self.symbol_table.find(type_name).and_then(Symbol::type_value) {
-            definition_format.cloned().ok_or_else(|| crate::RawError::new(format!("type '{type_name}' is declared but not defined")).into_boxed())
+            definition_format.cloned().ok_or_else(|| Box::new(crate::Error::PartialType { type_name: type_name.into() }))
         }
         else {
-            Err(crate::RawError::new(format!("unrecognized type name '{type_name}'")).into_boxed())
+            Err(Box::new(crate::Error::UnknownType { type_name: type_name.into() }))
         }
     }
-    
+
     pub fn get_format_from_node(&self, type_node: &ast::TypeNode, allow_mutable: bool, allow_unsized: bool) -> crate::Result<Format> {
         let format = match type_node {
             ast::TypeNode::Named(type_name) => {
@@ -171,7 +170,8 @@ impl<W: Write> Generator<W> {
                         .into_mutable()
                 }
                 else {
-                    return Err(crate::RawError::new(String::from("mutable types are not allowed here")).into_boxed());
+                    todo!("need to integrate `Span` into codegen")
+                    // return Err(Box::new(crate::Error::UnexpectedMut { span: todo!() }));
                 }
             },
             ast::TypeNode::Pointer(pointee_type) => {
@@ -186,7 +186,7 @@ impl<W: Write> Generator<W> {
                     }
                 }
                 else {
-                    return Err(crate::RawError::new(String::from("array length must be constant")).into_boxed());
+                    return Err(Box::new(crate::Error::NonConstantArrayLength {}));
                 }
             },
             ast::TypeNode::Array(item_type, None) => {
@@ -228,11 +228,7 @@ impl<W: Write> Generator<W> {
             }
         }
         else {
-            Err(crate::RawError::new(format!(
-                "expected a value of type '{target_format}', got '{got_format}' instead",
-                target_format = target_format.rich_name(),
-                got_format = got_format.rich_name(),
-            )).into_boxed())
+            Err(Box::new(crate::Error::IncompatibleTypes { expected_type: target_format.rich_name(), got_type: got_format.rich_name() }))
         }
     }
 
@@ -254,11 +250,7 @@ impl<W: Write> Generator<W> {
             }
         }
         else {
-            Err(crate::RawError::new(format!(
-                "expected a constant of type '{target_format}', got '{got_format}' instead",
-                target_format = target_format.rich_name(),
-                got_format = got_format.rich_name(),
-            )).into_boxed())
+            Err(Box::new(crate::Error::IncompatibleTypes { expected_type: target_format.rich_name(), got_type: got_format.rich_name() }))
         }
     }
 
@@ -307,11 +299,7 @@ impl<W: Write> Generator<W> {
                     Ok(Value::Register(result))
                 },
                 _ => {
-                    Err(crate::RawError::new(format!(
-                        "cannot convert from '{original_format}' to '{target_format}'",
-                        original_format = original_format.rich_name(),
-                        target_format = target_format.rich_name(),
-                    )).into_boxed())
+                    Err(Box::new(crate::Error::InconvertibleTypes { original_type: original_format.rich_name(), target_type: target_format.rich_name() }))
                 }
             }
         }
@@ -451,7 +439,7 @@ impl<W: Write> Generator<W> {
             },
             ast::Node::Break => {
                 let break_label = context.break_label()
-                    .ok_or_else(|| crate::RawError::new(String::from("unexpected 'break' outside loop")).into_boxed())?;
+                    .ok_or_else(|| Box::new(crate::Error::InvalidBreak {}))?;
 
                 self.emitter.emit_unconditional_branch(break_label)?;
 
@@ -462,7 +450,7 @@ impl<W: Write> Generator<W> {
             },
             ast::Node::Continue => {
                 let continue_label = context.continue_label()
-                    .ok_or_else(|| crate::RawError::new(String::from("unexpected 'continue' outside loop")).into_boxed())?;
+                    .ok_or_else(|| Box::new(crate::Error::InvalidContinue {}))?;
 
                 self.emitter.emit_unconditional_branch(continue_label)?;
 
@@ -473,11 +461,11 @@ impl<W: Write> Generator<W> {
             },
             ast::Node::Return { value } => {
                 let return_format = context.function().map(|function| function.return_format())
-                    .ok_or_else(|| crate::RawError::new(String::from("'return' outside of function")).into_boxed())?;
+                    .ok_or_else(|| Box::new(crate::Error::InvalidReturn {}))?;
 
                 if let Some(value) = value {
                     if return_format == &Format::Void {
-                        return Err(crate::RawError::new(String::from("returning without a value from a non-void function")).into_boxed());
+                        return Err(Box::new(crate::Error::UnexpectedReturnValue {}));
                     }
                     else {
                         let value = self.generate_node(value.as_ref(), context, Some(return_format.clone()))?;
@@ -491,7 +479,7 @@ impl<W: Write> Generator<W> {
                         self.emitter.emit_return(None)?;
                     }
                     else {
-                        return Err(crate::RawError::new(String::from("returning with a value from a void function")).into_boxed());
+                        return Err(Box::new(crate::Error::ExpectedReturnValue {}));
                     }
                 }
 
@@ -519,7 +507,7 @@ impl<W: Write> Generator<W> {
                 self.generate_structure_definition(name, members, context)?
             },
             _ => {
-                return Err(crate::RawError::new(format!("unexpected expression: {node}")).into_boxed());
+                return Err(Box::new(crate::Error::UnexpectedExpression {}));
             }
         };
 
@@ -535,12 +523,12 @@ impl<W: Write> Generator<W> {
         let result = match literal {
             token::Literal::Identifier(name) => {
                 self.get_symbol(name)?.value()
-                    .ok_or_else(|| crate::RawError::new(format!("cannot use '{name}' as a value")).into_boxed())?
+                    .ok_or_else(|| Box::new(crate::Error::NonValueSymbol { name: name.clone() }))?
             },
             token::Literal::Integer(value) => {
                 let format = expected_format.cloned().unwrap_or(Format::Integer { size: 4, signed: true });
                 let value = IntegerValue::new(*value, &format)
-                    .ok_or_else(|| crate::RawError::new(format!("'{value}' cannot be used as a value of type '{}'", format.rich_name())).into_boxed())?;
+                    .ok_or_else(|| Box::new(crate::Error::IncompatibleValueType { value: value.to_string(), type_name: format.rich_name() }))?;
                 Value::Constant(Constant::Integer(value))
             },
             token::Literal::Boolean(value) => {
@@ -563,11 +551,11 @@ impl<W: Write> Generator<W> {
     }
 
     fn generate_array_literal(&mut self, items: &[Box<ast::Node>], context: &ScopeContext, expected_format: Option<&Format>) -> crate::Result<Value> {
-        let result = if let Some(array_format) = expected_format {
+        if let Some(array_format) = expected_format {
             if let Format::Array { item_format, .. } = array_format {
                 let mut non_constant_items = Vec::new();
 
-                let constant_items: Vec<Constant> = Result::from_iter(items.iter().enumerate().map(|(index, item)| {
+                let constant_items: Vec<Constant> = crate::Result::from_iter(items.iter().enumerate().map(|(index, item)| {
                     let item_value = self.generate_node(item.as_ref(), context, Some(item_format.as_ref().clone()))?;
 
                     if let Value::Constant(item_constant) = item_value {
@@ -602,64 +590,71 @@ impl<W: Write> Generator<W> {
                     self.emitter.emit_store(&member, &Value::Register(item_pointer))?;
                 }
 
-                Value::Indirect {
+                Ok(Value::Indirect {
                     pointer: Box::new(array_pointer),
                     loaded_format: array_format.clone(),
-                }
+                })
             }
             else {
-                return Err(crate::RawError::new(String::from("unknown array format")).into_boxed());
+                Err(Box::new(crate::Error::UnknownArrayType {}))
             }
         }
         else {
             // TODO
-            return Err(crate::RawError::new(String::from("unknown array format")).into_boxed());
-        };
-
-        Ok(result)
+            Err(Box::new(crate::Error::UnknownArrayType {}))
+        }
     }
 
     fn generate_structure_literal(&mut self, type_name: &ast::Node, initializer_members: &[(String, Box<ast::Node>)], context: &ScopeContext) -> crate::Result<Value> {
         let structure_format = match type_name {
             ast::Node::Literal(token::Literal::Identifier(name)) => {
                 self.get_symbol(name)?.type_value()
-                    .ok_or_else(|| crate::RawError::new(format!("cannot use '{type_name}' as a struct type")).into_boxed())?
-                    .ok_or_else(|| crate::RawError::new(format!("type '{type_name}' has been declared but not defined")).into_boxed())?
+                    .ok_or_else(|| Box::new(crate::Error::NonStructSymbol { name: name.clone() }))?
+                    .ok_or_else(|| Box::new(crate::Error::PartialType { type_name: name.clone() }))?
                     .clone()
             },
-            _ => return Err(crate::RawError::new(format!("invalid syntax for struct type")).into_boxed())
+            _ => return Err(Box::new(crate::Error::InvalidStructIdentifier {}))
         };
 
-        if let Format::Structure { type_name, members } = structure_format {
-            // A type coming from the symbol table should always have a name
-            let type_name = type_name.unwrap();
+        if let Format::Structure { type_name: Some(type_name), members } = structure_format {
             let result_format = self.get_identified_format(&type_name);
 
             let mut initializer_members = initializer_members.to_vec();
             let mut non_constant_members = Vec::new();
+            let mut missing_member_names = Vec::new();
 
-            let constant_members: Vec<Constant> = Result::from_iter(members.iter().enumerate().map(|(index, (member_name, member_format))| {
-                let initializer_index = initializer_members.iter().position(|(name, _)| member_name == name)
-                    .ok_or_else(|| crate::RawError::new(format!("missing member '{member_name}' in initializer of struct '{type_name}'")).into_boxed())?;
+            let constant_members: Vec<Constant> = crate::Result::from_iter(members.iter().enumerate().map(|(index, (member_name, member_format))| {
+                if let Some(initializer_index) = initializer_members.iter().position(|(name, _)| member_name == name) {
+                    let (_, member_value) = &initializer_members[initializer_index];
+                    let member_value = self.generate_node(member_value.as_ref(), context, Some(member_format.clone()))?;
 
-                let (_, member_value) = &initializer_members[initializer_index];
-                let member_value = self.generate_node(member_value.as_ref(), context, Some(member_format.clone()))?;
+                    initializer_members.swap_remove(initializer_index);
 
-                initializer_members.swap_remove(initializer_index);
+                    if let Value::Constant(member_constant) = member_value {
+                        Ok(member_constant)
+                    }
+                    else {
+                        let member_value = self.coerce_to_rvalue(member_value)?;
+                        non_constant_members.push((index, member_value));
 
-                if let Value::Constant(member_constant) = member_value {
-                    Ok(member_constant)
+                        Ok(Constant::Undefined(member_format.clone()))
+                    }
                 }
                 else {
-                    let member_value = self.coerce_to_rvalue(member_value)?;
-                    non_constant_members.push((index, member_value));
+                    missing_member_names.push(member_name.clone());
 
                     Ok(Constant::Undefined(member_format.clone()))
                 }
             }))?;
 
+            if !missing_member_names.is_empty() {
+                return Err(Box::new(crate::Error::MissingStructMembers { member_names: missing_member_names, type_name: type_name.clone() }))
+            }
+
             if !initializer_members.is_empty() {
-                return Err(crate::RawError::new(format!("extraneous members for struct '{type_name}'")).into_boxed());
+                let member_names = Vec::from_iter(initializer_members.iter().map(|(name, _)| name.clone()));
+
+                return Err(Box::new(crate::Error::ExtraStructMembers { member_names, type_name: type_name.clone() }));
             }
 
             let structure_pointer = self.new_anonymous_register(result_format.clone().into_pointer());
@@ -689,7 +684,7 @@ impl<W: Write> Generator<W> {
             })
         }
         else {
-            Err(crate::RawError::new(format!("type '{type_name}' is not a struct type")).into_boxed())
+            Err(Box::new(crate::Error::NonStructType { type_name: type_name.to_string() }))
         }
     }
 
@@ -738,7 +733,7 @@ impl<W: Write> Generator<W> {
                     *pointer
                 }
                 else {
-                    return Err(crate::RawError::new(String::from("operand of '&' must be an lvalue")).into_boxed());
+                    return Err(Box::new(crate::Error::ExpectedLValue {}));
                 }
             },
             ast::UnaryOperation::Dereference => {
@@ -760,7 +755,7 @@ impl<W: Write> Generator<W> {
                     }
                 }
                 else {
-                    return Err(crate::RawError::new(format!("cannot dereference value of type '{}'", operand.format().rich_name())).into_boxed());
+                    return Err(Box::new(crate::Error::ExpectedPointer { type_name: operand.format().rich_name() }));
                 }
             },
             ast::UnaryOperation::GetSize => {
@@ -771,7 +766,7 @@ impl<W: Write> Generator<W> {
                     Value::Constant(Constant::Integer(IntegerValue::Unsigned64(size as u64)))
                 }
                 else {
-                    return Err(crate::RawError::new(String::from("invalid operand for 'sizeof'")).into_boxed());
+                    panic!("non-type operand for 'sizeof'");
                 }
             },
             ast::UnaryOperation::GetAlign => todo!(),
@@ -804,7 +799,7 @@ impl<W: Write> Generator<W> {
                     self.generate_member_access(structure, rhs, context)?
                 }
                 else {
-                    return Err(crate::RawError::new(format!("cannot dereference value of type '{}'", pointer_format.rich_name())).into_boxed());
+                    return Err(Box::new(crate::Error::ExpectedPointer { type_name: pointer_format.rich_name() }));
                 }
             },
             ast::BinaryOperation::Convert => {
@@ -817,7 +812,7 @@ impl<W: Write> Generator<W> {
                     self.change_format(value, &target_format)?
                 }
                 else {
-                    return Err(crate::RawError::new(String::from("expected a type following 'as'")).into_boxed());
+                    panic!("non-type rhs for 'as'");
                 }
             },
             ast::BinaryOperation::Add => {
@@ -1045,11 +1040,11 @@ impl<W: Write> Generator<W> {
         let rhs = self.coerce_to_rvalue(rhs)?;
         
         if !(matches!(rhs.format().as_unqualified(), Format::Integer { .. })) {
-            return Err(crate::RawError::new(String::from("expected an integer index")).into_boxed());
+            return Err(Box::new(crate::Error::ExpectedInteger { type_name: rhs.format().rich_name() }));
         }
 
         let lhs_format = lhs.format();
-        let cannot_index_error = || crate::RawError::new(format!("cannot index value of type '{}'", lhs_format.rich_name())).into_boxed();
+        let cannot_index_error = || Box::new(crate::Error::ExpectedArray { type_name: lhs_format.rich_name() });
 
         // This is incredibly nasty and repetitive... could signify a need for a rethink of Value/Constant and/or Format
         match (lhs, rhs) {
@@ -1218,11 +1213,7 @@ impl<W: Write> Generator<W> {
 
     fn generate_member_access(&mut self, structure: Value, member_name: &ast::Node, _context: &ScopeContext) -> crate::Result<Value> {
         let structure_format = structure.format();
-
-        let cannot_access_error = || crate::RawError::new(format!(
-            "cannot access members of non-struct type '{format}'",
-            format = structure_format.rich_name(),
-        )).into_boxed();
+        let cannot_access_error = || Box::new(crate::Error::ExpectedStruct { type_name: structure_format.rich_name() });
 
         if let ast::Node::Literal(token::Literal::Identifier(member_name)) = member_name {
             match structure {
@@ -1230,7 +1221,7 @@ impl<W: Write> Generator<W> {
                     Format::Identified { type_name, .. } => match self.get_definition_format(type_name)?.as_unqualified() {
                         Format::Structure { members, .. } => {
                             let member_index = members.iter().position(|(name, _)| name == member_name)
-                                .ok_or_else(|| crate::RawError::new(format!("member '{member_name}' does not exist in struct '{type_name}'")).into_boxed())?;
+                                .ok_or_else(|| Box::new(crate::Error::UndefinedStructMember { member_name: member_name.clone(), type_name: structure_format.rich_name() }))?;
                             let member_format = match &loaded_format {
                                 Format::Mutable(_) => members[member_index].1.clone().into_mutable(),
                                 _ => members[member_index].1.clone()
@@ -1261,7 +1252,8 @@ impl<W: Write> Generator<W> {
             }
         }
         else {
-            return Err(crate::RawError::new(String::from("expected a struct member name")).into_boxed());
+            todo!("need to integrate `Span` into codegen")
+            // return Err(Box::new(crate::Error::ExpectedIdentifier { span: todo!() }));
         }
     }
 
@@ -1324,11 +1316,13 @@ impl<W: Write> Generator<W> {
                 argument_values.push(argument);
             }
 
-            if !signature.is_varargs() && arguments.len() > signature.parameter_formats().len() {
-                return Err(crate::RawError::new(format!("too many arguments (expected {}, got {})", signature.parameter_formats().len(), arguments.len())).into_boxed());
+            let expected_count = signature.parameter_formats().len();
+            let got_count = arguments.len();
+            if !signature.is_varargs() && got_count > expected_count {
+                return Err(Box::new(crate::Error::ExtraFunctionArguments { expected_count, got_count }));
             }
-            else if arguments.len() < signature.parameter_formats().len() {
-                return Err(crate::RawError::new(format!("too few arguments (expected {}, got {})", signature.parameter_formats().len(), arguments.len())).into_boxed());
+            else if got_count < expected_count {
+                return Err(Box::new(crate::Error::MissingFunctionArguments { expected_count, got_count }));
             }
 
             match signature.return_format() {
@@ -1353,7 +1347,7 @@ impl<W: Write> Generator<W> {
             }
         }
         else {
-            Err(crate::RawError::new(String::from("cannot call a non-function object")).into_boxed())
+            Err(Box::new(crate::Error::ExpectedFunction { type_name: callee.format().rich_name() }))
         }
     }
 
@@ -1369,7 +1363,7 @@ impl<W: Write> Generator<W> {
             };
 
             if self.symbol_table.find(name).is_some() {
-                return Err(crate::RawError::new(format!("global name '{name}' is already in use")).into_boxed());
+                return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.into() }));
             }
 
             let (symbol, pointer) = self.symbol_table.create_global_indirect_symbol(name.into(), format.clone());
@@ -1411,7 +1405,7 @@ impl<W: Write> Generator<W> {
             let constant = self.generate_constant_node(value, context, Some(format.clone()))?;
 
             if self.symbol_table.find(name).is_some() {
-                return Err(crate::RawError::new(format!("global name '{name}' is already in use")).into_boxed());
+                return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.into() }));
             }
 
             let (symbol, pointer) = self.symbol_table.create_global_indirect_symbol(name.into(), format.clone());
@@ -1433,22 +1427,16 @@ impl<W: Write> Generator<W> {
 
         if let Some(previous_symbol) = self.symbol_table.find(name) {
             // Ensure the new declaration doesn't conflict with the existing symbol
-            if let Some((_, old_signature, already_defined)) = previous_symbol.function_value() {
-                if new_signature.parameter_formats() != old_signature.parameter_formats() {
-                    return Err(crate::RawError::new(format!("conflicting parameter types for function '{name}'")).into_boxed());
-                }
-                else if new_signature.is_varargs() != old_signature.is_varargs() {
-                    return Err(crate::RawError::new(format!("conflicting varargs status for function '{name}'")).into_boxed());
-                }
-                else if new_signature.return_format() != old_signature.return_format() {
-                    return Err(crate::RawError::new(format!("conflicting return types for function '{name}'")).into_boxed());
-                }
-                else if already_defined {
-                    return Err(crate::RawError::new(format!("multiple definition of function '{name}'")).into_boxed());
+            if let Some((old_register, old_signature, _already_defined)) = previous_symbol.function_value() {
+                if &new_signature != old_signature {
+                    let old_type = old_register.format().rich_name();
+                    let new_type = Format::Function(Box::new(new_signature.clone())).rich_name();
+
+                    return Err(Box::new(crate::Error::FunctionSignatureConflict { function_name: name.into(), old_type, new_type }));
                 }
             }
             else {
-                return Err(crate::RawError::new(format!("function '{name}' conflicts with global variable of the same name")).into_boxed());
+                return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.into() }));
             }
         }
         else {
@@ -1483,22 +1471,19 @@ impl<W: Write> Generator<W> {
 
         if let Some(previous_symbol) = self.symbol_table.find(name) {
             // Ensure the new definition doesn't conflict with the existing symbol
-            if let Some((_, old_signature, already_defined)) = previous_symbol.function_value() {
-                if new_signature.parameter_formats() != old_signature.parameter_formats() {
-                    return Err(crate::RawError::new(format!("conflicting parameter types for function '{name}'")).into_boxed());
-                }
-                else if new_signature.is_varargs() != old_signature.is_varargs() {
-                    return Err(crate::RawError::new(format!("conflicting varargs status for function '{name}'")).into_boxed());
-                }
-                else if new_signature.return_format() != old_signature.return_format() {
-                    return Err(crate::RawError::new(format!("conflicting return types for function '{name}'")).into_boxed());
+            if let Some((old_register, old_signature, already_defined)) = previous_symbol.function_value() {
+                if &new_signature != old_signature {
+                    let old_type = old_register.format().rich_name();
+                    let new_type = Format::Function(Box::new(new_signature.clone())).rich_name();
+                    
+                    return Err(Box::new(crate::Error::FunctionSignatureConflict { function_name: name.into(), old_type, new_type }));
                 }
                 else if already_defined {
-                    return Err(crate::RawError::new(format!("multiple definition of function '{name}'")).into_boxed());
+                    return Err(Box::new(crate::Error::MultipleFunctionDefinition { function_name: name.into() }));
                 }
             }
             else {
-                return Err(crate::RawError::new(format!("function '{name}' conflicts with global variable of the same name")).into_boxed());
+                return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.into() }));
             }
         }
 
@@ -1526,7 +1511,7 @@ impl<W: Write> Generator<W> {
                 self.emitter.emit_return(None)?;
             }
             else {
-                return Err(crate::RawError::new(format!("non-void function '{name}' could finish without returning a value")).into_boxed());
+                return Err(Box::new(crate::Error::MissingReturnStatement { function_name: name.into() }));
             }
         }
 
@@ -1545,7 +1530,7 @@ impl<W: Write> Generator<W> {
                 Ok(Value::Void)
             }
             else {
-                return Err(crate::RawError::new(format!("global name '{name}' is already in use")).into_boxed());
+                return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.into() }));
             }
         }
         else {
@@ -1562,11 +1547,11 @@ impl<W: Write> Generator<W> {
         if let Some(previous_symbol) = self.symbol_table.find(name) {
             if let Some(definition_format) = previous_symbol.type_value() {
                 if definition_format.is_some() {
-                    return Err(crate::RawError::new(format!("a type named '{name}' has already been defined")).into_boxed());
+                    return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.into() }));
                 }
             }
             else {
-                return Err(crate::RawError::new(format!("global name '{name}' is already in use")).into_boxed());
+                return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.into() }));
             }
         }
 
@@ -1574,7 +1559,7 @@ impl<W: Write> Generator<W> {
         let symbol = self.symbol_table.create_type_definition_symbol(name.into(), None);
         self.symbol_table.insert(symbol);
 
-        let members: Vec<(String, Format)> = Result::from_iter(members.iter().map(|(member_name, member_type)| {
+        let members: Vec<(String, Format)> = crate::Result::from_iter(members.iter().map(|(member_name, member_type)| {
             let member_format = self.get_format_from_node(member_type, false, false)?;
             Ok((member_name.clone(), member_format))
         }))?;
@@ -1620,18 +1605,20 @@ impl<W: Write> Generator<W> {
                 match literal {
                     token::Literal::Identifier(name) => {
                         let value = self.get_symbol(name)?.value()
-                            .ok_or_else(|| crate::RawError::new(format!("cannot use '{name}' as a value")).into_boxed())?;
+                            .ok_or_else(|| Box::new(crate::Error::NonValueSymbol { name: name.clone() }))?;
+
                         if let Value::Constant(constant) = value {
                             constant.clone()
                         }
                         else {
-                            return Err(crate::RawError::new(format!("'{name}' is not constant and cannot be used in a constant expression")).into_boxed());
+                            return Err(Box::new(crate::Error::NonConstantSymbol { name: name.clone() }));
                         }
                     },
                     token::Literal::Integer(value) => {
                         let format = expected_format.clone().unwrap_or(Format::Integer { size: 4, signed: true });
                         let value = IntegerValue::new(*value, &format)
-                            .ok_or_else(|| crate::RawError::new(format!("'{value}' cannot be used as a value of type '{}'", format.rich_name())).into_boxed())?;
+                            .ok_or_else(|| Box::new(crate::Error::IncompatibleValueType { value: value.to_string(), type_name: format.rich_name() }))?;
+
                         Constant::Integer(value)
                     },
                     token::Literal::Boolean(value) => {
@@ -1650,7 +1637,7 @@ impl<W: Write> Generator<W> {
             },
             ast::Node::Array { items } => {
                 if let Some(Format::Array { item_format, .. }) = &expected_format {
-                    let items: Vec<Constant> = Result::from_iter(items.iter().map(|item| {
+                    let items: Vec<Constant> = crate::Result::from_iter(items.iter().map(|item| {
                         let (item, mut constants) = self.fold_as_constant(item.as_ref(), constant_id, context, Some(item_format.as_ref().clone()))?;
 
                         intermediate_constants.append(&mut constants);
@@ -1664,39 +1651,50 @@ impl<W: Write> Generator<W> {
                 }
                 else {
                     // TODO
-                    return Err(crate::RawError::new(String::from("unknown array format")).into_boxed());
+                    return Err(Box::new(crate::Error::UnknownArrayType {}));
                 }
             },
             ast::Node::Structure { type_name, members: initializer_members } => {
                 let structure_format = match type_name.as_ref() {
                     ast::Node::Literal(token::Literal::Identifier(name)) => {
                         self.get_symbol(name)?.type_value()
-                            .ok_or_else(|| crate::RawError::new(format!("cannot use '{type_name}' as a struct type")).into_boxed())?
-                            .ok_or_else(|| crate::RawError::new(format!("type '{type_name}' has been declared but not defined")).into_boxed())?
+                            .ok_or_else(|| Box::new(crate::Error::NonStructSymbol { name: name.clone() }))?
+                            .ok_or_else(|| Box::new(crate::Error::PartialType { type_name: name.clone() }))?
                     },
-                    _ => return Err(crate::RawError::new(format!("invalid syntax for struct type")).into_boxed())
+                    _ => return Err(Box::new(crate::Error::InvalidStructIdentifier {}))
                 };
                 
-                if let Format::Structure { type_name, members } = structure_format {
-                    let type_name = type_name.as_ref().unwrap();
+                if let Format::Structure { type_name: Some(type_name), members } = structure_format {
                     let result_format = self.get_identified_format(type_name);
 
                     let mut initializer_members = initializer_members.clone();
+                    let mut missing_member_names = Vec::new();
 
-                    let members: Vec<Constant> = Result::from_iter(members.iter().map(|(member_name, member_format)| {
-                        let initializer_index = initializer_members.iter().position(|(name, _)| member_name == name)
-                            .ok_or_else(|| crate::RawError::new(format!("missing member '{member_name}' in initializer of struct '{type_name}'")).into_boxed())?;
+                    let members: Vec<Constant> = crate::Result::from_iter(members.iter().map(|(member_name, member_format)| {
+                        if let Some(initializer_index) = initializer_members.iter().position(|(name, _)| member_name == name) {
+                            let (_, member_value) = &initializer_members[initializer_index];
+                            let (member_value, mut constants) = self.fold_as_constant(member_value.as_ref(), constant_id, context, Some(member_format.clone()))?;
 
-                        let (_, member_value) = &initializer_members[initializer_index];
-                        let (member_value, mut constants) = self.fold_as_constant(member_value.as_ref(), constant_id, context, Some(member_format.clone()))?;
+                            intermediate_constants.append(&mut constants);
+                            initializer_members.swap_remove(initializer_index);
 
-                        intermediate_constants.append(&mut constants);
-                        initializer_members.swap_remove(initializer_index);
-                        Ok(member_value)
+                            Ok(member_value)
+                        }
+                        else {
+                            missing_member_names.push(member_name.clone());
+
+                            Ok(Constant::Undefined(member_format.clone()))
+                        }
                     }))?;
 
+                    if !missing_member_names.is_empty() {
+                        return Err(Box::new(crate::Error::MissingStructMembers { member_names: missing_member_names, type_name: type_name.clone() }))
+                    }
+        
                     if !initializer_members.is_empty() {
-                        return Err(crate::RawError::new(format!("extraneous members for struct '{type_name}'")).into_boxed());
+                        let member_names = Vec::from_iter(initializer_members.iter().map(|(name, _)| name.clone()));
+        
+                        return Err(Box::new(crate::Error::ExtraStructMembers { member_names, type_name: type_name.clone() }));
                     }
 
                     Constant::Structure {
@@ -1705,7 +1703,7 @@ impl<W: Write> Generator<W> {
                     }
                 }
                 else {
-                    return Err(crate::RawError::new(format!("type '{type_name}' is not a struct type")).into_boxed());
+                    return Err(Box::new(crate::Error::NonStructType { type_name: type_name.to_string() }));
                 }
             },
             ast::Node::Binary { operation, lhs, rhs } => match operation {
@@ -1717,27 +1715,25 @@ impl<W: Write> Generator<W> {
                         let target_format = self.get_format_from_node(type_node, false, false)?;
     
                         if let Constant::Integer(integer) = value {
-                            Constant::Integer(IntegerValue::new(integer.expanded_value(), &target_format)
-                                .ok_or_else(|| crate::RawError::new(format!(
-                                    "cannot convert from {original_format} to {target_format}",
-                                    original_format = integer.format().rich_name(),
-                                    target_format = target_format.rich_name(),
-                                )).into_boxed())?)
+                            let converted_integer = IntegerValue::new(integer.expanded_value(), &target_format)
+                                .ok_or_else(|| Box::new(crate::Error::InconvertibleTypes { original_type: integer.format().rich_name(), target_type: target_format.rich_name() }))?;
+
+                            Constant::Integer(converted_integer)
                         }
                         else {
-                            return Err(crate::RawError::new(String::from("unsupported constant conversion")).into_boxed());
+                            return Err(Box::new(crate::Error::InconvertibleTypes { original_type: value.format().rich_name(), target_type: target_format.rich_name() }));
                         }
                     }
                     else {
-                        return Err(crate::RawError::new(String::from("expected a type following 'as'")).into_boxed());
+                        panic!("non-type rhs for 'as'");
                     }
                 },
                 _ => {
-                    return Err(crate::RawError::new(String::from("unexpected operation in constant")).into_boxed());
+                    return Err(Box::new(crate::Error::UnsupportedConstantExpression {}));
                 }
             },
             _ => {
-                return Err(crate::RawError::new(String::from("unexpected expression in constant")).into_boxed());
+                return Err(Box::new(crate::Error::UnsupportedConstantExpression {}));
             }
         };
 
@@ -1750,10 +1746,11 @@ impl<W: Write> Generator<W> {
         }
     }
 
-    pub fn generate<T: BufRead>(mut self, parser: &mut ast::parse::Parser<T>) -> crate::Result<()> {
-        self.emitter.emit_preamble(parser.filename())?;
-        
+    pub fn generate<T: BufRead>(mut self, parser: &mut ast::parse::Parser<T>, filenames: &[String]) -> crate::Result<()> {
+        let module_id = parser.file_id();
         let global_context = ScopeContext::new();
+
+        self.emitter.emit_preamble(module_id, &filenames[module_id])?;
 
         while let Some(statement) = parser.parse_statement(true, true)? {
             self.generate_node(statement.as_ref(), &global_context, None)?;

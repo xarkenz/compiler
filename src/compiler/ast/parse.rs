@@ -1,40 +1,44 @@
 use super::*;
 
-use std::fmt::Write;
 use std::io::BufRead;
-
-fn expected_token_error_message(allowed: &[Token], got_token: &Token) -> String {
-    let mut message = format!("expected '{}'", &allowed[0]);
-    for token in &allowed[1..] {
-        write!(&mut message, ", '{token}'").unwrap();
-    }
-    write!(&mut message, "; got '{got_token}'").unwrap();
-    message
-}
 
 #[derive(Debug)]
 pub struct Parser<'a, T: BufRead> {
     scanner: &'a mut scan::Scanner<T>,
+    current_span: crate::Span,
     current_token: Option<Token>,
 }
 
 impl<'a, T: BufRead> Parser<'a, T> {
     pub fn new(scanner: &'a mut scan::Scanner<T>) -> crate::Result<Self> {
+        let current_span = scanner.create_span(scanner.next_index(), scanner.next_index());
         let mut new_instance = Self {
             scanner,
+            current_span,
             current_token: None,
         };
         new_instance.scan_token()?;
         Ok(new_instance)
     }
 
-    pub fn filename(&'a self) -> &'a str {
-        self.scanner.filename()
+    pub fn file_id(&self) -> usize {
+        self.scanner.file_id()
     }
 
     pub fn scan_token(&mut self) -> crate::Result<()> {
-        self.current_token = self.scanner.next_token()?;
+        if let Some((span, token)) = self.scanner.next_token()? {
+            self.current_span = span;
+            self.current_token = Some(token);
+        }
+        else {
+            self.current_span = self.scanner.create_span(self.scanner.next_index(), self.scanner.next_index());
+            self.current_token = None;
+        }
         Ok(())
+    }
+
+    pub fn current_span(&self) -> crate::Span {
+        self.current_span.clone()
     }
 
     pub fn current_token(&self) -> Option<&Token> {
@@ -42,20 +46,24 @@ impl<'a, T: BufRead> Parser<'a, T> {
     }
 
     pub fn get_token(&self) -> crate::Result<&Token> {
-        self.current_token().ok_or_else(|| self.scanner.syntax_error(String::from("unexpected end of file")))
+        self.current_token().ok_or_else(|| Box::new(crate::Error::ExpectedToken { span: self.current_span() }))
     }
 
     pub fn expect_token<'b>(&self, allowed: &'b [Token]) -> crate::Result<&'b Token> {
         let current_token = self.get_token()?;
         allowed.iter()
-            .find(|token| token == &current_token)
-            .ok_or_else(|| self.scanner.syntax_error(expected_token_error_message(allowed, current_token)))
+            .find(|&token| token == current_token)
+            .ok_or_else(|| Box::new(crate::Error::ExpectedTokenFromList {
+                span: self.current_span(),
+                got_token: current_token.clone(),
+                allowed_tokens: allowed.to_vec(),
+            }))
     }
 
     pub fn expect_identifier(&self) -> crate::Result<String> {
         match self.get_token()? {
             Token::Literal(Literal::Identifier(name)) => Ok(name.clone()),
-            _ => Err(self.scanner.syntax_error(String::from("expected an identifier")))
+            _ => Err(Box::new(crate::Error::ExpectedIdentifier { span: self.current_span() }))
         }
     }
 
@@ -114,7 +122,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     })
                 },
                 _ => {
-                    return Err(self.scanner.syntax_error(format!("expected an operand, got {token}")));
+                    return Err(Box::new(crate::Error::ExpectedOperand { span: self.current_span(), got_token: token.clone() }));
                 }
             };
             self.scan_token()?;
@@ -232,7 +240,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 });
             }
             else {
-                return Err(self.scanner.syntax_error(format!("expected an operation, got {token}")));
+                return Err(Box::new(crate::Error::ExpectedOperation { span: self.current_span(), got_token: token.clone() }));
             }
         }
 
@@ -288,10 +296,10 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 Ok(TypeNode::Array(item_type, length))
             },
             Token::Mut => {
-                Err(self.scanner.syntax_error(format!("'mut' is not allowed here")))
+                Err(Box::new(crate::Error::UnexpectedMut { span: self.current_span() }))
             },
-            token => {
-                Err(self.scanner.syntax_error(format!("expected a type, got '{token}'")))
+            got_token => {
+                Err(Box::new(crate::Error::ExpectedType { span: self.current_span(), got_token: got_token.clone() }))
             }
         }
     }
@@ -433,7 +441,12 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 })))
             },
             Some(got_token) if is_global => {
-                Err(self.scanner.syntax_error(expected_token_error_message(&[Token::Semicolon, Token::Let, Token::Function], got_token)))
+                Err(Box::new(crate::Error::ExpectedTokenFromList {
+                    span: self.current_span(),
+                    got_token: got_token.clone(),
+                    // Semicolon is technically allowed, but like... why would you do that
+                    allowed_tokens: vec![Token::Let, Token::Function],
+                }))
             },
             Some(Token::CurlyLeft) => {
                 self.scan_token()?;
@@ -449,11 +462,11 @@ impl<'a, T: BufRead> Parser<'a, T> {
                             break;
                         },
                         None => {
-                            return Err(self.scanner.syntax_error(String::from("expected closing '}'")));
+                            return Err(Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }));
                         },
                         _ => {
                             let statement = self.parse_statement(false, false)?
-                                .ok_or_else(|| self.scanner.syntax_error(String::from("expected closing '}'")))?;
+                                .ok_or_else(|| Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }))?;
                             statements.push(statement);
                         }
                     }
@@ -470,13 +483,13 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 let condition = self.parse_expression(None, &[Token::ParenRight])?;
                 self.scan_token()?;
                 let consequent = self.parse_statement(is_global, false)?
-                    .ok_or_else(|| self.scanner.syntax_error(String::from("expected a statement after 'if (<condition>)'")))?;
+                    .ok_or_else(|| Box::new(crate::Error::ExpectedStatement { span: self.current_span() }))?;
                 let alternative;
                 if let Some(Token::Else) = self.current_token() {
                     self.scan_token()?;
                     alternative = self.parse_statement(is_global, false)?;
                     if alternative.is_none() {
-                        return Err(self.scanner.syntax_error(String::from("expected a statement after 'else'")));
+                        return Err(Box::new(crate::Error::ExpectedStatement { span: self.current_span() }));
                     }
                 }
                 else {
@@ -490,7 +503,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 })))
             },
             Some(Token::Else) => {
-                Err(self.scanner.syntax_error(String::from("unexpected 'else' without previous 'if'")))
+                Err(Box::new(crate::Error::UnexpectedElse { span: self.current_span() }))
             },
             Some(Token::While) => {
                 self.scan_token()?;
@@ -499,7 +512,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 let condition = self.parse_expression(None, &[Token::ParenRight])?;
                 self.scan_token()?;
                 let body = self.parse_statement(is_global, false)?
-                    .ok_or_else(|| self.scanner.syntax_error(String::from("expected a statement after 'if (<condition>)'")))?;
+                    .ok_or_else(|| Box::new(crate::Error::ExpectedStatement { span: self.current_span() }))?;
 
                 Ok(Some(Box::new(Node::While {
                     condition,

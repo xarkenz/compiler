@@ -187,10 +187,7 @@ impl Format {
     }
 
     pub fn expect_size(&self, symbol_table: &SymbolTable) -> crate::Result<usize> {
-        self.size(symbol_table).ok_or_else(|| crate::RawError::new(format!(
-            "cannot use type '{format}' here, as it does not have a known size at this time (did you mean to use a pointer?)",
-            format = self.rich_name(),
-        )).into_boxed())
+        self.size(symbol_table).ok_or_else(|| Box::new(crate::Error::UnknownTypeSize { type_name: self.rich_name() }))
     }
 
     pub fn rich_name(&self) -> String {
@@ -608,11 +605,11 @@ impl Value {
                     Ok((*pointer, loaded_format))
                 }
                 else {
-                    Err(crate::RawError::new(format!("cannot mutate value of type '{}' as it is not 'mut'", loaded_format.rich_name())).into_boxed())
+                    Err(Box::new(crate::Error::CannotMutateValue { type_name: loaded_format.rich_name() }))
                 }
             },
             _ => {
-                Err(crate::RawError::new(String::from("expected an lvalue")).into_boxed())
+                Err(Box::new(crate::Error::ExpectedLValue {}))
             }
         }
     }
