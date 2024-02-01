@@ -130,8 +130,9 @@ pub enum Error {
         span: Span,
         got_token: token::Token,
     },
-    UnexpectedMut {
+    UnexpectedQualifier {
         span: Span,
+        got_token: token::Token,
     },
     ExpectedClosingBracket {
         span: Span,
@@ -273,7 +274,7 @@ impl Error {
             Error::ExpectedOperand { span, .. } => Some(span),
             Error::ExpectedOperation { span, .. } => Some(span),
             Error::ExpectedType { span, .. } => Some(span),
-            Error::UnexpectedMut { span } => Some(span),
+            Error::UnexpectedQualifier { span, .. } => Some(span),
             Error::ExpectedClosingBracket { span, .. } => Some(span),
             Error::ExpectedStatement { span } => Some(span),
             Error::UnexpectedElse { span } => Some(span),
@@ -323,7 +324,7 @@ impl fmt::Display for Error {
             Self::ExpectedOperand { got_token, .. } => write!(f, "expected an operand, got '{got_token}'"),
             Self::ExpectedOperation { got_token, .. } => write!(f, "expected an operation, got '{got_token}'"),
             Self::ExpectedType { got_token, .. } => write!(f, "expected a type, got '{got_token}'"),
-            Self::UnexpectedMut { .. } => write!(f, "'mut' is not allowed here"),
+            Self::UnexpectedQualifier { got_token, .. } => write!(f, "type qualifier '{got_token}' is not allowed here"),
             Self::ExpectedClosingBracket { bracket, .. } => write!(f, "expected closing '{bracket}'"),
             Self::ExpectedStatement { .. } => write!(f, "expected a statement"),
             Self::UnexpectedElse { .. } => write!(f, "unexpected 'else' without previous 'if'"),

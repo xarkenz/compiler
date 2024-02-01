@@ -9,8 +9,6 @@ pub struct Emitter<W: Write> {
     filename: String,
     writer: W,
     is_global: bool,
-    used_attribute_group_0: bool,
-    used_attribute_group_1: bool,
     defined_functions: BTreeSet<Register>,
     queued_function_declarations: BTreeMap<Register, String>,
     defined_types: BTreeSet<String>,
@@ -32,8 +30,6 @@ impl<W: Write> Emitter<W> {
             filename,
             writer,
             is_global: true,
-            used_attribute_group_0: false,
-            used_attribute_group_1: false,
             defined_functions: BTreeSet::new(),
             queued_function_declarations: BTreeMap::new(),
             defined_types: BTreeSet::new(),
@@ -55,19 +51,11 @@ impl<W: Write> Emitter<W> {
             ; module_id = {module_id}
             source_filename = \"{source_filename}\"
 
-            target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128\"
-            target triple = \"x86_64-pc-linux-gnu\"
-
         ")
         .map_err(|cause| self.error(cause))
     }
 
     pub fn emit_postamble(&mut self) -> crate::Result<()> {
-        // FIXME: this attributes #0/#1 stuff is not accurate lol
-        // Any emitted function declarations will use attributes #1
-        if !self.queued_function_declarations.is_empty() {
-            self.used_attribute_group_1 = true;
-        }
         // Write all queued type declarations
         for declaration in self.queued_type_declarations.values() {
             writeln!(self.writer, "{declaration}\n")
@@ -82,37 +70,6 @@ impl<W: Write> Emitter<W> {
         self.queued_type_declarations.clear();
         self.queued_function_declarations.clear();
 
-        if self.used_attribute_group_0 {
-            writedoc!(self.writer, "
-                attributes #0 = {{
-                \tnoinline nounwind optnone uwtable
-                \t\"frame-pointer\"=\"all\"
-                \t\"min-legal-vector-width\"=\"0\"
-                \t\"no-trapping-math\"=\"true\"
-                \t\"stack-protector-buffer-size\"=\"8\"
-                \t\"target-cpu\"=\"x86-64\"
-                \t\"target-features\"=\"+cx8,+fxsr,+mmx,+sse,+sse2,+x87\"
-                \t\"tune-cpu\"=\"generic\"
-                }}
-
-            ")
-            .map_err(|cause| self.error(cause))?;
-        }
-        if self.used_attribute_group_1 {
-            writedoc!(self.writer, "
-                attributes #1 = {{
-                \t\"frame-pointer\"=\"all\"
-                \t\"no-trapping-math\"=\"true\"
-                \t\"stack-protector-buffer-size\"=\"8\"
-                \t\"target-cpu\"=\"x86-64\"
-                \t\"target-features\"=\"+cx8,+fxsr,+mmx,+sse,+sse2,+x87\"
-                \t\"tune-cpu\"=\"generic\"
-                }}
-
-            ")
-            .map_err(|cause| self.error(cause))?;
-        }
-
         writedoc!(self.writer, "
             !llvm.module.flags = !{{ !0, !1, !2, !3, !4 }}
             !llvm.ident = !{{ !5 }}
@@ -121,7 +78,7 @@ impl<W: Write> Emitter<W> {
             !2 = !{{ i32 7, !\"PIE Level\", i32 2 }}
             !3 = !{{ i32 7, !\"uwtable\", i32 1 }}
             !4 = !{{ i32 7, !\"frame-pointer\", i32 2 }}
-            !5 = !{{ !\"Ubuntu clang version 14.0.0-1ubuntu1.1\" }}
+            !5 = !{{ !\"xarkenz compiler\" }}
         ")
         .map_err(|cause| self.error(cause))
     }
@@ -148,7 +105,7 @@ impl<W: Write> Emitter<W> {
                 write!(declaration, "...").unwrap();
             }
             
-            write!(declaration, ") #1").unwrap();
+            write!(declaration, ")").unwrap();
 
             // Enqueue the declaration which was just generated, which will be written before the module postamble
             // --that is, unless the function is defined later in the file
@@ -181,15 +138,12 @@ impl<W: Write> Emitter<W> {
                 .map_err(|cause| self.error(cause))?;
         }
 
-        // All emitted function definitions use attributes #0
-        self.used_attribute_group_0 = true;
-
         if !self.is_global {
             panic!("entering a function while already within a function");
         }
         self.is_global = false;
         
-        writeln!(self.writer, ") #0 {{")
+        writeln!(self.writer, ") {{")
             .map_err(|cause| self.error(cause))
     }
 

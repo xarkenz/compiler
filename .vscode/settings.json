@@ -1,0 +1,10 @@
+{
+    "rust-analyzer.linkedProjects": [
+        ".\\Cargo.toml"
+    ],
+    "rust-analyzer.showUnlinkedFileNotification": false,
+    "files.associations": {
+        "ostream": "c",
+        "xlocale": "c"
+    }
+}

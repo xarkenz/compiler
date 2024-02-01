@@ -2,6 +2,8 @@ use super::*;
 
 use std::fmt;
 
+pub use crate::ast::PointerSemantics;
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct FunctionSignature {
     return_format: Format,
@@ -29,19 +31,59 @@ impl FunctionSignature {
     pub fn is_varargs(&self) -> bool {
         self.is_varargs
     }
+
+    pub fn rich_name(&self) -> String {
+        let mut name = String::from("function(");
+        let mut parameters_iter = self.parameter_formats().iter();
+        if let Some(parameter) = parameters_iter.next() {
+            name = format!("{name}{parameter}", parameter = parameter.rich_name());
+            for parameter in parameters_iter {
+                name = format!("{name}, {parameter}", parameter = parameter.rich_name());
+            }
+            if self.is_varargs() {
+                name = format!("{name}, ..");
+            }
+        }
+        else if self.is_varargs() {
+            name = format!("{name}..");
+        }
+        format!("{name}) -> {return_format}", return_format = self.return_format().rich_name())
+    }
+}
+
+impl fmt::Display for FunctionSignature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{return_format}(", return_format = self.return_format())?;
+        let mut parameters_iter = self.parameter_formats().iter();
+        if let Some(parameter) = parameters_iter.next() {
+            write!(f, "{parameter}")?;
+            for parameter in parameters_iter {
+                write!(f, ", {parameter}")?;
+            }
+            if self.is_varargs() {
+                write!(f, ", ...")?;
+            }
+        }
+        else if self.is_varargs() {
+            write!(f, "...")?;
+        }
+        write!(f, ")")
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Format {
     Never,
     Void,
-    Mutable(Box<Format>),
     Boolean,
     Integer {
         size: usize,
         signed: bool,
     },
-    Pointer(Box<Format>),
+    Pointer {
+        pointee_format: Box<Format>,
+        semantics: PointerSemantics,
+    },
     Array {
         item_format: Box<Format>,
         length: Option<usize>,
@@ -54,22 +96,33 @@ pub enum Format {
         identifier: String,
         type_name: String,
     },
-    Function(Box<FunctionSignature>),
+    Function {
+        signature: Box<FunctionSignature>,
+    },
 }
 
 impl Format {
     pub fn opaque_pointer() -> Self {
-        Self::Pointer(Box::new(Format::Void))
+        Self::Pointer {
+            pointee_format: Box::new(Format::Void),
+            semantics: PointerSemantics::Immutable,
+        }
+    }
+
+    pub fn into_pointer(self, semantics: PointerSemantics) -> Self {
+        Self::Pointer {
+            pointee_format: Box::new(self),
+            semantics,
+        }
     }
 
     pub fn size(&self, symbol_table: &SymbolTable) -> Option<usize> {
         match self {
             Self::Never => Some(0),
             Self::Void => Some(0),
-            Self::Mutable(format) => format.size(symbol_table),
             Self::Boolean => Some(1),
             Self::Integer { size, .. } => Some(*size),
-            Self::Pointer(_) => Some(8),
+            Self::Pointer { .. } => Some(8),
             Self::Array { length, item_format } => {
                 Some(length.clone()? * item_format.size(symbol_table)?)
             },
@@ -104,10 +157,9 @@ impl Format {
         match self {
             Self::Never => None,
             Self::Void => None,
-            Self::Mutable(format) => format.alignment(symbol_table),
             Self::Boolean => Some(1),
             Self::Integer { size, .. } => Some(*size),
-            Self::Pointer(_) => Some(8),
+            Self::Pointer { .. } => Some(8),
             Self::Array { item_format, .. } => item_format.alignment(symbol_table),
             Self::Structure { members, .. } => {
                 members.iter()
@@ -121,66 +173,46 @@ impl Format {
         }
     }
 
-    pub fn is_mutable(&self) -> bool {
-        matches!(self, Format::Mutable(_))
-    }
-
-    pub fn is_function(&self) -> bool {
-        matches!(self, Format::Function { .. })
-    }
-
-    pub fn into_mutable(self) -> Self {
-        Self::Mutable(Box::new(self))
-    }
-
-    pub fn into_pointer(self) -> Self {
-        Self::Pointer(Box::new(self))
-    }
-
-    pub fn as_unqualified(&self) -> &Format {
+    pub fn pointer_semantics(&self) -> Option<PointerSemantics> {
         match self {
-            Self::Mutable(format) => format.as_ref(),
-            _ => self
+            Self::Pointer { semantics, .. } => Some(*semantics),
+            _ => None
         }
     }
 
-    pub fn can_coerce_to(&self, other: &Self, is_concrete: bool) -> bool {
+    pub fn can_coerce_to(&self, other: &Self, is_mutable: bool) -> bool {
         self == other || match (self, other) {
-            (Self::Mutable(self_format), Self::Mutable(other_format)) => {
-                self_format.can_coerce_to(other_format.as_ref(), is_concrete)
-            },
-            (Self::Mutable(self_format), other_format) => {
-                self_format.can_coerce_to(other_format, is_concrete)
-            },
-            (self_format, Self::Mutable(other_format)) => {
-                // For example, `let x: i32 = 0; let y: mut i32 = x;` is fine, but `let x: *i32 = null; let y: *mut i32 = x;` is not
-                is_concrete && self_format.can_coerce_to(other_format.as_ref(), true)
-            },
-            (Self::Pointer(self_pointee), Self::Pointer(other_pointee)) => {
-                self_pointee.can_coerce_to(other_pointee.as_ref(), false)
-            },
-            (Self::Array { item_format: self_item, length: _ }, Self::Array { item_format: other_item, length: None }) => {
-                !is_concrete && self_item.can_coerce_to(other_item.as_ref(), false)
+            (Self::Pointer { pointee_format: self_pointee, semantics: self_semantics }, Self::Pointer { pointee_format: other_pointee, semantics: other_semantics }) => {
+                // Not sure if this is right... needs testing
+                match (self_semantics, other_semantics) {
+                    (PointerSemantics::Immutable, PointerSemantics::Immutable) => self_pointee.can_coerce_to(other_pointee, false),
+                    (PointerSemantics::Immutable, _) => false,
+                    (PointerSemantics::Mutable, PointerSemantics::Immutable) => self_pointee.can_coerce_to(other_pointee, true),
+                    (PointerSemantics::Mutable, PointerSemantics::Mutable) => self_pointee.can_coerce_to(other_pointee, true),
+                    (PointerSemantics::Mutable, _) => false,
+                    (PointerSemantics::Owned, PointerSemantics::Immutable) => self_pointee.can_coerce_to(other_pointee, is_mutable),
+                    (PointerSemantics::Owned, PointerSemantics::Mutable) => is_mutable && self_pointee.can_coerce_to(other_pointee, is_mutable),
+                    (PointerSemantics::Owned, PointerSemantics::Owned) => self_pointee.can_coerce_to(other_pointee, is_mutable),
+                }
             },
             (Self::Array { item_format: self_item, length: Some(self_length) }, Self::Array { item_format: other_item, length: Some(other_length) }) => {
-                self_length == other_length && self_item.can_coerce_to(other_item.as_ref(), is_concrete)
+                self_length == other_length && self_item.can_coerce_to(other_item, is_mutable)
             },
+            (Self::Array { item_format: self_item, length: _ }, Self::Array { item_format: other_item, length: None }) => {
+                self_item.can_coerce_to(other_item, is_mutable)
+            },
+            (Self::Void, _) | (_, Self::Void) => true,
             _ => false
         }
     }
 
     pub fn requires_bitcast_to(&self, other: &Self) -> bool {
-        let self_unqualified = self.as_unqualified();
-        let other_unqualified = other.as_unqualified();
-        self_unqualified != other_unqualified && match (self_unqualified, other_unqualified) {
-            (Self::Pointer(self_pointee), Self::Pointer(other_pointee)) => {
+        self != other && match (self, other) {
+            (Self::Pointer { pointee_format: self_pointee, .. }, Self::Pointer { pointee_format: other_pointee, .. }) => {
                 self_pointee.requires_bitcast_to(other_pointee)
             },
-            (Self::Array { length: _, .. }, Self::Array { length: None, .. }) => {
-                true
-            },
-            (Self::Array { item_format: self_item, length: Some(self_length) }, Self::Array { item_format: other_item, length: Some(other_length) }) => {
-                self_length != other_length || self_item.requires_bitcast_to(other_item.as_ref())
+            (Self::Array { item_format: self_item, length: self_length }, Self::Array { item_format: other_item, length: other_length }) => {
+                self_length != other_length || self_item.requires_bitcast_to(other_item)
             },
             _ => true
         }
@@ -193,16 +225,13 @@ impl Format {
     pub fn rich_name(&self) -> String {
         match self {
             Self::Never => {
-                String::from("never")
+                "never".into()
             }
             Self::Void => {
-                String::from("void")
-            },
-            Self::Mutable(format) => {
-                format!("mut {format}", format = format.rich_name())
+                "void".into()
             },
             Self::Boolean => {
-                String::from("bool")
+                "bool".into()
             },
             Self::Integer { size, signed: true } => {
                 format!("i{bits}", bits = size * 8)
@@ -210,8 +239,13 @@ impl Format {
             Self::Integer { size, signed: false } => {
                 format!("u{bits}", bits = size * 8)
             },
-            Self::Pointer(pointee_format) => {
-                format!("*{pointee_format}", pointee_format = pointee_format.rich_name())
+            Self::Pointer { pointee_format, semantics } => {
+                let pointee_format = pointee_format.rich_name();
+                match semantics {
+                    PointerSemantics::Immutable => format!("*{pointee_format}"),
+                    PointerSemantics::Mutable => format!("*mut {pointee_format}"),
+                    PointerSemantics::Owned => format!("*own {pointee_format}"),
+                }
             },
             Self::Array { item_format, length: Some(length) } => {
                 format!("[{item_format}; {length}]", item_format = item_format.rich_name())
@@ -238,22 +272,8 @@ impl Format {
             Self::Identified { type_name, .. } => {
                 type_name.clone()
             },
-            Self::Function(signature) => {
-                let mut name = String::from("function(");
-                let mut parameters_iter = signature.parameter_formats().iter();
-                if let Some(parameter) = parameters_iter.next() {
-                    name = format!("{name}{parameter}", parameter = parameter.rich_name());
-                    for parameter in parameters_iter {
-                        name = format!("{name}, {parameter}", parameter = parameter.rich_name());
-                    }
-                    if signature.is_varargs() {
-                        name = format!("{name}, ..");
-                    }
-                }
-                else if signature.is_varargs() {
-                    name = format!("{name}..");
-                }
-                format!("{name}) -> {return_format}", return_format = signature.return_format().rich_name())
+            Self::Function { signature } => {
+                signature.rich_name()
             },
         }
     }
@@ -268,15 +288,12 @@ impl fmt::Display for Format {
             Self::Boolean => {
                 write!(f, "i1")
             },
-            Self::Mutable(format) => {
-                write!(f, "{format}")
-            },
             Self::Integer { size, .. } => {
                 write!(f, "i{bits}", bits = size * 8)
             },
-            Self::Pointer(pointee_format) => {
-                if let Self::Void = pointee_format.as_unqualified() {
-                    write!(f, "i8*") // I wanted to use `ptr`, but LLVM complains unless -opaque-pointers is enabled
+            Self::Pointer { pointee_format, .. } => {
+                if let Self::Void = pointee_format.as_ref() {
+                    write!(f, "{{}}*") // I wanted to use `ptr`, but LLVM complains unless -opaque-pointers is enabled
                 }
                 else {
                     write!(f, "{pointee_format}*")
@@ -303,22 +320,8 @@ impl fmt::Display for Format {
             Self::Identified { identifier, .. } => {
                 write!(f, "%{identifier}")
             },
-            Self::Function(signature) => {
-                write!(f, "{return_format}(", return_format = signature.return_format())?;
-                let mut parameters_iter = signature.parameter_formats().iter();
-                if let Some(parameter) = parameters_iter.next() {
-                    write!(f, "{parameter}")?;
-                    for parameter in parameters_iter {
-                        write!(f, ", {parameter}")?;
-                    }
-                    if signature.is_varargs() {
-                        write!(f, ", ...")?;
-                    }
-                }
-                else if signature.is_varargs() {
-                    write!(f, "...")?;
-                }
-                write!(f, ")")
+            Self::Function { signature } => {
+                write!(f, "{signature}")
             },
         }
     }
@@ -338,7 +341,7 @@ pub enum IntegerValue {
 
 impl IntegerValue {
     pub fn new(raw: i128, format: &Format) -> Option<Self> {
-        match format.as_unqualified() {
+        match format {
             Format::Integer { size: 1, signed: true } => Some(Self::Signed8(raw as i8)),
             Format::Integer { size: 1, signed: false } => Some(Self::Unsigned8(raw as u8)),
             Format::Integer { size: 2, signed: true } => Some(Self::Signed16(raw as i16)),
@@ -494,6 +497,7 @@ pub enum Constant {
         aggregate_format: Format,
         pointer: Box<Constant>,
         indices: Vec<Constant>,
+        semantics: PointerSemantics,
     },
 }
 
@@ -518,7 +522,7 @@ impl Constant {
             Self::Register(register) => register.format().clone(),
             Self::Indirect { loaded_format, .. } => loaded_format.clone(),
             Self::BitwiseCast { to_format, .. } => to_format.clone(),
-            Self::GetElementPointer { element_format, .. } => element_format.clone().into_pointer(),
+            Self::GetElementPointer { element_format, semantics, .. } => element_format.clone().into_pointer(*semantics),
         }
     }
 }
@@ -558,7 +562,7 @@ impl fmt::Display for Constant {
                 write!(f, "}}")
             },
             Self::Register(register) => write!(f, "{register}"),
-            Self::Indirect { .. } => write!(f, "<ERROR indirect constant>"),
+            Self::Indirect { pointer, .. } => write!(f, "<ERROR indirect constant: {pointer}>"),
             Self::BitwiseCast { value, to_format } => {
                 write!(f, "bitcast ({format} {value} to {to_format})", format = value.format())
             },
@@ -601,10 +605,11 @@ impl Value {
     pub fn into_mutable_lvalue(self) -> crate::Result<(Self, Format)> {
         match self {
             Self::Indirect { pointer, loaded_format } => {
-                if loaded_format.is_mutable() {
+                if let Some(PointerSemantics::Mutable) = pointer.format().pointer_semantics() {
                     Ok((*pointer, loaded_format))
                 }
                 else {
+                    println!("{} {pointer} -> {}", pointer.format().rich_name(), loaded_format.rich_name());
                     Err(Box::new(crate::Error::CannotMutateValue { type_name: loaded_format.rich_name() }))
                 }
             },
@@ -622,7 +627,7 @@ impl fmt::Display for Value {
             Self::Void => write!(f, "<ERROR void value>"),
             Self::Constant(constant) => write!(f, "{constant}"),
             Self::Register(register) => write!(f, "{register}"),
-            Self::Indirect { .. } => write!(f, "<ERROR indirect value>"),
+            Self::Indirect { pointer, .. } => write!(f, "<ERROR indirect value: {pointer}>"),
         }
     }
 }
@@ -811,7 +816,9 @@ impl SymbolTable {
     pub fn create_function_symbol(&self, name: String, signature: FunctionSignature, is_defined: bool) -> (Symbol, Register) {
         let register = Register {
             name: name.clone(),
-            format: Format::Function(Box::new(signature.clone())),
+            format: Format::Function {
+                signature: Box::new(signature.clone()),
+            },
             is_global: true,
         };
         let symbol = Symbol::Function {
@@ -831,10 +838,15 @@ impl SymbolTable {
         }
     }
 
-    pub fn create_global_indirect_symbol(&self, name: String, loaded_format: Format) -> (Symbol, Register) {
+    pub fn create_global_indirect_symbol(&self, name: String, loaded_format: Format, is_mutable: bool) -> (Symbol, Register) {
+        let semantics = if is_mutable {
+            PointerSemantics::Mutable
+        } else {
+            PointerSemantics::Immutable
+        };
         let pointer = Register {
             name: name.clone(),
-            format: loaded_format.clone().into_pointer(),
+            format: loaded_format.clone().into_pointer(semantics),
             is_global: true,
         };
         let value = Value::Indirect {
@@ -849,16 +861,21 @@ impl SymbolTable {
         (symbol, pointer)
     }
 
-    pub fn create_local_indirect_symbol(&self, name: String, loaded_format: Format) -> (Symbol, Register) {
+    pub fn create_local_indirect_symbol(&self, name: String, loaded_format: Format, is_mutable: bool) -> (Symbol, Register) {
         let scope = self.current_scope().clone();
         let version = self.next_local_symbol_version(&name);
         let qualified_name = match version {
             0 => format!("{name}"),
             _ => format!("{name}-{version}"),
         };
+        let semantics = if is_mutable {
+            PointerSemantics::Mutable
+        } else {
+            PointerSemantics::Immutable
+        };
         let pointer = Register {
             name: qualified_name,
-            format: loaded_format.clone().into_pointer(),
+            format: loaded_format.clone().into_pointer(semantics),
             is_global: false,
         };
         let value = Value::Indirect {
@@ -884,7 +901,7 @@ impl SymbolTable {
         };
         let pointer = Register {
             name: qualified_name,
-            format: loaded_format.clone().into_pointer(),
+            format: loaded_format.clone().into_pointer(PointerSemantics::Immutable),
             is_global: true,
         };
         let value = Value::Indirect {

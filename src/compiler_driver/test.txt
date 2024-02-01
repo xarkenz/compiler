@@ -1,13 +1,13 @@
 struct CFile;
 
-function fopen(filename: *[u8], mode: *[u8]) -> *mut CFile;
-function fclose(file: *mut CFile) -> i32;
+function fopen(filename: *[u8], mode: *[u8]) -> *own CFile;
+function fclose(file: *own CFile) -> i32;
 function feof(file: *mut CFile) -> i32;
 function fgets(buffer: *mut [u8], limit: i32, file: *mut CFile) -> *mut [u8];
 function printf(format: *[u8], ..) -> u32;
 
-function malloc(size_bytes: u64) -> *mut void;
-function free(alloc: *mut void);
+function malloc(size_bytes: u64) -> *own void;
+function free(alloc: *own void);
 function memcpy(dest: *mut void, src: *void, count: u64) -> *mut void;
 
 function strlen(str: *[u8]) -> u64;
@@ -31,14 +31,19 @@ struct MutStr {
     length: u64,
 }
 
+struct OwnStr {
+    ptr: *own [u8],
+    length: u64,
+}
+
 struct String {
-    str: MutStr,
+    str: OwnStr,
     capacity: u64,
 }
 
 function String_new() -> String {
     return String {
-        str: MutStr {
+        str: OwnStr {
             ptr: null,
             length: 0,
         },
@@ -47,37 +52,40 @@ function String_new() -> String {
 }
 
 function String_del(self: String) {
-    free(self.str.ptr as *mut void);
+    free(self.str.ptr);
 }
 
 function String_as_str(self: *String) -> Str {
     return Str {
-        ptr: self->str.ptr,
-        length: self->str.length,
+        ptr: self.str.ptr,
+        length: self.str.length,
     };
 }
 
 function String_grow_by(self: *mut String, additional: u64) {
-    let required_capacity: u64 = self->capacity + additional;
-    let capacity: u64 = u64_max(self->capacity * 2, required_capacity);
-    let ptr: *mut [u8] = malloc(sizeof(u8) * capacity) as *mut [u8];
-    memcpy(ptr as *mut void, self->str.ptr as *void, self->str.length);
-    free(self->str.ptr as *mut void);
-    self->str.ptr = ptr;
-    self->capacity = capacity;
+    let required_capacity: u64 = self.capacity + additional;
+    let capacity: u64 = u64_max(self.capacity * 2, required_capacity);
+    let mut ptr: *own [u8] = malloc(sizeof(u8) * capacity);
+
+    memcpy(ptr, self.str.ptr, self.str.length);
+    free(self.str.ptr);
+
+    self.str.ptr = ptr;
+    self.capacity = capacity;
 }
 
 function String_push(self: *mut String, ch: u8) {
-    if (self->str.length == self->capacity) {
+    if (self.str.length == self.capacity) {
         String_grow_by(self, 1);
     }
-    self->str.ptr[self->str.length] = ch;
-    self->str.length += 1;
+
+    self.str.ptr[self.str.length] = ch;
+    self.str.length += 1;
 }
 
 function fibonacci(limit: i32) -> i32 {
-    let a: mut i32 = 0;
-    let b: mut i32 = 1;
+    let mut a: i32 = 0;
+    let mut b: i32 = 1;
 
     while (b < limit) {
         let temp: i32 = a + b;
@@ -88,7 +96,7 @@ function fibonacci(limit: i32) -> i32 {
     return a;
 }
 
-function gcd(a: mut u32, b: mut u32) -> u32 {
+function gcd(mut a: u32, mut b: u32) -> u32 {
     while (b >= 1) {
         let temp: u32 = a % b;
         a = b;
@@ -99,18 +107,18 @@ function gcd(a: mut u32, b: mut u32) -> u32 {
 }
 
 function aoc_01_p1() {
-    let input: *mut CFile = fopen("day01.txt", "r");
+    let mut input: *own CFile = fopen("day01.txt", "r");
     if (input == null) {
         printf("unable to open input file\n");
         return;
     }
 
-    let calibration_sum: mut u32 = 0;
+    let mut calibration_sum: u32 = 0;
 
-    let line: mut [u8; 100];
+    let mut line: [u8; 100];
     while (fgets(&line, 100, input) != null) {
         // Start at the beginning of the line
-        let index: mut u64 = 0;
+        let mut index: u64 = 0;
 
         // Find the first digit
         while (isdigit(line[index] as i32) == 0) {
@@ -138,15 +146,15 @@ function aoc_01_p1() {
 
 struct Node {
     value: *[u8],
-    next: *mut Node,
+    next: *own Node,
 }
 
 function omg_linked_list(values: *[*[u8]], value_count: u64) {
-    let head: mut *mut Node = null;
+    let mut head: *own Node = null;
 
-    let index: mut u64 = 0;
+    let mut index: u64 = 0;
     while (index < value_count) {
-        let node: *mut Node = malloc(sizeof(Node)) as *mut Node;
+        let mut node: *own Node = malloc(sizeof(Node));
         *node = Node {
             value: values[index],
             next: head,
@@ -158,12 +166,12 @@ function omg_linked_list(values: *[*[u8]], value_count: u64) {
 
     printf("Reversed:\n");
     while (head != null) {
-        let node: *mut Node = head;
+        let node: *own Node = head;
 
-        printf("%s\n", node->value);
-        head = node->next;
+        printf("%s\n", node.value);
+        head = node.next;
 
-        free(node as *mut void);
+        free(node);
     }
 }
 
@@ -202,7 +210,7 @@ function main() -> i32 {
 
     omg_linked_list(&values, 4);
 
-    let string: mut String = String_new();
+    let mut string: String = String_new();
     String_push(&string, 'H');
     String_push(&string, 'e');
     String_push(&string, 'l');

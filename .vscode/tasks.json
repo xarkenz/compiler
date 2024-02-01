@@ -1,0 +1,32 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"group": "build",
+			"label": "build compiler",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"build"
+			]
+		},
+		{
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"label": "test compiler",
+			"type": "shell",
+			"command": "./target/debug/compiler_driver.exe",
+			"args": [
+				"--debug",
+				"--src", "./src/compiler_driver/test.txt",
+				"--out", "./src/compiler_driver/test.ll"
+			],
+			"dependsOn": ["build compiler"],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			}
+		}
+	]
+}

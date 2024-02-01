@@ -125,7 +125,6 @@ impl UnaryOperation {
 pub enum BinaryOperation {
     Subscript,
     Access,
-    DerefAccess,
     Convert,
     Multiply,
     Divide,
@@ -161,7 +160,7 @@ pub enum BinaryOperation {
 impl BinaryOperation {
     pub fn precedence(&self) -> Precedence {
         match self {
-            Self::Subscript | Self::Access | Self::DerefAccess => Precedence::Postfix,
+            Self::Subscript | Self::Access => Precedence::Postfix,
             Self::Convert => Precedence::Conversion,
             Self::Multiply | Self::Divide | Self::Remainder => Precedence::Multiplicative,
             Self::Add | Self::Subtract => Precedence::Additive,
@@ -216,7 +215,6 @@ impl BinaryOperation {
             Token::AngleRightEqual => Some(Self::GreaterEqual),
             Token::AngleRight2 => Some(Self::ShiftRight),
             Token::AngleRight2Equal => Some(Self::ShiftRightAssign),
-            Token::RightArrow => Some(Self::DerefAccess),
             Token::As => Some(Self::Convert),
             _ => None
         }
@@ -226,7 +224,6 @@ impl BinaryOperation {
         match self {
             Self::Subscript => format!("{lhs}[{rhs}]"),
             Self::Access => format!("{lhs}.{rhs}"),
-            Self::DerefAccess => format!("{lhs}->{rhs}"),
             Self::Convert => format!("{lhs} as {rhs}"),
             Self::Multiply => format!("{lhs} * {rhs}"),
             Self::Divide => format!("{lhs} / {rhs}"),
@@ -283,34 +280,54 @@ impl Operation {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PointerSemantics {
+    Immutable,
+    Mutable,
+    Owned,
+}
+
 #[derive(Clone, Debug)]
 pub enum TypeNode {
-    Named(String),
-    Mutable(Box<TypeNode>),
-    Pointer(Box<TypeNode>),
-    Array(Box<TypeNode>, Option<Box<Node>>),
+    Identified {
+        name: String,
+    },
+    Pointer {
+        pointee_type: Box<TypeNode>,
+        semantics: PointerSemantics,
+    },
+    Array {
+        item_type: Box<TypeNode>,
+        length: Option<Box<Node>>,
+    },
 }
 
 impl std::fmt::Display for TypeNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Named(name) => {
+            Self::Identified { name } => {
                 write!(f, "{name}")
             },
-            Self::Mutable(mutable_type) => {
-                write!(f, "mut {mutable_type}")
+            Self::Pointer { pointee_type, semantics } => match semantics {
+                PointerSemantics::Immutable => write!(f, "*{pointee_type}"),
+                PointerSemantics::Mutable => write!(f, "*mut {pointee_type}"),
+                PointerSemantics::Owned => write!(f, "*own {pointee_type}"),
             },
-            Self::Pointer(pointee_type) => {
-                write!(f, "*{pointee_type}")
-            },
-            Self::Array(item_type, Some(length)) => {
+            Self::Array { item_type, length: Some(length) } => {
                 write!(f, "[{item_type}; {length}]")
             },
-            Self::Array(item_type, None) => {
+            Self::Array { item_type, length: None } => {
                 write!(f, "[{item_type}]")
             },
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct FunctionParameter {
+    pub name: String,
+    pub type_node: TypeNode,
+    pub is_mutable: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -357,6 +374,7 @@ pub enum Node {
     Let {
         name: String,
         value_type: TypeNode,
+        is_mutable: bool,
         value: Option<Box<Node>>,
     },
     Constant {
@@ -366,7 +384,7 @@ pub enum Node {
     },
     Function {
         name: String,
-        parameters: Vec<(String, TypeNode)>,
+        parameters: Vec<FunctionParameter>,
         is_varargs: bool,
         return_type: TypeNode,
         body: Option<Box<Node>>,
@@ -458,12 +476,18 @@ impl fmt::Display for Node {
                     write!(f, " return;")
                 }
             },
-            Self::Let { name, value_type, value } => {
-                if let Some(value) = value {
-                    write!(f, " let {name}: {value_type} = {value};")
+            Self::Let { name, value_type, is_mutable, value } => {
+                if *is_mutable {
+                    write!(f, " let mut {name}: {value_type}")?;
                 }
                 else {
-                    write!(f, " let {name}: {value_type};")
+                    write!(f, " let {name}: {value_type}")?;
+                }
+                if let Some(value) = value {
+                    write!(f, " = {value};")
+                }
+                else {
+                    write!(f, ";")
                 }
             },
             Self::Constant { name, value_type, value } => {
@@ -472,9 +496,16 @@ impl fmt::Display for Node {
             Self::Function { name, parameters, is_varargs, return_type, body } => {
                 write!(f, " function {name}(")?;
                 let mut parameters_iter = parameters.iter();
-                if let Some((parameter_name, parameter_type)) = parameters_iter.next() {
+                if let Some(FunctionParameter { name: parameter_name, type_node: parameter_type, is_mutable }) = parameters_iter.next() {
+                    if *is_mutable {
+                        write!(f, "mut ")?;
+                    }
                     write!(f, "{parameter_name}: {parameter_type}")?;
-                    for (parameter_name, parameter_type) in parameters_iter {
+                    for FunctionParameter { name: parameter_name, type_node: parameter_type, is_mutable } in parameters_iter {
+                        write!(f, ", ")?;
+                        if *is_mutable {
+                            write!(f, "mut ")?;
+                        }
                         write!(f, ", {parameter_name}: {parameter_type}")?;
                     }
                     if *is_varargs {

@@ -169,7 +169,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         let expression = self.parse_expression(None, &[Token::SquareRight])?;
                         self.scan_token()?;
                         expression
-                    }
+                    },
                     _ => {
                         self.parse_expression(Some(precedence), allowed_ends)?
                     }
@@ -253,35 +253,40 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
     pub fn parse_type(&mut self, allowed_ends: &[Token]) -> crate::Result<TypeNode> {
         match self.get_token()? {
-            Token::Mut => {
-                self.scan_token()?;
-                let mutable_type = self.parse_unqualified_type(allowed_ends)?;
-                Ok(TypeNode::Mutable(Box::new(mutable_type)))
-            },
-            _ => {
-                self.parse_unqualified_type(allowed_ends)
-            }
-        }
-    }
-
-    pub fn parse_unqualified_type(&mut self, allowed_ends: &[Token]) -> crate::Result<TypeNode> {
-        match self.get_token()? {
             Token::Literal(Literal::Identifier(name)) => {
                 let name = name.clone();
                 self.scan_token()?;
                 self.expect_token(allowed_ends)?;
 
-                Ok(TypeNode::Named(name))
+                Ok(TypeNode::Identified {
+                    name,
+                })
             },
             Token::Star => {
                 self.scan_token()?;
-                let pointee_type = self.parse_type(allowed_ends)?;
+                let semantics = match self.current_token() {
+                    Some(Token::Mut) => {
+                        self.scan_token()?;
+                        PointerSemantics::Mutable
+                    },
+                    Some(Token::Own) => {
+                        self.scan_token()?;
+                        PointerSemantics::Owned
+                    },
+                    _ => {
+                        PointerSemantics::Immutable
+                    }
+                };
+                let pointee_type = Box::new(self.parse_type(allowed_ends)?);
 
-                Ok(TypeNode::Pointer(Box::new(pointee_type)))
+                Ok(TypeNode::Pointer {
+                    pointee_type,
+                    semantics,
+                })
             },
             Token::SquareLeft => {
                 self.scan_token()?;
-                let item_type = Box::new(self.parse_unqualified_type(&[Token::Semicolon, Token::SquareRight])?);
+                let item_type = Box::new(self.parse_type(&[Token::Semicolon, Token::SquareRight])?);
                 let length;
                 if let Some(Token::Semicolon) = self.current_token() {
                     self.scan_token()?;
@@ -293,10 +298,13 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.scan_token()?;
                 self.expect_token(allowed_ends)?;
                 
-                Ok(TypeNode::Array(item_type, length))
+                Ok(TypeNode::Array {
+                    item_type,
+                    length,
+                })
             },
-            Token::Mut => {
-                Err(Box::new(crate::Error::UnexpectedMut { span: self.current_span() }))
+            Token::Mut | Token::Own => {
+                Err(Box::new(crate::Error::UnexpectedQualifier { span: self.current_span(), got_token: self.get_token()?.clone() }))
             },
             got_token => {
                 Err(Box::new(crate::Error::ExpectedType { span: self.current_span(), got_token: got_token.clone() }))
@@ -331,6 +339,13 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     })))
                 }
                 else {
+                    let is_mutable = if let Some(Token::Mut) = self.current_token() {
+                        self.scan_token()?;
+                        true
+                    } else {
+                        false
+                    };
+
                     let name = self.expect_identifier()?;
                     self.scan_token()?;
                     self.expect_token(&[Token::Colon])?;
@@ -347,6 +362,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     Ok(Some(Box::new(Node::Let {
                         name,
                         value_type,
+                        is_mutable,
                         value,
                     })))
                 }
@@ -369,12 +385,23 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         break;
                     }
 
+                    let is_mutable = if let Some(Token::Mut) = self.current_token() {
+                        self.scan_token()?;
+                        true
+                    } else {
+                        false
+                    };
+
                     let parameter_name = self.expect_identifier()?;
                     self.scan_token()?;
                     self.expect_token(&[Token::Colon])?;
                     self.scan_token()?;
                     let parameter_type = self.parse_type(&[Token::Comma, Token::ParenRight])?;
-                    parameters.push((parameter_name, parameter_type));
+                    parameters.push(FunctionParameter {
+                        name: parameter_name,
+                        type_node: parameter_type,
+                        is_mutable,
+                    });
 
                     if let Some(Token::Comma) = self.current_token() {
                         self.scan_token()?;
@@ -388,7 +415,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.scan_token()?;
                     self.parse_type(&[Token::CurlyLeft, Token::Semicolon])?
                 } else {
-                    TypeNode::Named(String::from("void"))
+                    TypeNode::Identified {
+                        name: "void".into(),
+                    }
                 };
                 let body = if let Some(Token::CurlyLeft) = self.current_token() {
                     self.parse_statement(false, false)?
@@ -419,7 +448,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         self.scan_token()?;
                         self.expect_token(&[Token::Colon])?;
                         self.scan_token()?;
-                        let member_type = self.parse_unqualified_type(&[Token::Comma, Token::CurlyRight])?;
+                        let member_type = self.parse_type(&[Token::Comma, Token::CurlyRight])?;
                         members.push((member_name, member_type));
 
                         if let Some(Token::Comma) = self.current_token() {

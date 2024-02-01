@@ -123,7 +123,7 @@ impl<W: Write> Generator<W> {
         let id = self.next_anonymous_constant_id;
         self.next_anonymous_constant_id += 1;
 
-        Register::new_global(format!(".const.{id}"), format.into_pointer())
+        Register::new_global(format!(".const.{id}"), format.into_pointer(PointerSemantics::Immutable))
     }
 
     pub fn get_identified_format(&self, type_name: &str) -> Format {
@@ -146,10 +146,10 @@ impl<W: Write> Generator<W> {
         }
     }
 
-    pub fn get_format_from_node(&self, type_node: &ast::TypeNode, allow_mutable: bool, allow_unsized: bool) -> crate::Result<Format> {
+    pub fn get_format_from_node(&self, type_node: &ast::TypeNode, allow_unsized: bool) -> crate::Result<Format> {
         let format = match type_node {
-            ast::TypeNode::Named(type_name) => {
-                match type_name.as_str() {
+            ast::TypeNode::Identified { name } => {
+                match name.as_str() {
                     "never" => Format::Never,
                     "void" => Format::Void,
                     "bool" => Format::Boolean,
@@ -164,24 +164,14 @@ impl<W: Write> Generator<W> {
                     type_name => self.get_identified_format(type_name)
                 }
             },
-            ast::TypeNode::Mutable(mutable_type) => {
-                if allow_mutable {
-                    self.get_format_from_node(mutable_type.as_ref(), false, allow_unsized)?
-                        .into_mutable()
-                }
-                else {
-                    todo!("need to integrate `Span` into codegen")
-                    // return Err(Box::new(crate::Error::UnexpectedMut { span: todo!() }));
-                }
+            ast::TypeNode::Pointer { pointee_type, semantics } => {
+                self.get_format_from_node(pointee_type.as_ref(), true)?
+                    .into_pointer(*semantics)
             },
-            ast::TypeNode::Pointer(pointee_type) => {
-                self.get_format_from_node(pointee_type.as_ref(), true, true)?
-                    .into_pointer()
-            },
-            ast::TypeNode::Array(item_type, Some(length)) => {
+            ast::TypeNode::Array { item_type, length: Some(length) } => {
                 if let ast::Node::Literal(token::Literal::Integer(length)) = length.as_ref() {
                     Format::Array {
-                        item_format: Box::new(self.get_format_from_node(item_type.as_ref(), false, false)?),
+                        item_format: Box::new(self.get_format_from_node(item_type.as_ref(), false)?),
                         length: Some(*length as usize),
                     }
                 }
@@ -189,9 +179,9 @@ impl<W: Write> Generator<W> {
                     return Err(Box::new(crate::Error::NonConstantArrayLength {}));
                 }
             },
-            ast::TypeNode::Array(item_type, None) => {
+            ast::TypeNode::Array { item_type, length: None } => {
                 Format::Array {
-                    item_format: Box::new(self.get_format_from_node(item_type.as_ref(), false, false)?),
+                    item_format: Box::new(self.get_format_from_node(item_type.as_ref(), false)?),
                     length: None,
                 }
             },
@@ -221,6 +211,7 @@ impl<W: Write> Generator<W> {
                 }))
             }
             else {
+                let value = self.coerce_to_rvalue(value)?;
                 let result = self.new_anonymous_register(target_format.clone());
                 self.emitter.emit_bitwise_cast(&result, &value)?;
 
@@ -257,12 +248,12 @@ impl<W: Write> Generator<W> {
     pub fn change_format(&mut self, value: Value, target_format: &Format) -> crate::Result<Value> {
         let original_format = value.format();
 
-        if target_format == &original_format {
+        if &original_format == target_format {
             Ok(value)
         }
         else {
-            match (original_format.as_unqualified(), target_format.as_unqualified()) {
-                (Format::Pointer(_), Format::Pointer(_)) => {
+            match (&original_format, target_format) {
+                (Format::Pointer { .. }, Format::Pointer { .. }) => {
                     let result = self.new_anonymous_register(target_format.clone());
                     self.emitter.emit_bitwise_cast(&result, &value)?;
 
@@ -306,13 +297,25 @@ impl<W: Write> Generator<W> {
     }
 
     pub fn coerce_to_rvalue(&mut self, value: Value) -> crate::Result<Value> {
-        if let Value::Indirect { pointer, loaded_format } = value {
+        if let Value::Indirect { pointer, mut loaded_format } = value {
+            if let Format::Pointer { semantics, .. } = &mut loaded_format {
+                if let PointerSemantics::Owned = semantics {
+                    *semantics = pointer.format().pointer_semantics().unwrap();
+                }
+            }
+
             let result = self.new_anonymous_register(loaded_format);
             self.emitter.emit_load(&result, pointer.as_ref())?;
             
             Ok(Value::Register(result))
         }
-        else if let Value::Constant(Constant::Indirect { pointer, loaded_format }) = value {
+        else if let Value::Constant(Constant::Indirect { pointer, mut loaded_format }) = value {
+            if let Format::Pointer { semantics, .. } = &mut loaded_format {
+                if let PointerSemantics::Owned = semantics {
+                    *semantics = pointer.format().pointer_semantics().unwrap();
+                }
+            }
+
             let result = self.new_anonymous_register(loaded_format);
             self.emitter.emit_load(&result, &Value::Constant(*pointer))?;
 
@@ -488,8 +491,8 @@ impl<W: Write> Generator<W> {
 
                 Value::Never
             },
-            ast::Node::Let { name, value_type, value } => {
-                self.generate_let_statement(name, value_type, value.as_deref(), context)?
+            ast::Node::Let { name, value_type, is_mutable, value } => {
+                self.generate_let_statement(name, value_type, *is_mutable, value.as_deref(), context)?
             },
             ast::Node::Constant { name, value_type, value } => {
                 self.generate_let_constant_statement(name, value_type, value.as_ref(), context)?
@@ -569,7 +572,7 @@ impl<W: Write> Generator<W> {
                     }
                 }))?;
 
-                let array_pointer = self.new_anonymous_register(array_format.clone().into_pointer());
+                let array_pointer = self.new_anonymous_register(array_format.clone().into_pointer(PointerSemantics::Immutable));
                 let initial_value = Value::Constant(Constant::Array {
                     items: constant_items,
                     item_format: item_format.as_ref().clone(),
@@ -582,7 +585,7 @@ impl<W: Write> Generator<W> {
                 self.emitter.emit_store(&initial_value, &array_pointer)?;
                 
                 for (index, member) in non_constant_items {
-                    let item_pointer = self.new_anonymous_register(member.format().into_pointer());
+                    let item_pointer = self.new_anonymous_register(member.format().into_pointer(PointerSemantics::Mutable));
                     let zero = Value::Constant(Constant::Integer(IntegerValue::Signed32(0)));
                     let index = Value::Constant(Constant::Integer(IntegerValue::Unsigned64(index as u64)));
 
@@ -657,7 +660,7 @@ impl<W: Write> Generator<W> {
                 return Err(Box::new(crate::Error::ExtraStructMembers { member_names, type_name: type_name.clone() }));
             }
 
-            let structure_pointer = self.new_anonymous_register(result_format.clone().into_pointer());
+            let structure_pointer = self.new_anonymous_register(result_format.clone().into_pointer(PointerSemantics::Immutable));
             let initial_value = Value::Constant(Constant::Structure {
                 members: constant_members,
                 format: result_format.clone(),
@@ -670,7 +673,7 @@ impl<W: Write> Generator<W> {
             self.emitter.emit_store(&initial_value, &structure_pointer)?;
             
             for (index, member) in non_constant_members {
-                let member_pointer = self.new_anonymous_register(member.format().into_pointer());
+                let member_pointer = self.new_anonymous_register(member.format().into_pointer(PointerSemantics::Mutable));
                 let zero = Value::Constant(Constant::Integer(IntegerValue::Signed32(0)));
                 let index = Value::Constant(Constant::Integer(IntegerValue::Signed32(index as i32)));
 
@@ -737,20 +740,20 @@ impl<W: Write> Generator<W> {
                 }
             },
             ast::UnaryOperation::Dereference => {
-                let operand = self.generate_node(operand, context, expected_format.cloned().map(Format::into_pointer))?;
+                let operand = self.generate_node(operand, context, expected_format.map(|format| format.clone().into_pointer(PointerSemantics::Immutable)))?;
                 let operand = self.coerce_to_rvalue(operand)?;
                 
-                if let Format::Pointer(pointee_format) = operand.format().as_unqualified() {
+                if let Format::Pointer { pointee_format, .. } = operand.format() {
                     if let Value::Constant(constant) = operand {
                         Value::Constant(Constant::Indirect {
                             pointer: Box::new(constant),
-                            loaded_format: pointee_format.as_ref().clone(),
+                            loaded_format: *pointee_format,
                         })
                     }
                     else {
                         Value::Indirect {
                             pointer: Box::new(operand),
-                            loaded_format: pointee_format.as_ref().clone(),
+                            loaded_format: *pointee_format,
                         }
                     }
                 }
@@ -760,7 +763,7 @@ impl<W: Write> Generator<W> {
             },
             ast::UnaryOperation::GetSize => {
                 if let ast::Node::Type(type_node) = operand {
-                    let format = self.get_format_from_node(type_node, true, false)?;
+                    let format = self.get_format_from_node(type_node, false)?;
                     let size = format.expect_size(&self.symbol_table)?;
 
                     Value::Constant(Constant::Integer(IntegerValue::Unsigned64(size as u64)))
@@ -781,25 +784,19 @@ impl<W: Write> Generator<W> {
                 self.generate_subscript_operation(lhs, rhs, context)?
             },
             ast::BinaryOperation::Access => {
-                let structure = self.generate_node(lhs, context, None)?;
+                let lhs = self.generate_node(lhs, context, None)?;
 
-                self.generate_member_access(structure, rhs, context)?
-            },
-            ast::BinaryOperation::DerefAccess => {
-                let pointer = self.generate_node(lhs, context, None)?;
-                let pointer = self.coerce_to_rvalue(pointer)?;
-                let pointer_format = pointer.format();
-
-                if let Format::Pointer(pointee_format) = pointer_format.as_unqualified() {
+                if let Format::Pointer { pointee_format, .. } = lhs.format() {
+                    let pointer = self.coerce_to_rvalue(lhs)?;
                     let structure = Value::Indirect {
                         pointer: Box::new(pointer),
-                        loaded_format: pointee_format.as_ref().clone(),
+                        loaded_format: *pointee_format,
                     };
 
                     self.generate_member_access(structure, rhs, context)?
                 }
                 else {
-                    return Err(Box::new(crate::Error::ExpectedPointer { type_name: pointer_format.rich_name() }));
+                    self.generate_member_access(lhs, rhs, context)?
                 }
             },
             ast::BinaryOperation::Convert => {
@@ -807,7 +804,7 @@ impl<W: Write> Generator<W> {
                     let value = self.generate_node(lhs, context, None)?;
                     let value = self.coerce_to_rvalue(value)?;
                     
-                    let target_format = self.get_format_from_node(type_node, false, false)?;
+                    let target_format = self.get_format_from_node(type_node, false)?;
 
                     self.change_format(value, &target_format)?
                 }
@@ -1039,99 +1036,74 @@ impl<W: Write> Generator<W> {
         let rhs = self.generate_node(rhs, context, None)?;
         let rhs = self.coerce_to_rvalue(rhs)?;
         
-        if !(matches!(rhs.format().as_unqualified(), Format::Integer { .. })) {
+        if !(matches!(rhs.format(), Format::Integer { .. })) {
             return Err(Box::new(crate::Error::ExpectedInteger { type_name: rhs.format().rich_name() }));
         }
 
         let lhs_format = lhs.format();
         let cannot_index_error = || Box::new(crate::Error::ExpectedArray { type_name: lhs_format.rich_name() });
 
-        // This is incredibly nasty and repetitive... could signify a need for a rethink of Value/Constant and/or Format
-        match (lhs, rhs) {
-            (Value::Constant(lhs), Value::Constant(rhs)) => match lhs {
-                Constant::Indirect { pointer, loaded_format } => match loaded_format.as_unqualified() {
+        match lhs {
+            Value::Indirect { pointer, loaded_format } => match &loaded_format {
+                Format::Array { item_format, length } => {
+                    // &[T; N], &[T]
+                    let semantics = pointer.format().pointer_semantics().unwrap();
+                    let element_pointer = self.new_anonymous_register(item_format.as_ref().clone().into_pointer(semantics));
+                    let indices = match length {
+                        Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), rhs],
+                        None => vec![rhs],
+                    };
+
+                    self.emitter.emit_get_element_pointer(
+                        &element_pointer,
+                        &loaded_format,
+                        pointer.as_ref(),
+                        &indices,
+                    )?;
+
+                    Ok(Value::Indirect {
+                        pointer: Box::new(Value::Register(element_pointer)),
+                        loaded_format: item_format.as_ref().clone(),
+                    })
+                },
+                Format::Pointer { pointee_format, semantics } => match pointee_format.as_ref() {
                     Format::Array { item_format, length } => {
-                        // const &[T; N], const &[T]
+                        // &*[T; N], &*[T]
+                        let semantics = match semantics {
+                            PointerSemantics::Owned => pointer.format().pointer_semantics().unwrap(),
+                            _ => *semantics
+                        };
+                        let loaded_pointer = self.new_anonymous_register(loaded_format.clone());
+                        let element_pointer = self.new_anonymous_register(item_format.as_ref().clone().into_pointer(semantics));
                         let indices = match length {
-                            Some(_) => vec![Constant::Integer(IntegerValue::Signed32(0)), rhs],
+                            Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), rhs],
                             None => vec![rhs],
                         };
 
-                        let element_pointer = Constant::GetElementPointer {
-                            element_format: item_format.as_ref().clone().into_pointer(),
-                            aggregate_format: loaded_format.clone(),
-                            pointer,
-                            indices,
-                        };
+                        self.emitter.emit_load(&loaded_pointer, pointer.as_ref())?;
+                        self.emitter.emit_get_element_pointer(
+                            &element_pointer,
+                            pointee_format.as_ref(),
+                            &Value::Register(loaded_pointer),
+                            &indices,
+                        )?;
 
-                        Ok(Value::Constant(Constant::Indirect {
-                            pointer: Box::new(element_pointer),
+                        // println!("{}, {}, {}", pointer.format().rich_name(), element_pointer.format().rich_name(), item_format.rich_name());
+
+                        Ok(Value::Indirect {
+                            pointer: Box::new(Value::Register(element_pointer)),
                             loaded_format: item_format.as_ref().clone(),
-                        }))
-                    },
-                    Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
-                        Format::Array { item_format, length } => {
-                            // const &*[T; N], const &*[T]
-                            let element_format = match pointee_format.as_ref() {
-                                Format::Mutable(_) => item_format.as_ref().clone().into_mutable(),
-                                _ => item_format.as_ref().clone()
-                            };
-                            let loaded_pointer = self.new_anonymous_register(loaded_format.clone());
-                            let element_pointer = self.new_anonymous_register(element_format.clone().into_pointer());
-                            let indices = match length {
-                                Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), Value::Constant(rhs)],
-                                None => vec![Value::Constant(rhs)],
-                            };
-
-                            self.emitter.emit_load(&loaded_pointer, &Value::Constant(*pointer))?;
-                            self.emitter.emit_get_element_pointer(
-                                &element_pointer,
-                                pointee_format.as_ref(),
-                                &Value::Register(loaded_pointer),
-                                &indices,
-                            )?;
-
-                            Ok(Value::Indirect {
-                                pointer: Box::new(Value::Register(element_pointer)),
-                                loaded_format: element_format,
-                            })
-                        },
-                        _ => Err(cannot_index_error())
-                    },
-                    _ => Err(cannot_index_error())
-                },
-                Constant::Register(register) => match register.format().clone().as_unqualified() {
-                    Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
-                        Format::Array { item_format, length } => {
-                            // const *[T; N], const *[T]
-                            let indices = match length {
-                                Some(_) => vec![Constant::Integer(IntegerValue::Signed32(0)), rhs],
-                                None => vec![rhs],
-                            };
-
-                            let element_pointer = Constant::GetElementPointer {
-                                element_format: item_format.as_ref().clone().into_pointer(),
-                                aggregate_format: pointee_format.as_ref().clone(),
-                                pointer: Box::new(Constant::Register(register)),
-                                indices,
-                            };
-
-                            Ok(Value::Constant(Constant::Indirect {
-                                pointer: Box::new(element_pointer),
-                                loaded_format: item_format.as_ref().clone(),
-                            }))
-                        },
-                        _ => Err(cannot_index_error())
+                        })
                     },
                     _ => Err(cannot_index_error())
                 },
                 _ => Err(cannot_index_error())
             },
-            (lhs, rhs) => match lhs {
-                Value::Indirect { pointer, loaded_format } => match loaded_format.as_unqualified() {
+            Value::Register(register) => match register.format().clone() {
+                Format::Pointer { pointee_format, semantics } => match pointee_format.as_ref() {
                     Format::Array { item_format, length } => {
-                        // &[T; N], &[T]
-                        let element_pointer = self.new_anonymous_register(item_format.as_ref().clone().into_pointer());
+                        // *[T; N], *[T]
+                        let element_pointer = self.new_anonymous_register(item_format.as_ref().clone().into_pointer(semantics));
                         let indices = match length {
                             Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), rhs],
                             None => vec![rhs],
@@ -1139,8 +1111,8 @@ impl<W: Write> Generator<W> {
 
                         self.emitter.emit_get_element_pointer(
                             &element_pointer,
-                            &loaded_format,
-                            pointer.as_ref(),
+                            pointee_format.as_ref(),
+                            &Value::Register(register),
                             &indices,
                         )?;
 
@@ -1149,66 +1121,81 @@ impl<W: Write> Generator<W> {
                             loaded_format: item_format.as_ref().clone(),
                         })
                     },
-                    Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
-                        Format::Array { item_format, length } => {
-                            // &*[T; N], &*[T]
-                            let element_format = match pointee_format.as_ref() {
-                                Format::Mutable(_) => item_format.as_ref().clone().into_mutable(),
-                                _ => item_format.as_ref().clone()
-                            };
-                            let loaded_pointer = self.new_anonymous_register(loaded_format.clone());
-                            let element_pointer = self.new_anonymous_register(element_format.clone().into_pointer());
-                            let indices = match length {
-                                Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), rhs],
-                                None => vec![rhs],
-                            };
-
-                            self.emitter.emit_load(&loaded_pointer, pointer.as_ref())?;
-                            self.emitter.emit_get_element_pointer(
-                                &element_pointer,
-                                pointee_format.as_ref(),
-                                &Value::Register(loaded_pointer),
-                                &indices,
-                            )?;
-
-                            Ok(Value::Indirect {
-                                pointer: Box::new(Value::Register(element_pointer)),
-                                loaded_format: element_format,
-                            })
-                        },
-                        _ => Err(cannot_index_error())
-                    },
-                    _ => Err(cannot_index_error())
-                },
-                Value::Register(register) => match register.format().clone().as_unqualified() {
-                    Format::Pointer(pointee_format) => match pointee_format.as_unqualified() {
-                        Format::Array { item_format, length } => {
-                            // *[T; N], *[T]
-                            let element_pointer = self.new_anonymous_register(item_format.as_ref().clone().into_pointer());
-                            let indices = match length {
-                                Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), rhs],
-                                None => vec![rhs],
-                            };
-
-                            self.emitter.emit_get_element_pointer(
-                                &element_pointer,
-                                pointee_format.as_ref(),
-                                &Value::Register(register),
-                                &indices,
-                            )?;
-
-                            Ok(Value::Indirect {
-                                pointer: Box::new(Value::Register(element_pointer)),
-                                loaded_format: item_format.as_ref().clone(),
-                            })
-                        },
-                        _ => Err(cannot_index_error())
-                    },
                     _ => Err(cannot_index_error())
                 },
                 _ => Err(cannot_index_error())
-            }
+            },
+            _ => Err(cannot_index_error())
         }
+    }
+
+    fn fold_subscript_operation(&self, lhs: &ast::Node, rhs: &ast::Node, constant_id: &mut usize, context: &ScopeContext) -> crate::Result<(Constant, Vec<(Register, Constant)>)> {
+        let (lhs, mut intermediate_constants) = self.fold_as_constant(lhs, constant_id, context, None)?;
+        let (rhs, mut constants) = self.fold_as_constant(rhs, constant_id, context, None)?;
+        intermediate_constants.append(&mut constants);
+
+        if !(matches!(rhs.format(), Format::Integer { .. })) {
+            return Err(Box::new(crate::Error::ExpectedInteger { type_name: rhs.format().rich_name() }));
+        }
+
+        let lhs_format = lhs.format();
+        let cannot_index_error = || Box::new(crate::Error::ExpectedArray { type_name: lhs_format.rich_name() });
+
+        let constant = match lhs {
+            Constant::Indirect { pointer, loaded_format } => match &loaded_format {
+                Format::Array { item_format, length } => {
+                    // const &[T; N], const &[T]
+                    let semantics = pointer.format().pointer_semantics().unwrap();
+                    let indices = match length {
+                        Some(_) => vec![Constant::Integer(IntegerValue::Signed32(0)), rhs],
+                        None => vec![rhs],
+                    };
+
+                    let element_pointer = Constant::GetElementPointer {
+                        element_format: item_format.as_ref().clone().into_pointer(semantics),
+                        aggregate_format: loaded_format.clone(),
+                        pointer,
+                        indices,
+                        semantics,
+                    };
+
+                    Constant::Indirect {
+                        pointer: Box::new(element_pointer),
+                        loaded_format: item_format.as_ref().clone(),
+                    }
+                },
+                _ => return Err(cannot_index_error())
+            },
+            Constant::Register(register) => match register.format().clone() {
+                Format::Pointer { pointee_format, semantics } => match pointee_format.as_ref() {
+                    Format::Array { item_format, length } => {
+                        // const *[T; N], const *[T]
+                        let indices = match length {
+                            Some(_) => vec![Constant::Integer(IntegerValue::Signed32(0)), rhs],
+                            None => vec![rhs],
+                        };
+
+                        let element_pointer = Constant::GetElementPointer {
+                            element_format: item_format.as_ref().clone().into_pointer(semantics),
+                            aggregate_format: pointee_format.as_ref().clone(),
+                            pointer: Box::new(Constant::Register(register)),
+                            indices,
+                            semantics,
+                        };
+
+                        Constant::Indirect {
+                            pointer: Box::new(element_pointer),
+                            loaded_format: item_format.as_ref().clone(),
+                        }
+                    },
+                    _ => return Err(cannot_index_error())
+                },
+                _ => return Err(cannot_index_error())
+            },
+            _ => return Err(cannot_index_error())
+        };
+
+        Ok((constant, intermediate_constants))
     }
 
     fn generate_member_access(&mut self, structure: Value, member_name: &ast::Node, _context: &ScopeContext) -> crate::Result<Value> {
@@ -1217,16 +1204,14 @@ impl<W: Write> Generator<W> {
 
         if let ast::Node::Literal(token::Literal::Identifier(member_name)) = member_name {
             match structure {
-                Value::Indirect { pointer, loaded_format } => match loaded_format.as_unqualified() {
-                    Format::Identified { type_name, .. } => match self.get_definition_format(type_name)?.as_unqualified() {
+                Value::Indirect { pointer, loaded_format } => match &loaded_format {
+                    Format::Identified { type_name, .. } => match self.get_definition_format(type_name)? {
                         Format::Structure { members, .. } => {
+                            let semantics = pointer.format().pointer_semantics().unwrap();
                             let member_index = members.iter().position(|(name, _)| name == member_name)
                                 .ok_or_else(|| Box::new(crate::Error::UndefinedStructMember { member_name: member_name.clone(), type_name: structure_format.rich_name() }))?;
-                            let member_format = match &loaded_format {
-                                Format::Mutable(_) => members[member_index].1.clone().into_mutable(),
-                                _ => members[member_index].1.clone()
-                            };
-                            let member_pointer = self.new_anonymous_register(member_format.clone().into_pointer());
+                            let member_format = members[member_index].1.clone();
+                            let member_pointer = self.new_anonymous_register(member_format.clone().into_pointer(semantics));
                             let indices = &[
                                 Value::Constant(Constant::Integer(IntegerValue::Signed32(0))),
                                 Value::Constant(Constant::Integer(IntegerValue::Signed32(member_index as i32))),
@@ -1300,7 +1285,7 @@ impl<W: Write> Generator<W> {
         let callee = self.generate_node(callee, context, None)?;
         let callee = self.coerce_to_rvalue(callee)?;
 
-        if let Format::Function(signature) = callee.format() {
+        if let Format::Function { signature } = callee.format() {
             let mut argument_values = Vec::new();
 
             // Ensure that when arguments and parameter formats are zipped, all arguments are generated
@@ -1310,7 +1295,7 @@ impl<W: Write> Generator<W> {
                 .chain(std::iter::repeat(None));
 
             for (argument, parameter_format) in arguments.iter().zip(parameters_iter) {
-                let argument = self.generate_node(argument.as_ref(), context, parameter_format.cloned())?;
+                let argument = self.generate_node(argument, context, parameter_format.cloned())?;
                 let argument = self.coerce_to_rvalue(argument)?;
 
                 argument_values.push(argument);
@@ -1351,8 +1336,8 @@ impl<W: Write> Generator<W> {
         }
     }
 
-    fn generate_let_statement(&mut self, name: &str, value_type: &ast::TypeNode, value: Option<&ast::Node>, context: &ScopeContext) -> crate::Result<Value> {
-        let format = self.get_format_from_node(value_type, true, false)?;
+    fn generate_let_statement(&mut self, name: &str, value_type: &ast::TypeNode, is_mutable: bool, value: Option<&ast::Node>, context: &ScopeContext) -> crate::Result<Value> {
+        let format = self.get_format_from_node(value_type, false)?;
 
         if context.is_global() {
             let init_value = if let Some(node) = value {
@@ -1366,14 +1351,14 @@ impl<W: Write> Generator<W> {
                 return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.into() }));
             }
 
-            let (symbol, pointer) = self.symbol_table.create_global_indirect_symbol(name.into(), format.clone());
+            let (symbol, pointer) = self.symbol_table.create_global_indirect_symbol(name.into(), format.clone(), is_mutable);
 
             self.emitter.emit_global_allocation(&pointer, &init_value, false)?;
 
             self.symbol_table.insert(symbol);
         }
         else {
-            let (symbol, pointer) = self.symbol_table.create_local_indirect_symbol(name.into(), format.clone());
+            let (symbol, pointer) = self.symbol_table.create_local_indirect_symbol(name.into(), format.clone(), is_mutable);
 
             self.emitter.emit_local_allocation(&pointer, &format)?;
 
@@ -1391,7 +1376,7 @@ impl<W: Write> Generator<W> {
     }
 
     fn generate_let_constant_statement(&mut self, name: &str, value_type: &ast::TypeNode, value: &ast::Node, context: &ScopeContext) -> crate::Result<Value> {
-        let format = self.get_format_from_node(value_type, false, false)?;
+        let format = self.get_format_from_node(value_type, false)?;
 
         if let Some(function) = context.function() {
             let constant = self.generate_constant_node(value, context, Some(format.clone()))?;
@@ -1408,7 +1393,7 @@ impl<W: Write> Generator<W> {
                 return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.into() }));
             }
 
-            let (symbol, pointer) = self.symbol_table.create_global_indirect_symbol(name.into(), format.clone());
+            let (symbol, pointer) = self.symbol_table.create_global_indirect_symbol(name.into(), format.clone(), false);
             self.symbol_table.insert(symbol);
 
             self.emitter.emit_global_allocation(&pointer, &constant, true)?;
@@ -1417,22 +1402,19 @@ impl<W: Write> Generator<W> {
         Ok(Value::Void)
     }
 
-    fn generate_function_declaration(&mut self, name: &str, parameters: &[(String, ast::TypeNode)], is_varargs: bool, return_type: &ast::TypeNode, _context: &ScopeContext) -> crate::Result<Value> {
-        let return_format = self.get_format_from_node(return_type, false, false)?;
-        let parameter_formats: Vec<Format> = Result::from_iter(parameters.iter().map(|(_, parameter_type)| {
-            self.get_format_from_node(parameter_type, true, false)
+    fn generate_function_declaration(&mut self, name: &str, parameters: &[ast::FunctionParameter], is_varargs: bool, return_type: &ast::TypeNode, _context: &ScopeContext) -> crate::Result<Value> {
+        let return_format = self.get_format_from_node(return_type, false)?;
+        let parameter_formats: Vec<Format> = Result::from_iter(parameters.iter().map(|ast::FunctionParameter { type_node, ..}| {
+            self.get_format_from_node(type_node, false)
         }))?;
 
         let new_signature = FunctionSignature::new(return_format.clone(), parameter_formats.clone(), is_varargs);
 
         if let Some(previous_symbol) = self.symbol_table.find(name) {
             // Ensure the new declaration doesn't conflict with the existing symbol
-            if let Some((old_register, old_signature, _already_defined)) = previous_symbol.function_value() {
+            if let Some((_, old_signature, _already_defined)) = previous_symbol.function_value() {
                 if &new_signature != old_signature {
-                    let old_type = old_register.format().rich_name();
-                    let new_type = Format::Function(Box::new(new_signature.clone())).rich_name();
-
-                    return Err(Box::new(crate::Error::FunctionSignatureConflict { function_name: name.into(), old_type, new_type }));
+                    return Err(Box::new(crate::Error::FunctionSignatureConflict { function_name: name.into(), old_type: old_signature.rich_name(), new_type: new_signature.rich_name() }));
                 }
             }
             else {
@@ -1450,33 +1432,32 @@ impl<W: Write> Generator<W> {
         Ok(Value::Void)
     }
 
-    fn generate_function_definition(&mut self, name: &str, parameters: &[(String, ast::TypeNode)], is_varargs: bool, return_type: &ast::TypeNode, body: &ast::Node, context: &ScopeContext) -> crate::Result<Value> {
-        let return_format = self.get_format_from_node(return_type, false, false)?;
-        let parameter_formats: Vec<Format> = Result::from_iter(parameters.iter().map(|(_, parameter_type)| {
-            self.get_format_from_node(parameter_type, true, false)
+    fn generate_function_definition(&mut self, name: &str, parameters: &[ast::FunctionParameter], is_varargs: bool, return_type: &ast::TypeNode, body: &ast::Node, context: &ScopeContext) -> crate::Result<Value> {
+        let return_format = self.get_format_from_node(return_type, false)?;
+        let parameter_formats: Vec<Format> = Result::from_iter(parameters.iter().map(|ast::FunctionParameter { type_node, .. }| {
+            self.get_format_from_node(type_node, false)
         }))?;
 
         let function_context = context.clone().enter_function(name.into(), return_format.clone());
 
-        let parameter_names_iter = parameters.iter().map(|(name, _)| name.clone());
-        let parameter_handles = Vec::from_iter(std::iter::zip(parameter_names_iter, parameter_formats.iter()).map(|(name, format)| {
-            let input_register = Register::new_local(format!(".arg.{name}"), format.clone());
+        let parameter_handles: Vec<(Register, Symbol, Register)> = parameters.iter()
+            .zip(parameter_formats.iter())
+            .map(|(ast::FunctionParameter { name, is_mutable, .. }, format)| {
+                let input_register = Register::new_local(format!(".arg.{name}"), format.clone());
 
-            let (symbol, pointer) = self.symbol_table.create_local_indirect_symbol(name, format.clone());
-            
-            (input_register, symbol, pointer)
-        }));
+                let (symbol, pointer) = self.symbol_table.create_local_indirect_symbol(name.clone(), format.clone(), *is_mutable);
+                
+                (input_register, symbol, pointer)
+            })
+            .collect();
 
         let new_signature = FunctionSignature::new(return_format.clone(), parameter_formats.clone(), is_varargs);
 
         if let Some(previous_symbol) = self.symbol_table.find(name) {
             // Ensure the new definition doesn't conflict with the existing symbol
-            if let Some((old_register, old_signature, already_defined)) = previous_symbol.function_value() {
+            if let Some((_, old_signature, already_defined)) = previous_symbol.function_value() {
                 if &new_signature != old_signature {
-                    let old_type = old_register.format().rich_name();
-                    let new_type = Format::Function(Box::new(new_signature.clone())).rich_name();
-                    
-                    return Err(Box::new(crate::Error::FunctionSignatureConflict { function_name: name.into(), old_type, new_type }));
+                    return Err(Box::new(crate::Error::FunctionSignatureConflict { function_name: name.into(), old_type: old_signature.rich_name(), new_type: new_signature.rich_name() }));
                 }
                 else if already_defined {
                     return Err(Box::new(crate::Error::MultipleFunctionDefinition { function_name: name.into() }));
@@ -1491,7 +1472,7 @@ impl<W: Write> Generator<W> {
         let (symbol, function_register) = self.symbol_table.create_function_symbol(name.into(), new_signature, true);
         self.symbol_table.insert(symbol);
 
-        let input_registers: Vec<_> = parameter_handles.iter()
+        let input_registers: Vec<Register> = parameter_handles.iter()
             .map(|(register, _, _)| register.clone())
             .collect();
         self.emitter.emit_function_enter(&function_register, &return_format, &input_registers, is_varargs)?;
@@ -1560,7 +1541,7 @@ impl<W: Write> Generator<W> {
         self.symbol_table.insert(symbol);
 
         let members: Vec<(String, Format)> = crate::Result::from_iter(members.iter().map(|(member_name, member_type)| {
-            let member_format = self.get_format_from_node(member_type, false, false)?;
+            let member_format = self.get_format_from_node(member_type, false)?;
             Ok((member_name.clone(), member_format))
         }))?;
         
@@ -1593,7 +1574,7 @@ impl<W: Write> Generator<W> {
 
     pub fn fold_as_constant(&self, node: &ast::Node, constant_id: &mut usize, context: &ScopeContext, expected_format: Option<Format>) -> crate::Result<(Constant, Vec<(Register, Constant)>)> {
         let mut new_intermediate_constant = |constant: Constant| {
-            let pointer = Register::new_global(format!(".const.{constant_id}"), constant.format().into_pointer());
+            let pointer = Register::new_global(format!(".const.{constant_id}"), constant.format().into_pointer(PointerSemantics::Immutable));
             *constant_id += 1;
             (pointer, constant)
         };
@@ -1638,7 +1619,7 @@ impl<W: Write> Generator<W> {
             ast::Node::Array { items } => {
                 if let Some(Format::Array { item_format, .. }) = &expected_format {
                     let items: Vec<Constant> = crate::Result::from_iter(items.iter().map(|item| {
-                        let (item, mut constants) = self.fold_as_constant(item.as_ref(), constant_id, context, Some(item_format.as_ref().clone()))?;
+                        let (item, mut constants) = self.fold_as_constant(item, constant_id, context, Some(item_format.as_ref().clone()))?;
 
                         intermediate_constants.append(&mut constants);
                         Ok(item)
@@ -1709,10 +1690,10 @@ impl<W: Write> Generator<W> {
             ast::Node::Binary { operation, lhs, rhs } => match operation {
                 ast::BinaryOperation::Convert => {
                     if let ast::Node::Type(type_node) = rhs.as_ref() {
-                        let (value, mut constants) = self.fold_as_constant(lhs.as_ref(), constant_id, context, None)?;
+                        let (value, mut constants) = self.fold_as_constant(lhs, constant_id, context, None)?;
                         intermediate_constants.append(&mut constants);
                         
-                        let target_format = self.get_format_from_node(type_node, false, false)?;
+                        let target_format = self.get_format_from_node(type_node, false)?;
     
                         if let Constant::Integer(integer) = value {
                             let converted_integer = IntegerValue::new(integer.expanded_value(), &target_format)
@@ -1727,6 +1708,12 @@ impl<W: Write> Generator<W> {
                     else {
                         panic!("non-type rhs for 'as'");
                     }
+                },
+                ast::BinaryOperation::Subscript => {
+                    let (value, mut constants) = self.fold_subscript_operation(lhs, rhs, constant_id, context)?;
+                    intermediate_constants.append(&mut constants);
+
+                    value
                 },
                 _ => {
                     return Err(Box::new(crate::Error::UnsupportedConstantExpression {}));

@@ -125,6 +125,7 @@ pub enum Token {
     Struct,
     Const,
     Mut,
+    Own,
     Literal(Literal),
 }
 
@@ -195,6 +196,7 @@ impl fmt::Display for Token {
             Self::Struct => write!(f, "struct"),
             Self::Const => write!(f, "const"),
             Self::Mut => write!(f, "mut"),
+            Self::Own => write!(f, "own"),
             Self::Literal(literal) => write!(f, "{literal}"),
         }
     }
@@ -268,6 +270,7 @@ pub const KEYWORD_TOKENS: &[(&str, Token)] = &[
     ("struct", Token::Struct),
     ("const", Token::Const),
     ("mut", Token::Mut),
+    ("own", Token::Own),
 ];
 
 pub fn get_symbolic_token_partial_matches(start_content: &str) -> Vec<&'static Token> {
