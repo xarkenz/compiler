@@ -77,13 +77,13 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 UnaryOperation::GetSize => {
                     self.expect_token(&[Token::ParenLeft])?;
                     self.scan_token()?;
-                    operand = Box::new(Node::Type(self.parse_type(&[Token::ParenRight])?));
+                    operand = Box::new(Node::Type(self.parse_type(Some(&[Token::ParenRight]))?));
                     self.scan_token()?;
                 },
                 UnaryOperation::GetAlign => {
                     self.expect_token(&[Token::ParenLeft])?;
                     self.scan_token()?;
-                    operand = Box::new(Node::Type(self.parse_type(&[Token::ParenRight])?));
+                    operand = Box::new(Node::Type(self.parse_type(Some(&[Token::ParenRight]))?));
                     self.scan_token()?;
                 },
                 _ => {
@@ -163,7 +163,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.scan_token()?;
                 let rhs = match operation {
                     BinaryOperation::Convert => {
-                        Box::new(Node::Type(self.parse_type(allowed_ends)?))
+                        Box::new(Node::Type(self.parse_type(None)?))
                     },
                     BinaryOperation::Subscript => {
                         let expression = self.parse_expression(None, &[Token::SquareRight])?;
@@ -251,12 +251,14 @@ impl<'a, T: BufRead> Parser<'a, T> {
         Ok(lhs)
     }
 
-    pub fn parse_type(&mut self, allowed_ends: &[Token]) -> crate::Result<TypeNode> {
+    pub fn parse_type(&mut self, allowed_ends: Option<&[Token]>) -> crate::Result<TypeNode> {
         match self.get_token()? {
             Token::Literal(Literal::Identifier(name)) => {
                 let name = name.clone();
                 self.scan_token()?;
-                self.expect_token(allowed_ends)?;
+                if let Some(allowed_ends) = allowed_ends {
+                    self.expect_token(allowed_ends)?;
+                }
 
                 Ok(TypeNode::Identified {
                     name,
@@ -286,7 +288,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
             },
             Token::SquareLeft => {
                 self.scan_token()?;
-                let item_type = Box::new(self.parse_type(&[Token::Semicolon, Token::SquareRight])?);
+                let item_type = Box::new(self.parse_type(Some(&[Token::Semicolon, Token::SquareRight]))?);
                 let length;
                 if let Some(Token::Semicolon) = self.current_token() {
                     self.scan_token()?;
@@ -296,7 +298,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     length = None;
                 }
                 self.scan_token()?;
-                self.expect_token(allowed_ends)?;
+                if let Some(allowed_ends) = allowed_ends {
+                    self.expect_token(allowed_ends)?;
+                }
                 
                 Ok(TypeNode::Array {
                     item_type,
@@ -327,7 +331,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.scan_token()?;
                     self.expect_token(&[Token::Colon])?;
                     self.scan_token()?;
-                    let value_type = self.parse_type(&[Token::Equal])?;
+                    let value_type = self.parse_type(Some(&[Token::Equal]))?;
                     self.scan_token()?;
                     let value = self.parse_expression(None, &[Token::Semicolon])?;
                     self.scan_token()?;
@@ -350,7 +354,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.scan_token()?;
                     self.expect_token(&[Token::Colon])?;
                     self.scan_token()?;
-                    let value_type = self.parse_type(&[Token::Equal, Token::Semicolon])?;
+                    let value_type = self.parse_type(Some(&[Token::Equal, Token::Semicolon]))?;
                     let value = if let Some(Token::Equal) = self.current_token() {
                         self.scan_token()?;
                         Some(self.parse_expression(None, &[Token::Semicolon])?)
@@ -396,7 +400,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.scan_token()?;
                     self.expect_token(&[Token::Colon])?;
                     self.scan_token()?;
-                    let parameter_type = self.parse_type(&[Token::Comma, Token::ParenRight])?;
+                    let parameter_type = self.parse_type(Some(&[Token::Comma, Token::ParenRight]))?;
                     parameters.push(FunctionParameter {
                         name: parameter_name,
                         type_node: parameter_type,
@@ -413,7 +417,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.expect_token(&[Token::RightArrow, Token::CurlyLeft, Token::Semicolon])?;
                 let return_type = if let Some(Token::RightArrow) = self.current_token() {
                     self.scan_token()?;
-                    self.parse_type(&[Token::CurlyLeft, Token::Semicolon])?
+                    self.parse_type(Some(&[Token::CurlyLeft, Token::Semicolon]))?
                 } else {
                     TypeNode::Identified {
                         name: "void".into(),
@@ -448,7 +452,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         self.scan_token()?;
                         self.expect_token(&[Token::Colon])?;
                         self.scan_token()?;
-                        let member_type = self.parse_type(&[Token::Comma, Token::CurlyRight])?;
+                        let member_type = self.parse_type(Some(&[Token::Comma, Token::CurlyRight]))?;
                         members.push((member_name, member_type));
 
                         if let Some(Token::Comma) = self.current_token() {

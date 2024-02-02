@@ -1,6 +1,26 @@
 ; module_id = 0
 source_filename = "./src/compiler_driver/test.txt"
 
+define dso_local void @u8_swap(i8* noundef %.arg.self, i8* noundef %.arg.other) {
+.block.0:
+	%self = alloca i8*
+	store i8* %.arg.self, i8** %self
+	%other = alloca i8*
+	store i8* %.arg.other, i8** %other
+	%temp = alloca i8
+	%0 = load i8*, i8** %self
+	%1 = load i8, i8* %0
+	store i8 %1, i8* %temp
+	%2 = load i8*, i8** %self
+	%3 = load i8*, i8** %other
+	%4 = load i8, i8* %3
+	store i8 %4, i8* %2
+	%5 = load i8*, i8** %other
+	%6 = load i8, i8* %temp
+	store i8 %6, i8* %5
+	ret void
+}
+
 define dso_local i64 @u64_max(i64 noundef %.arg.self, i64 noundef %.arg.other) {
 .block.0:
 	%self = alloca i64
@@ -160,6 +180,70 @@ define dso_local void @String_push(%type.String* noundef %.arg.self, i8 noundef 
 	%22 = load i64, i64* %21
 	%23 = add nuw i64 %22, 1
 	store i64 %23, i64* %21
+	ret void
+}
+
+define dso_local void @String_insert(%type.String* noundef %.arg.self, i64 noundef %.arg.index, i8 noundef %.arg.ch) {
+.block.0:
+	%self = alloca %type.String*
+	store %type.String* %.arg.self, %type.String** %self
+	%index = alloca i64
+	store i64 %.arg.index, i64* %index
+	%ch = alloca i8
+	store i8 %.arg.ch, i8* %ch
+	%0 = load %type.String*, %type.String** %self
+	%1 = getelementptr inbounds %type.String, %type.String* %0, i32 0, i32 0
+	%2 = getelementptr inbounds %type.OwnStr, %type.OwnStr* %1, i32 0, i32 1
+	%3 = load i64, i64* %2
+	%4 = load %type.String*, %type.String** %self
+	%5 = getelementptr inbounds %type.String, %type.String* %4, i32 0, i32 1
+	%6 = load i64, i64* %5
+	%7 = icmp eq i64 %3, %6
+	br i1 %7, label %.block.1, label %.block.2
+.block.1:
+	%8 = load %type.String*, %type.String** %self
+	call void(%type.String*, i64) @String_grow_by(%type.String* noundef %8, i64 noundef 1)
+	br label %.block.2
+.block.2:
+	br label %.block.3
+.block.3:
+	%9 = load i64, i64* %index
+	%10 = load %type.String*, %type.String** %self
+	%11 = getelementptr inbounds %type.String, %type.String* %10, i32 0, i32 0
+	%12 = getelementptr inbounds %type.OwnStr, %type.OwnStr* %11, i32 0, i32 1
+	%13 = load i64, i64* %12
+	%14 = icmp ult i64 %9, %13
+	br i1 %14, label %.block.4, label %.block.5
+.block.4:
+	%15 = load %type.String*, %type.String** %self
+	%16 = getelementptr inbounds %type.String, %type.String* %15, i32 0, i32 0
+	%17 = getelementptr inbounds %type.OwnStr, %type.OwnStr* %16, i32 0, i32 0
+	%18 = load i64, i64* %index
+	%19 = load i8*, i8** %17
+	%20 = getelementptr inbounds i8, i8* %19, i64 %18
+	call void(i8*, i8*) @u8_swap(i8* noundef %ch, i8* noundef %20)
+	%21 = load i64, i64* %index
+	%22 = add nuw i64 %21, 1
+	store i64 %22, i64* %index
+	br label %.block.3
+.block.5:
+	%23 = load %type.String*, %type.String** %self
+	%24 = getelementptr inbounds %type.String, %type.String* %23, i32 0, i32 0
+	%25 = getelementptr inbounds %type.OwnStr, %type.OwnStr* %24, i32 0, i32 0
+	%26 = load %type.String*, %type.String** %self
+	%27 = getelementptr inbounds %type.String, %type.String* %26, i32 0, i32 0
+	%28 = getelementptr inbounds %type.OwnStr, %type.OwnStr* %27, i32 0, i32 1
+	%29 = load i64, i64* %28
+	%30 = load i8*, i8** %25
+	%31 = getelementptr inbounds i8, i8* %30, i64 %29
+	%32 = load i8, i8* %ch
+	store i8 %32, i8* %31
+	%33 = load %type.String*, %type.String** %self
+	%34 = getelementptr inbounds %type.String, %type.String* %33, i32 0, i32 0
+	%35 = getelementptr inbounds %type.OwnStr, %type.OwnStr* %34, i32 0, i32 1
+	%36 = load i64, i64* %35
+	%37 = add nuw i64 %36, 1
+	store i64 %37, i64* %35
 	ret void
 }
 
@@ -439,6 +523,60 @@ define dso_local void @student_stuff() {
 @.const.8 = private unnamed_addr constant [9 x i8] c"Age: %u\0A\00"
 @.const.9 = private unnamed_addr constant [24 x i8] c"Grades: %u, %u, %u, %u\0A\00"
 
+define dso_local %type.String @i64_to_string(i64 noundef %.arg.self) {
+.block.0:
+	%self = alloca i64
+	store i64 %.arg.self, i64* %self
+	%string = alloca %type.String
+	%0 = call %type.String() @String_new()
+	store %type.String %0, %type.String* %string
+	%1 = load i64, i64* %self
+	%2 = icmp eq i64 %1, 0
+	br i1 %2, label %.block.1, label %.block.2
+.block.1:
+	call void(%type.String*, i8) @String_push(%type.String* noundef %string, i8 noundef 48)
+	br label %.block.3
+.block.2:
+	%is_negative = alloca i1
+	%3 = load i64, i64* %self
+	%4 = icmp slt i64 %3, 0
+	store i1 %4, i1* %is_negative
+	%5 = load i1, i1* %is_negative
+	br i1 %5, label %.block.4, label %.block.5
+.block.4:
+	%6 = load i64, i64* %self
+	%7 = sub nsw i64 0, %6
+	store i64 %7, i64* %self
+	br label %.block.5
+.block.5:
+	br label %.block.6
+.block.6:
+	%8 = load i64, i64* %self
+	%9 = icmp ne i64 %8, 0
+	br i1 %9, label %.block.7, label %.block.8
+.block.7:
+	%10 = load i64, i64* %self
+	%11 = srem i64 %10, 10
+	%12 = trunc i64 %11 to i8
+	%13 = add nuw i8 %12, 48
+	call void(%type.String*, i64, i8) @String_insert(%type.String* noundef %string, i64 noundef 0, i8 noundef %13)
+	%14 = load i64, i64* %self
+	%15 = sdiv i64 %14, 10
+	store i64 %15, i64* %self
+	br label %.block.6
+.block.8:
+	%16 = load i1, i1* %is_negative
+	br i1 %16, label %.block.9, label %.block.10
+.block.9:
+	call void(%type.String*, i64, i8) @String_insert(%type.String* noundef %string, i64 noundef 0, i8 noundef 45)
+	br label %.block.10
+.block.10:
+	br label %.block.3
+.block.3:
+	%17 = load %type.String, %type.String* %string
+	ret %type.String %17
+}
+
 define dso_local i32 @main() {
 .block.0:
 	call void() @aoc_01_p1()
@@ -471,6 +609,17 @@ define dso_local i32 @main() {
 	%5 = call i32(i8*, ...) @printf(i8* noundef bitcast ([4 x i8]* @.const.14 to i8*), i8* noundef %4)
 	%6 = load %type.String, %type.String* %string
 	call void(%type.String) @String_del(%type.String noundef %6)
+	%number_string = alloca %type.String
+	%7 = sub nsw i64 0, 12345
+	%8 = call %type.String(i64) @i64_to_string(i64 noundef %7)
+	store %type.String %8, %type.String* %number_string
+	call void(%type.String*, i8) @String_push(%type.String* noundef %number_string, i8 noundef 0)
+	%9 = getelementptr inbounds %type.String, %type.String* %number_string, i32 0, i32 0
+	%10 = getelementptr inbounds %type.OwnStr, %type.OwnStr* %9, i32 0, i32 0
+	%11 = load i8*, i8** %10
+	%12 = call i32(i8*, ...) @printf(i8* noundef bitcast ([21 x i8]* @.const.15 to i8*), i8* noundef %11)
+	%13 = load %type.String, %type.String* %number_string
+	call void(%type.String) @String_del(%type.String noundef %13)
 	ret i32 0
 }
 
@@ -479,6 +628,7 @@ define dso_local i32 @main() {
 @.const.12 = private unnamed_addr constant [8 x i8] c"Value 3\00"
 @.const.13 = private unnamed_addr constant [8 x i8] c"Value 4\00"
 @.const.14 = private unnamed_addr constant [4 x i8] c"%s\0A\00"
+@.const.15 = private unnamed_addr constant [21 x i8] c"i64_to_string: \22%s\22\0A\00"
 
 %type.CFile = type opaque
 

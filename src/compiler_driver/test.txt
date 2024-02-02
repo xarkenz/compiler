@@ -13,6 +13,12 @@ function memcpy(dest: *mut void, src: *void, count: u64) -> *mut void;
 function strlen(str: *[u8]) -> u64;
 function isdigit(char: i32) -> i32;
 
+function u8_swap(self: *mut u8, other: *mut u8) {
+    let temp: u8 = *self;
+    *self = *other;
+    *other = temp;
+}
+
 function u64_max(self: u64, other: u64) -> u64 {
     if (self > other) {
         return self;
@@ -77,6 +83,20 @@ function String_grow_by(self: *mut String, additional: u64) {
 function String_push(self: *mut String, ch: u8) {
     if (self.str.length == self.capacity) {
         String_grow_by(self, 1);
+    }
+
+    self.str.ptr[self.str.length] = ch;
+    self.str.length += 1;
+}
+
+function String_insert(self: *mut String, mut index: u64, mut ch: u8) {
+    if (self.str.length == self.capacity) {
+        String_grow_by(self, 1);
+    }
+
+    while (index < self.str.length) {
+        u8_swap(&ch, &self.str.ptr[index]);
+        index += 1;
     }
 
     self.str.ptr[self.str.length] = ch;
@@ -196,6 +216,30 @@ function student_stuff() {
     printf("Grades: %u, %u, %u, %u\n", joe.grades[0], joe.grades[1], joe.grades[2], joe.grades[3]);
 }
 
+function i64_to_string(mut self: i64) -> String {
+    let mut string: String = String_new();
+
+    if (self == 0) {
+        String_push(&string, '0');
+    }
+    else {
+        let is_negative: bool = self < 0;
+        if (is_negative) {
+            self = -self;
+        }
+
+        while (self != 0) {
+            String_insert(&string, 0, (self % 10) as u8 + '0');
+            self /= 10;
+        }
+        if (is_negative) {
+            String_insert(&string, 0, '-');
+        }
+    }
+
+    return string;
+}
+
 function main() -> i32 {
     aoc_01_p1();
 
@@ -227,6 +271,11 @@ function main() -> i32 {
     let str: Str = String_as_str(&string);
     printf("%s\n", str.ptr);
     String_del(string);
+
+    let mut number_string: String = i64_to_string(-12345);
+    String_push(&number_string, '\0');
+    printf("i64_to_string: \"%s\"\n", number_string.str.ptr);
+    String_del(number_string);
 
     return 0;
 }
