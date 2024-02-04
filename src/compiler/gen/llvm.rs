@@ -168,20 +168,24 @@ impl<W: Write> Emitter<W> {
         Ok(())
     }
 
-    pub fn queue_type_declaration(&mut self, identifier: &str) {
-        if !self.defined_types.contains(identifier) && !self.queued_type_declarations.contains_key(identifier) {
-            let declaration = format!("%{identifier} = type opaque");
+    pub fn queue_type_declaration(&mut self, identified_format: &Format) {
+        let identifier = format!("{identified_format}");
+
+        if !self.defined_types.contains(&identifier) && !self.queued_type_declarations.contains_key(&identifier) {
+            let declaration = format!("{identifier} = type opaque");
             // Enqueue the declaration, which will be written before the module postamble
             // --that is, unless the type is defined later in the file
-            self.queued_type_declarations.insert(identifier.into(), declaration);
+            self.queued_type_declarations.insert(identifier, declaration);
         }
     }
 
-    pub fn emit_type_definition(&mut self, identifier: &str, structure_format: &Format) -> crate::Result<()> {
-        // Remove any forward declarations of this type from the declaration queue
-        self.queued_type_declarations.remove(identifier);
+    pub fn emit_type_definition(&mut self, identified_format: &Format, structure_format: &Format) -> crate::Result<()> {
+        let identifier = format!("{identified_format}");
 
-        writeln!(self.writer, "%{identifier} = type {structure_format}\n")
+        // Remove any forward declarations of this type from the declaration queue
+        self.queued_type_declarations.remove(&identifier);
+
+        writeln!(self.writer, "{identifier} = type {structure_format}\n")
             .map_err(|cause| self.error(cause))
     }
 

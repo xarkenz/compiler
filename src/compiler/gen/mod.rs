@@ -8,22 +8,42 @@ use crate::ast;
 
 use std::io::{Write, BufRead};
 
+pub const BUILTIN_FORMATS: &[(&str, Format)] = &[
+    ("never", Format::Never),
+    ("void", Format::Void),
+    ("bool", Format::Boolean),
+    ("i8", Format::Integer { size: 1, signed: true }),
+    ("u8", Format::Integer { size: 1, signed: false }),
+    ("i16", Format::Integer { size: 2, signed: true }),
+    ("u16", Format::Integer { size: 2, signed: false }),
+    ("i32", Format::Integer { size: 4, signed: true }),
+    ("u32", Format::Integer { size: 4, signed: false }),
+    ("i64", Format::Integer { size: 8, signed: true }),
+    ("u64", Format::Integer { size: 8, signed: false }),
+];
+
 #[derive(Clone, Debug)]
 pub struct FunctionContext {
     name: String,
+    containing_scope: Scope,
     return_format: Format,
 }
 
 impl FunctionContext {
-    pub fn new(name: String, return_format: Format) -> Self {
+    pub fn new(name: String, containing_scope: Scope, return_format: Format) -> Self {
         Self {
             name,
+            containing_scope,
             return_format,
         }
     }
 
     pub fn name(&self) -> &str {
         self.name.as_str()
+    }
+
+    pub fn containing_scope(&self) -> &Scope {
+        &self.containing_scope
     }
 
     pub fn return_format(&self) -> &Format {
@@ -63,9 +83,9 @@ impl ScopeContext {
         self.continue_label.as_ref()
     }
 
-    pub fn enter_function(&self, name: String, return_format: Format) -> Self {
+    pub fn enter_function(&self, current_scope: &Scope, name: String, return_format: Format) -> Self {
         let mut new_scope = self.clone();
-        new_scope.function_context = Some(FunctionContext::new(name, return_format));
+        new_scope.function_context = Some(FunctionContext::new(name, current_scope.clone(), return_format));
         new_scope
     }
 
@@ -126,52 +146,57 @@ impl<W: Write> Generator<W> {
         Register::new_global(format!(".const.{id}"), format.into_pointer(PointerSemantics::Immutable))
     }
 
-    pub fn get_identified_format(&self, type_name: &str) -> Format {
-        Format::Identified {
-            identifier: format!("type.{type_name}"),
-            type_name: type_name.into(),
-        }
-    }
-
     pub fn get_symbol(&self, name: &str) -> crate::Result<&Symbol> {
-        self.symbol_table.find(name).ok_or_else(|| Box::new(crate::Error::UndefinedSymbol { name: name.into() }))
+        self.symbol_table.find(name, None)
+            .ok_or_else(|| Box::new(crate::Error::UndefinedSymbol { name: name.into() }))
     }
 
-    pub fn get_definition_format(&self, type_name: &str) -> crate::Result<Format> {
-        if let Some(definition_format) = self.symbol_table.find(type_name).and_then(Symbol::type_value) {
-            definition_format.cloned().ok_or_else(|| Box::new(crate::Error::PartialType { type_name: type_name.into() }))
-        }
-        else {
-            Err(Box::new(crate::Error::UnknownType { type_name: type_name.into() }))
-        }
+    pub fn get_type_symbol(&self, type_name: &str) -> crate::Result<&TypeSymbol> {
+        self.symbol_table.find(type_name, None)
+            .and_then(Symbol::type_value)
+            .ok_or_else(|| Box::new(crate::Error::UnknownType { type_name: type_name.into() }))
+    }
+
+    pub fn get_type_definition_format(&self, type_name: &str) -> crate::Result<Format> {
+        self.get_type_symbol(type_name)?
+            .definition_format()
+            .cloned()
+            .ok_or_else(|| Box::new(crate::Error::PartialType { type_name: type_name.into() }))
+    }
+
+    pub fn get_type_identifier(&self, type_name: &str) -> crate::Result<String> {
+        let type_identifier = self.get_type_symbol(type_name)?
+            .member_scope()
+            .name()
+            .expect("member scope without a name");
+
+        Ok(type_identifier.into())
     }
 
     pub fn get_format_from_node(&self, type_node: &ast::TypeNode, allow_unsized: bool) -> crate::Result<Format> {
         let format = match type_node {
-            ast::TypeNode::Identified { name } => {
-                match name.as_str() {
-                    "never" => Format::Never,
-                    "void" => Format::Void,
-                    "bool" => Format::Boolean,
-                    "i8" => Format::Integer { size: 1, signed: true },
-                    "u8" => Format::Integer { size: 1, signed: false },
-                    "i16" => Format::Integer { size: 2, signed: true },
-                    "u16" => Format::Integer { size: 2, signed: false },
-                    "i32" => Format::Integer { size: 4, signed: true },
-                    "u32" => Format::Integer { size: 4, signed: false },
-                    "i64" => Format::Integer { size: 8, signed: true },
-                    "u64" => Format::Integer { size: 8, signed: false },
-                    type_name => self.get_identified_format(type_name)
+            ast::TypeNode::Identified { type_name } => {
+                let builtin_format = BUILTIN_FORMATS.iter()
+                    .find_map(|&(builtin_type_name, ref builtin_format)| {
+                        (type_name == builtin_type_name).then_some(builtin_format)
+                    });
+                
+                match builtin_format {
+                    Some(builtin_format) => builtin_format.clone(),
+                    None => Format::Identified {
+                        type_identifier: self.get_type_identifier(type_name)?,
+                        type_name: type_name.clone(),
+                    },
                 }
             },
             ast::TypeNode::Pointer { pointee_type, semantics } => {
-                self.get_format_from_node(pointee_type.as_ref(), true)?
+                self.get_format_from_node(pointee_type, true)?
                     .into_pointer(*semantics)
             },
             ast::TypeNode::Array { item_type, length: Some(length) } => {
                 if let ast::Node::Literal(token::Literal::Integer(length)) = length.as_ref() {
                     Format::Array {
-                        item_format: Box::new(self.get_format_from_node(item_type.as_ref(), false)?),
+                        item_format: Box::new(self.get_format_from_node(item_type, false)?),
                         length: Some(*length as usize),
                     }
                 }
@@ -181,7 +206,7 @@ impl<W: Write> Generator<W> {
             },
             ast::TypeNode::Array { item_type, length: None } => {
                 Format::Array {
-                    item_format: Box::new(self.get_format_from_node(item_type.as_ref(), false)?),
+                    item_format: Box::new(self.get_format_from_node(item_type, false)?),
                     length: None,
                 }
             },
@@ -326,6 +351,34 @@ impl<W: Write> Generator<W> {
         }
     }
 
+    pub fn add_builtins_to_symbol_table(&mut self) {
+        for &(type_name, ref definition_format) in BUILTIN_FORMATS {
+            let member_scope = self.symbol_table.create_inactive_scope(Some(type_name.into()));
+            let symbol = self.symbol_table.create_type_symbol(
+                type_name.into(),
+                Some(definition_format.clone()),
+                member_scope,
+            );
+
+            self.symbol_table.insert(symbol);
+        }
+    }
+
+    pub fn generate<T: BufRead>(mut self, parser: &mut ast::parse::Parser<T>, filenames: &[String]) -> crate::Result<()> {
+        let module_id = parser.file_id();
+        let global_context = ScopeContext::new();
+        
+        self.add_builtins_to_symbol_table();
+
+        self.emitter.emit_preamble(module_id, &filenames[module_id])?;
+
+        while let Some(statement) = parser.parse_top_level_statement()? {
+            self.generate_node(statement.as_ref(), &global_context, None)?;
+        }
+
+        self.emitter.emit_postamble()
+    }
+
     pub fn generate_node(&mut self, node: &ast::Node, context: &ScopeContext, expected_format: Option<Format>) -> crate::Result<Value> {
         if let Ok(constant) = self.generate_constant_node(node, context, expected_format.clone()) {
             return Ok(Value::Constant(constant));
@@ -336,26 +389,26 @@ impl<W: Write> Generator<W> {
                 self.generate_literal(literal, context, expected_format.as_ref())?
             },
             ast::Node::Unary { operation, operand } => {
-                self.generate_unary_operation(*operation, operand.as_ref(), context, expected_format.as_ref())?
+                self.generate_unary_operation(*operation, operand, context, expected_format.as_ref())?
             },
             ast::Node::Binary { operation, lhs, rhs } => {
-                self.generate_binary_operation(*operation, lhs.as_ref(), rhs.as_ref(), context, expected_format.as_ref())?
+                self.generate_binary_operation(*operation, lhs, rhs, context, expected_format.as_ref())?
             },
             ast::Node::Call { callee, arguments } => {
-                self.generate_call_operation(callee.as_ref(), arguments, context)?
+                self.generate_call_operation(callee, arguments, context)?
             },
-            ast::Node::Array { items } => {
+            ast::Node::ArrayLiteral { items } => {
                 self.generate_array_literal(items, context, expected_format.as_ref())?
             },
-            ast::Node::Structure { type_name, members } => {
-                self.generate_structure_literal(type_name.as_ref(), members, context)?
+            ast::Node::StructureLiteral { type_name, members } => {
+                self.generate_structure_literal(type_name, members, context)?
             },
             ast::Node::Scope { statements } => {
-                self.symbol_table.enter_scope();
+                self.symbol_table.enter_new_scope();
 
                 let mut result = Value::Void;
                 for statement in statements {
-                    let statement_value = self.generate_node(statement.as_ref(), context, None)?;
+                    let statement_value = self.generate_node(statement, context, None)?;
 
                     if statement_value.format() == Format::Never {
                         // The rest of the statements in the block will never be executed, so they don't need to be generated
@@ -369,7 +422,7 @@ impl<W: Write> Generator<W> {
                 result
             },
             ast::Node::Conditional { condition, consequent, alternative } => {
-                let condition = self.generate_node(condition.as_ref(), context, Some(Format::Boolean))?;
+                let condition = self.generate_node(condition, context, Some(Format::Boolean))?;
                 let condition = self.coerce_to_rvalue(condition)?;
 
                 let consequent_label = self.new_block_label();
@@ -381,14 +434,14 @@ impl<W: Write> Generator<W> {
                     let mut tail_label = None;
 
                     self.emitter.emit_label(&consequent_label)?;
-                    let consequent_value = self.generate_node(consequent.as_ref(), context, None)?;
+                    let consequent_value = self.generate_node(consequent, context, None)?;
                     if consequent_value.format() != Format::Never {
                         let tail_label = tail_label.get_or_insert_with(|| self.new_block_label());
                         self.emitter.emit_unconditional_branch(tail_label)?;
                     }
 
                     self.emitter.emit_label(&alternative_label)?;
-                    let alternative_value = self.generate_node(alternative.as_ref(), context, None)?;
+                    let alternative_value = self.generate_node(alternative, context, None)?;
                     if alternative_value.format() != Format::Never {
                         let tail_label = tail_label.get_or_insert_with(|| self.new_block_label());
                         self.emitter.emit_unconditional_branch(tail_label)?;
@@ -405,7 +458,7 @@ impl<W: Write> Generator<W> {
                 }
                 else {
                     self.emitter.emit_label(&consequent_label)?;
-                    let consequent_value = self.generate_node(consequent.as_ref(), context, None)?;
+                    let consequent_value = self.generate_node(consequent, context, None)?;
                     if consequent_value.format() != Format::Never {
                         self.emitter.emit_unconditional_branch(&alternative_label)?;
                     }
@@ -423,7 +476,7 @@ impl<W: Write> Generator<W> {
 
                 self.emitter.emit_label(&condition_label)?;
 
-                let condition = self.generate_node(condition.as_ref(), context, Some(Format::Boolean))?;
+                let condition = self.generate_node(condition, context, Some(Format::Boolean))?;
                 let condition = self.coerce_to_rvalue(condition)?;
 
                 let body_label = self.new_block_label();
@@ -433,7 +486,7 @@ impl<W: Write> Generator<W> {
                 self.emitter.emit_conditional_branch(&condition, &body_label, &tail_label)?;
 
                 self.emitter.emit_label(&body_label)?;
-                self.generate_node(body.as_ref(), &loop_context, None)?;
+                self.generate_node(body, &loop_context, None)?;
                 self.emitter.emit_unconditional_branch(&condition_label)?;
 
                 self.emitter.emit_label(&tail_label)?;
@@ -471,7 +524,7 @@ impl<W: Write> Generator<W> {
                         return Err(Box::new(crate::Error::UnexpectedReturnValue {}));
                     }
                     else {
-                        let value = self.generate_node(value.as_ref(), context, Some(return_format.clone()))?;
+                        let value = self.generate_node(value, context, Some(return_format.clone()))?;
                         let value = self.coerce_to_rvalue(value)?;
 
                         self.emitter.emit_return(Some(&value))?;
@@ -495,19 +548,22 @@ impl<W: Write> Generator<W> {
                 self.generate_let_statement(name, value_type, *is_mutable, value.as_deref(), context)?
             },
             ast::Node::Constant { name, value_type, value } => {
-                self.generate_let_constant_statement(name, value_type, value.as_ref(), context)?
+                self.generate_let_constant_statement(name, value_type, value, context)?
             },
             ast::Node::Function { name, parameters, is_varargs, return_type, body: None } => {
                 self.generate_function_declaration(name, parameters, *is_varargs, return_type, context)?
             },
             ast::Node::Function { name, parameters, is_varargs, return_type, body: Some(body) } => {
-                self.generate_function_definition(name, parameters, *is_varargs, return_type, body.as_ref(), context)?
+                self.generate_function_definition(name, parameters, *is_varargs, return_type, body, context)?
             },
-            ast::Node::StructureDefinition { name, members: None } => {
+            ast::Node::Structure { name, members: None } => {
                 self.generate_structure_declaration(name, context)?
             },
-            ast::Node::StructureDefinition { name, members: Some(members) } => {
+            ast::Node::Structure { name, members: Some(members) } => {
                 self.generate_structure_definition(name, members, context)?
+            },
+            ast::Node::Implement { self_type, statements } => {
+                self.generate_implement_block(self_type, statements, context)?
             },
             _ => {
                 return Err(Box::new(crate::Error::UnexpectedExpression {}));
@@ -526,7 +582,6 @@ impl<W: Write> Generator<W> {
         let result = match literal {
             token::Literal::Identifier(name) => {
                 self.get_symbol(name)?.value()
-                    .ok_or_else(|| Box::new(crate::Error::NonValueSymbol { name: name.clone() }))?
             },
             token::Literal::Integer(value) => {
                 let format = expected_format.cloned().unwrap_or(Format::Integer { size: 4, signed: true });
@@ -559,7 +614,7 @@ impl<W: Write> Generator<W> {
                 let mut non_constant_items = Vec::new();
 
                 let constant_items: Vec<Constant> = crate::Result::from_iter(items.iter().enumerate().map(|(index, item)| {
-                    let item_value = self.generate_node(item.as_ref(), context, Some(item_format.as_ref().clone()))?;
+                    let item_value = self.generate_node(item, context, Some(item_format.as_ref().clone()))?;
 
                     if let Value::Constant(item_constant) = item_value {
                         Ok(item_constant)
@@ -611,8 +666,10 @@ impl<W: Write> Generator<W> {
     fn generate_structure_literal(&mut self, type_name: &ast::Node, initializer_members: &[(String, Box<ast::Node>)], context: &ScopeContext) -> crate::Result<Value> {
         let structure_format = match type_name {
             ast::Node::Literal(token::Literal::Identifier(name)) => {
-                self.get_symbol(name)?.type_value()
+                self.get_symbol(name)?
+                    .type_value()
                     .ok_or_else(|| Box::new(crate::Error::NonStructSymbol { name: name.clone() }))?
+                    .definition_format()
                     .ok_or_else(|| Box::new(crate::Error::PartialType { type_name: name.clone() }))?
                     .clone()
             },
@@ -620,7 +677,10 @@ impl<W: Write> Generator<W> {
         };
 
         if let Format::Structure { type_name: Some(type_name), members } = structure_format {
-            let result_format = self.get_identified_format(&type_name);
+            let result_format = Format::Identified {
+                type_identifier: self.get_type_identifier(&type_name)?,
+                type_name: type_name.clone(),
+            };
 
             let mut initializer_members = initializer_members.to_vec();
             let mut non_constant_members = Vec::new();
@@ -629,7 +689,7 @@ impl<W: Write> Generator<W> {
             let constant_members: Vec<Constant> = crate::Result::from_iter(members.iter().enumerate().map(|(index, (member_name, member_format))| {
                 if let Some(initializer_index) = initializer_members.iter().position(|(name, _)| member_name == name) {
                     let (_, member_value) = &initializer_members[initializer_index];
-                    let member_value = self.generate_node(member_value.as_ref(), context, Some(member_format.clone()))?;
+                    let member_value = self.generate_node(member_value, context, Some(member_format.clone()))?;
 
                     initializer_members.swap_remove(initializer_index);
 
@@ -799,6 +859,22 @@ impl<W: Write> Generator<W> {
                     self.generate_member_access(lhs, rhs, context)?
                 }
             },
+            ast::BinaryOperation::StaticAccess => {
+                let containing_scope = self.generate_constant_node(lhs, context, Some(Format::Scope))?;
+
+                let containing_scope = match containing_scope {
+                    Constant::Scope(scope) => scope,
+                    _ => return Err(Box::new(crate::Error::InvalidStaticAccess {}))
+                };
+                let member_name = match rhs {
+                    ast::Node::Literal(token::Literal::Identifier(name)) => name,
+                    _ => return Err(Box::new(crate::Error::InvalidStaticAccess {}))
+                };
+
+                self.symbol_table.find(member_name, Some(&containing_scope))
+                    .ok_or_else(|| Box::new(crate::Error::UndefinedSymbol { name: member_name.clone() }))?
+                    .value()
+            },
             ast::BinaryOperation::Convert => {
                 if let ast::Node::Type(type_node) = rhs {
                     let value = self.generate_node(lhs, context, None)?;
@@ -809,6 +885,7 @@ impl<W: Write> Generator<W> {
                     self.change_format(value, &target_format)?
                 }
                 else {
+                    // If parsing rules are followed, this should not occur
                     panic!("non-type rhs for 'as'");
                 }
             },
@@ -1080,15 +1157,13 @@ impl<W: Write> Generator<W> {
                             None => vec![rhs],
                         };
 
-                        self.emitter.emit_load(&loaded_pointer, pointer.as_ref())?;
+                        self.emitter.emit_load(&loaded_pointer, &pointer)?;
                         self.emitter.emit_get_element_pointer(
                             &element_pointer,
-                            pointee_format.as_ref(),
+                            &pointee_format,
                             &Value::Register(loaded_pointer),
                             &indices,
                         )?;
-
-                        // println!("{}, {}, {}", pointer.format().rich_name(), element_pointer.format().rich_name(), item_format.rich_name());
 
                         Ok(Value::Indirect {
                             pointer: Box::new(Value::Register(element_pointer)),
@@ -1111,7 +1186,7 @@ impl<W: Write> Generator<W> {
 
                         self.emitter.emit_get_element_pointer(
                             &element_pointer,
-                            pointee_format.as_ref(),
+                            &pointee_format,
                             &Value::Register(register),
                             &indices,
                         )?;
@@ -1205,7 +1280,7 @@ impl<W: Write> Generator<W> {
         if let ast::Node::Literal(token::Literal::Identifier(member_name)) = member_name {
             match structure {
                 Value::Indirect { pointer, loaded_format } => match &loaded_format {
-                    Format::Identified { type_name, .. } => match self.get_definition_format(type_name)? {
+                    Format::Identified { type_name, .. } => match self.get_type_definition_format(type_name)? {
                         Format::Structure { members, .. } => {
                             let semantics = pointer.format().pointer_semantics().unwrap();
                             let member_index = members.iter().position(|(name, _)| name == member_name)
@@ -1220,7 +1295,7 @@ impl<W: Write> Generator<W> {
                             self.emitter.emit_get_element_pointer(
                                 &member_pointer,
                                 &loaded_format,
-                                pointer.as_ref(),
+                                &pointer,
                                 indices,
                             )?;
 
@@ -1347,7 +1422,7 @@ impl<W: Write> Generator<W> {
                 Constant::ZeroInitializer(format.clone())
             };
 
-            if self.symbol_table.find(name).is_some() {
+            if self.symbol_table.find(name, None).is_some() {
                 return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.into() }));
             }
 
@@ -1389,7 +1464,7 @@ impl<W: Write> Generator<W> {
         else {
             let constant = self.generate_constant_node(value, context, Some(format.clone()))?;
 
-            if self.symbol_table.find(name).is_some() {
+            if self.symbol_table.find(name, None).is_some() {
                 return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.into() }));
             }
 
@@ -1410,11 +1485,11 @@ impl<W: Write> Generator<W> {
 
         let new_signature = FunctionSignature::new(return_format.clone(), parameter_formats.clone(), is_varargs);
 
-        if let Some(previous_symbol) = self.symbol_table.find(name) {
+        if let Some(old_symbol) = self.symbol_table.find(name, None) {
             // Ensure the new declaration doesn't conflict with the existing symbol
-            if let Some((_, old_signature, _already_defined)) = previous_symbol.function_value() {
-                if &new_signature != old_signature {
-                    return Err(Box::new(crate::Error::FunctionSignatureConflict { function_name: name.into(), old_type: old_signature.rich_name(), new_type: new_signature.rich_name() }));
+            if let Some(old_symbol) = old_symbol.function_value() {
+                if &new_signature != old_symbol.signature() {
+                    return Err(Box::new(crate::Error::FunctionSignatureConflict { function_name: name.into(), old_type: old_symbol.signature().rich_name(), new_type: new_signature.rich_name() }));
                 }
             }
             else {
@@ -1432,13 +1507,20 @@ impl<W: Write> Generator<W> {
         Ok(Value::Void)
     }
 
+    fn clear_local_context(&mut self) {
+        self.symbol_table.clear_locals();
+
+        self.next_anonymous_register_id = 0;
+        self.next_block_id = 0;
+    }
+
     fn generate_function_definition(&mut self, name: &str, parameters: &[ast::FunctionParameter], is_varargs: bool, return_type: &ast::TypeNode, body: &ast::Node, context: &ScopeContext) -> crate::Result<Value> {
         let return_format = self.get_format_from_node(return_type, false)?;
         let parameter_formats: Vec<Format> = Result::from_iter(parameters.iter().map(|ast::FunctionParameter { type_node, .. }| {
             self.get_format_from_node(type_node, false)
         }))?;
 
-        let function_context = context.clone().enter_function(name.into(), return_format.clone());
+        let function_context = context.enter_function(self.symbol_table.current_scope(), name.into(), return_format.clone());
 
         let parameter_handles: Vec<(Register, Symbol, Register)> = parameters.iter()
             .zip(parameter_formats.iter())
@@ -1453,13 +1535,13 @@ impl<W: Write> Generator<W> {
 
         let new_signature = FunctionSignature::new(return_format.clone(), parameter_formats.clone(), is_varargs);
 
-        if let Some(previous_symbol) = self.symbol_table.find(name) {
+        if let Some(old_symbol) = self.symbol_table.find(name, None) {
             // Ensure the new definition doesn't conflict with the existing symbol
-            if let Some((_, old_signature, already_defined)) = previous_symbol.function_value() {
-                if &new_signature != old_signature {
-                    return Err(Box::new(crate::Error::FunctionSignatureConflict { function_name: name.into(), old_type: old_signature.rich_name(), new_type: new_signature.rich_name() }));
+            if let Some(old_symbol) = old_symbol.function_value() {
+                if &new_signature != old_symbol.signature() {
+                    return Err(Box::new(crate::Error::FunctionSignatureConflict { function_name: name.into(), old_type: old_symbol.signature().rich_name(), new_type: new_signature.rich_name() }));
                 }
-                else if already_defined {
+                else if old_symbol.is_defined() {
                     return Err(Box::new(crate::Error::MultipleFunctionDefinition { function_name: name.into() }));
                 }
             }
@@ -1496,66 +1578,100 @@ impl<W: Write> Generator<W> {
             }
         }
 
-        self.symbol_table.clear_locals();
-        self.next_anonymous_register_id = 0;
-        self.next_block_id = 0;
-
         self.emitter.emit_function_exit()?;
+
+        self.clear_local_context();
 
         Ok(Value::Void)
     }
 
-    fn generate_structure_declaration(&mut self, name: &str, _context: &ScopeContext) -> crate::Result<Value> {
-        if let Some(previous_symbol) = self.symbol_table.find(name) {
-            if previous_symbol.type_value().is_some() {
-                Ok(Value::Void)
-            }
-            else {
-                return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.into() }));
+    fn generate_structure_declaration(&mut self, type_name: &str, _context: &ScopeContext) -> crate::Result<Value> {
+        if let Some(old_symbol) = self.symbol_table.find(type_name, None) {
+            if old_symbol.type_value().is_none() {
+                return Err(Box::new(crate::Error::GlobalSymbolConflict { name: type_name.into() }));
             }
         }
         else {
-            self.emitter.queue_type_declaration(&format!("type.{name}"));
+            let type_identifier = self.symbol_table.current_scope().get_member_identifier(type_name);
+            let identified_format = Format::Identified {
+                type_identifier: type_identifier.clone(),
+                type_name: type_name.into(),
+            };
 
-            let symbol = self.symbol_table.create_type_definition_symbol(name.into(), None);
+            self.emitter.queue_type_declaration(&identified_format);
+
+            let member_scope = self.symbol_table.create_inactive_scope(Some(type_identifier));
+
+            let symbol = self.symbol_table.create_type_symbol(type_name.into(), None, member_scope);
             self.symbol_table.insert(symbol);
-
-            Ok(Value::Void)
         }
+
+        Ok(Value::Void)
     }
 
-    fn generate_structure_definition(&mut self, name: &str, members: &[(String, ast::TypeNode)], _context: &ScopeContext) -> crate::Result<Value> {
-        if let Some(previous_symbol) = self.symbol_table.find(name) {
-            if let Some(definition_format) = previous_symbol.type_value() {
-                if definition_format.is_some() {
-                    return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.into() }));
+    fn generate_structure_definition(&mut self, type_name: &str, members: &[(String, ast::TypeNode)], _context: &ScopeContext) -> crate::Result<Value> {
+        let member_scope;
+        if let Some(old_symbol) = self.symbol_table.find(type_name, Some(self.symbol_table.current_scope())) {
+            if let Some(old_symbol) = old_symbol.type_value() {
+                if old_symbol.definition_format().is_none() {
+                    member_scope = old_symbol.member_scope().clone();
+                }
+                else {
+                    return Err(Box::new(crate::Error::GlobalSymbolConflict { name: type_name.into() }));
                 }
             }
             else {
-                return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.into() }));
+                return Err(Box::new(crate::Error::GlobalSymbolConflict { name: type_name.into() }));
             }
         }
+        else {
+            let type_identifier = self.symbol_table.current_scope().get_member_identifier(type_name);
+            member_scope = self.symbol_table.create_inactive_scope(Some(type_identifier));
 
-        // Declare the symbol beforehand to allow recursive structure definitions
-        let symbol = self.symbol_table.create_type_definition_symbol(name.into(), None);
-        self.symbol_table.insert(symbol);
+            // Declare the symbol beforehand to allow recursive structure definitions
+            let symbol = self.symbol_table.create_type_symbol(type_name.into(), None, member_scope.clone());
+            self.symbol_table.insert(symbol);
+        }
 
+        let type_identifier = member_scope.name()
+            .expect("member scope without a name");
+        let identified_format = Format::Identified {
+            type_identifier: type_identifier.into(),
+            type_name: type_name.into(),
+        };
         let members: Vec<(String, Format)> = crate::Result::from_iter(members.iter().map(|(member_name, member_type)| {
             let member_format = self.get_format_from_node(member_type, false)?;
             Ok((member_name.clone(), member_format))
         }))?;
-        
-        let identifier = format!("type.{name}");
         let structure_format = Format::Structure {
-            type_name: Some(name.into()),
+            type_name: Some(type_name.into()),
             members,
         };
 
-        self.emitter.emit_type_definition(&identifier, &structure_format)?;
+        self.emitter.emit_type_definition(&identified_format, &structure_format)?;
 
         // Redefine the symbol with the definition attached
-        let symbol = self.symbol_table.create_type_definition_symbol(name.into(), Some(structure_format));
+        let symbol = self.symbol_table.create_type_symbol(type_name.into(), Some(structure_format), member_scope);
         self.symbol_table.insert(symbol);
+
+        Ok(Value::Void)
+    }
+
+    fn generate_implement_block(&mut self, self_type: &ast::TypeNode, statements: &[Box<ast::Node>], context: &ScopeContext) -> crate::Result<Value> {
+        if let ast::TypeNode::Identified { type_name } = self_type {
+            let type_symbol = self.get_type_symbol(type_name)?;
+            let member_scope = type_symbol.member_scope().clone();
+            self.symbol_table.enter_scope(member_scope);
+
+            for statement in statements {
+                self.generate_node(statement, context, Some(Format::Void))?;
+            }
+
+            self.symbol_table.leave_scope();
+        }
+        else {
+            todo!("'implement' on arbitrary types")
+        }
 
         Ok(Value::Void)
     }
@@ -1585,14 +1701,11 @@ impl<W: Write> Generator<W> {
             ast::Node::Literal(literal) => {
                 match literal {
                     token::Literal::Identifier(name) => {
-                        let value = self.get_symbol(name)?.value()
-                            .ok_or_else(|| Box::new(crate::Error::NonValueSymbol { name: name.clone() }))?;
+                        let value = self.get_symbol(name)?.value();
 
-                        if let Value::Constant(constant) = value {
-                            constant.clone()
-                        }
-                        else {
-                            return Err(Box::new(crate::Error::NonConstantSymbol { name: name.clone() }));
+                        match value {
+                            Value::Constant(constant) => constant,
+                            _ => return Err(Box::new(crate::Error::NonConstantSymbol { name: name.clone() }))
                         }
                     },
                     token::Literal::Integer(value) => {
@@ -1616,7 +1729,7 @@ impl<W: Write> Generator<W> {
                     },
                 }
             },
-            ast::Node::Array { items } => {
+            ast::Node::ArrayLiteral { items } => {
                 if let Some(Format::Array { item_format, .. }) = &expected_format {
                     let items: Vec<Constant> = crate::Result::from_iter(items.iter().map(|item| {
                         let (item, mut constants) = self.fold_as_constant(item, constant_id, context, Some(item_format.as_ref().clone()))?;
@@ -1635,18 +1748,22 @@ impl<W: Write> Generator<W> {
                     return Err(Box::new(crate::Error::UnknownArrayType {}));
                 }
             },
-            ast::Node::Structure { type_name, members: initializer_members } => {
+            ast::Node::StructureLiteral { type_name, members: initializer_members } => {
                 let structure_format = match type_name.as_ref() {
                     ast::Node::Literal(token::Literal::Identifier(name)) => {
                         self.get_symbol(name)?.type_value()
                             .ok_or_else(|| Box::new(crate::Error::NonStructSymbol { name: name.clone() }))?
+                            .definition_format()
                             .ok_or_else(|| Box::new(crate::Error::PartialType { type_name: name.clone() }))?
                     },
                     _ => return Err(Box::new(crate::Error::InvalidStructIdentifier {}))
                 };
                 
                 if let Format::Structure { type_name: Some(type_name), members } = structure_format {
-                    let result_format = self.get_identified_format(type_name);
+                    let result_format = Format::Identified {
+                        type_identifier: self.get_type_identifier(type_name)?,
+                        type_name: type_name.clone(),
+                    };
 
                     let mut initializer_members = initializer_members.clone();
                     let mut missing_member_names = Vec::new();
@@ -1688,6 +1805,34 @@ impl<W: Write> Generator<W> {
                 }
             },
             ast::Node::Binary { operation, lhs, rhs } => match operation {
+                ast::BinaryOperation::Subscript => {
+                    let (value, mut constants) = self.fold_subscript_operation(lhs, rhs, constant_id, context)?;
+                    intermediate_constants.append(&mut constants);
+
+                    value
+                },
+                ast::BinaryOperation::StaticAccess => {
+                    let (containing_scope, mut constants) = self.fold_as_constant(lhs, constant_id, context, Some(Format::Scope))?;
+                    intermediate_constants.append(&mut constants);
+
+                    let containing_scope = match containing_scope {
+                        Constant::Scope(scope) => scope,
+                        _ => return Err(Box::new(crate::Error::InvalidStaticAccess {}))
+                    };
+                    let member_name = match rhs.as_ref() {
+                        ast::Node::Literal(token::Literal::Identifier(name)) => name,
+                        _ => return Err(Box::new(crate::Error::InvalidStaticAccess {}))
+                    };
+
+                    let member_value = self.symbol_table.find(member_name, Some(&containing_scope))
+                        .ok_or_else(|| Box::new(crate::Error::UndefinedSymbol { name: member_name.clone() }))?
+                        .value();
+
+                    match member_value {
+                        Value::Constant(constant) => constant,
+                        _ => return Err(Box::new(crate::Error::UnsupportedConstantExpression {}))
+                    }
+                },
                 ast::BinaryOperation::Convert => {
                     if let ast::Node::Type(type_node) = rhs.as_ref() {
                         let (value, mut constants) = self.fold_as_constant(lhs, constant_id, context, None)?;
@@ -1706,14 +1851,9 @@ impl<W: Write> Generator<W> {
                         }
                     }
                     else {
+                        // If parsing rules are followed, this should not occur
                         panic!("non-type rhs for 'as'");
                     }
-                },
-                ast::BinaryOperation::Subscript => {
-                    let (value, mut constants) = self.fold_subscript_operation(lhs, rhs, constant_id, context)?;
-                    intermediate_constants.append(&mut constants);
-
-                    value
                 },
                 _ => {
                     return Err(Box::new(crate::Error::UnsupportedConstantExpression {}));
@@ -1731,18 +1871,5 @@ impl<W: Write> Generator<W> {
         else {
             Ok((constant, intermediate_constants))
         }
-    }
-
-    pub fn generate<T: BufRead>(mut self, parser: &mut ast::parse::Parser<T>, filenames: &[String]) -> crate::Result<()> {
-        let module_id = parser.file_id();
-        let global_context = ScopeContext::new();
-
-        self.emitter.emit_preamble(module_id, &filenames[module_id])?;
-
-        while let Some(statement) = parser.parse_statement(true, true)? {
-            self.generate_node(statement.as_ref(), &global_context, None)?;
-        }
-
-        self.emitter.emit_postamble()
     }
 }

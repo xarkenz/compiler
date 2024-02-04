@@ -254,6 +254,8 @@ pub enum Error {
     },
     UnsupportedConstantExpression {
     },
+    InvalidStaticAccess {
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Box<Error>>;
@@ -380,7 +382,8 @@ impl fmt::Display for Error {
             },
             Self::MultipleFunctionDefinition { function_name } => write!(f, "multiple definitions exist for function '{function_name}'"),
             Self::MissingReturnStatement { function_name } => write!(f, "non-void function '{function_name}' could finish without returning a value"),
-            Self::UnsupportedConstantExpression {} => write!(f, "unsupported feature in constant expression")
+            Self::UnsupportedConstantExpression {} => write!(f, "unsupported feature in constant expression"),
+            Self::InvalidStaticAccess {} => write!(f, "invalid operands for '::'"),
         }
     }
 }

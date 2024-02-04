@@ -125,6 +125,7 @@ impl UnaryOperation {
 pub enum BinaryOperation {
     Subscript,
     Access,
+    StaticAccess,
     Convert,
     Multiply,
     Divide,
@@ -160,7 +161,7 @@ pub enum BinaryOperation {
 impl BinaryOperation {
     pub fn precedence(&self) -> Precedence {
         match self {
-            Self::Subscript | Self::Access => Precedence::Postfix,
+            Self::Subscript | Self::Access | Self::StaticAccess => Precedence::Postfix,
             Self::Convert => Precedence::Conversion,
             Self::Multiply | Self::Divide | Self::Remainder => Precedence::Multiplicative,
             Self::Add | Self::Subtract => Precedence::Additive,
@@ -206,6 +207,7 @@ impl BinaryOperation {
             Token::Equal => Some(Self::Assign),
             Token::Equal2 => Some(Self::Equal),
             Token::Dot => Some(Self::Access),
+            Token::Colon2 => Some(Self::StaticAccess),
             Token::SquareLeft => Some(Self::Subscript),
             Token::AngleLeft => Some(Self::LessThan),
             Token::AngleLeftEqual => Some(Self::LessEqual),
@@ -224,6 +226,7 @@ impl BinaryOperation {
         match self {
             Self::Subscript => format!("{lhs}[{rhs}]"),
             Self::Access => format!("{lhs}.{rhs}"),
+            Self::StaticAccess => format!("{lhs}::{rhs}"),
             Self::Convert => format!("{lhs} as {rhs}"),
             Self::Multiply => format!("{lhs} * {rhs}"),
             Self::Divide => format!("{lhs} / {rhs}"),
@@ -258,28 +261,6 @@ impl BinaryOperation {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Operation {
-    Unary(UnaryOperation),
-    Binary(BinaryOperation),
-}
-
-impl Operation {
-    pub fn precedence(&self) -> Precedence {
-        match self {
-            Self::Unary(unary) => unary.precedence(),
-            Self::Binary(binary) => binary.precedence(),
-        }
-    }
-
-    pub fn associativity(&self) -> Associativity {
-        match self {
-            Self::Unary(unary) => unary.associativity(),
-            Self::Binary(binary) => binary.associativity(),
-        }
-    }
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PointerSemantics {
     Immutable,
@@ -287,10 +268,22 @@ pub enum PointerSemantics {
     Owned,
 }
 
+impl PointerSemantics {
+    pub fn simple(is_mutable: bool) -> Self {
+        if is_mutable {
+            Self::Mutable
+        }
+        else {
+            Self::Immutable
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum TypeNode {
     Identified {
-        name: String,
+        // TODO: scoped names (e.g. thinga::thingb::Type)
+        type_name: String,
     },
     Pointer {
         pointee_type: Box<TypeNode>,
@@ -305,8 +298,8 @@ pub enum TypeNode {
 impl std::fmt::Display for TypeNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Identified { name } => {
-                write!(f, "{name}")
+            Self::Identified { type_name } => {
+                write!(f, "{type_name}")
             },
             Self::Pointer { pointee_type, semantics } => match semantics {
                 PointerSemantics::Immutable => write!(f, "*{pointee_type}"),
@@ -347,10 +340,10 @@ pub enum Node {
         callee: Box<Node>,
         arguments: Vec<Box<Node>>,
     },
-    Array {
+    ArrayLiteral {
         items: Vec<Box<Node>>,
     },
-    Structure {
+    StructureLiteral {
         type_name: Box<Node>,
         members: Vec<(String, Box<Node>)>,
     },
@@ -389,9 +382,13 @@ pub enum Node {
         return_type: TypeNode,
         body: Option<Box<Node>>,
     },
-    StructureDefinition {
+    Structure {
         name: String,
         members: Option<Vec<(String, TypeNode)>>,
+    },
+    Implement {
+        self_type: TypeNode,
+        statements: Vec<Box<Node>>,
     },
 }
 
@@ -421,7 +418,7 @@ impl fmt::Display for Node {
                 }
                 write!(f, "))")
             },
-            Self::Array { items } => {
+            Self::ArrayLiteral { items } => {
                 write!(f, "[")?;
                 let mut items_iter = items.iter();
                 if let Some(item) = items_iter.next() {
@@ -432,7 +429,7 @@ impl fmt::Display for Node {
                 }
                 write!(f, "]")
             },
-            Self::Structure { type_name, members } => {
+            Self::StructureLiteral { type_name, members } => {
                 write!(f, "({type_name} {{")?;
                 let mut members_iter = members.iter();
                 if let Some((member_name, member_value)) = members_iter.next() {
@@ -522,7 +519,7 @@ impl fmt::Display for Node {
                     write!(f, ") -> {return_type};")
                 }
             },
-            Self::StructureDefinition { name, members } => {
+            Self::Structure { name, members } => {
                 if let Some(members) = members {
                     write!(f, " struct {name} {{")?;
                     let mut members_iter = members.iter();
@@ -538,6 +535,13 @@ impl fmt::Display for Node {
                 else {
                     write!(f, " struct {name};")
                 }
+            },
+            Self::Implement { self_type, statements } => {
+                write!(f, " implement {self_type} {{")?;
+                for statement in statements {
+                    write!(f, "{statement}")?;
+                }
+                write!(f, " }}")
             },
         }
     }

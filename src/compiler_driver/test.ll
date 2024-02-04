@@ -1,7 +1,7 @@
 ; module_id = 0
 source_filename = "./src/compiler_driver/test.txt"
 
-define dso_local void @u8_swap(i8* noundef %.arg.self, i8* noundef %.arg.other) {
+define dso_local void @"u8::swap"(i8* noundef %.arg.self, i8* noundef %.arg.other) {
 .block.0:
 	%self = alloca i8*
 	store i8* %.arg.self, i8** %self
@@ -21,7 +21,7 @@ define dso_local void @u8_swap(i8* noundef %.arg.self, i8* noundef %.arg.other) 
 	ret void
 }
 
-define dso_local i64 @u64_max(i64 noundef %.arg.self, i64 noundef %.arg.other) {
+define dso_local i64 @"u64::max"(i64 noundef %.arg.self, i64 noundef %.arg.other) {
 .block.0:
 	%self = alloca i64
 	store i64 %.arg.self, i64* %self
@@ -47,12 +47,12 @@ define dso_local i64 @u64_max(i64 noundef %.arg.self, i64 noundef %.arg.other) {
 
 %type.String = type { %type.OwnStr, i64 }
 
-define dso_local %type.String @String_new() {
+define dso_local %type.String @"String::new"() {
 .block.0:
 	ret %type.String { %type.OwnStr { i8* null, i64 0 }, i64 0 }
 }
 
-define dso_local void @String_del(%type.String noundef %.arg.self) {
+define dso_local void @"String::del"(%type.String noundef %.arg.self) {
 .block.0:
 	%self = alloca %type.String
 	store %type.String %.arg.self, %type.String* %self
@@ -64,7 +64,7 @@ define dso_local void @String_del(%type.String noundef %.arg.self) {
 	ret void
 }
 
-define dso_local %type.Str @String_as_str(%type.String* noundef %.arg.self) {
+define dso_local %type.Str @"String::as_str"(%type.String* noundef %.arg.self) {
 .block.0:
 	%self = alloca %type.String*
 	store %type.String* %.arg.self, %type.String** %self
@@ -86,7 +86,7 @@ define dso_local %type.Str @String_as_str(%type.String* noundef %.arg.self) {
 	ret %type.Str %11
 }
 
-define dso_local void @String_grow_by(%type.String* noundef %.arg.self, i64 noundef %.arg.additional) {
+define dso_local void @"String::grow_by"(%type.String* noundef %.arg.self, i64 noundef %.arg.additional) {
 .block.0:
 	%self = alloca %type.String*
 	store %type.String* %.arg.self, %type.String** %self
@@ -105,7 +105,7 @@ define dso_local void @String_grow_by(%type.String* noundef %.arg.self, i64 noun
 	%7 = load i64, i64* %6
 	%8 = mul nuw i64 %7, 2
 	%9 = load i64, i64* %required_capacity
-	%10 = call i64(i64, i64) @u64_max(i64 noundef %8, i64 noundef %9)
+	%10 = call i64(i64, i64) @"u64::max"(i64 noundef %8, i64 noundef %9)
 	store i64 %10, i64* %capacity
 	%ptr = alloca i8*
 	%11 = load i64, i64* %capacity
@@ -143,7 +143,7 @@ define dso_local void @String_grow_by(%type.String* noundef %.arg.self, i64 noun
 	ret void
 }
 
-define dso_local void @String_push(%type.String* noundef %.arg.self, i8 noundef %.arg.ch) {
+define dso_local void @"String::push"(%type.String* noundef %.arg.self, i8 noundef %.arg.ch) {
 .block.0:
 	%self = alloca %type.String*
 	store %type.String* %.arg.self, %type.String** %self
@@ -160,7 +160,7 @@ define dso_local void @String_push(%type.String* noundef %.arg.self, i8 noundef 
 	br i1 %7, label %.block.1, label %.block.2
 .block.1:
 	%8 = load %type.String*, %type.String** %self
-	call void(%type.String*, i64) @String_grow_by(%type.String* noundef %8, i64 noundef 1)
+	call void(%type.String*, i64) @"String::grow_by"(%type.String* noundef %8, i64 noundef 1)
 	br label %.block.2
 .block.2:
 	%9 = load %type.String*, %type.String** %self
@@ -183,7 +183,7 @@ define dso_local void @String_push(%type.String* noundef %.arg.self, i8 noundef 
 	ret void
 }
 
-define dso_local void @String_insert(%type.String* noundef %.arg.self, i64 noundef %.arg.index, i8 noundef %.arg.ch) {
+define dso_local void @"String::insert"(%type.String* noundef %.arg.self, i64 noundef %.arg.index, i8 noundef %.arg.ch) {
 .block.0:
 	%self = alloca %type.String*
 	store %type.String* %.arg.self, %type.String** %self
@@ -202,7 +202,7 @@ define dso_local void @String_insert(%type.String* noundef %.arg.self, i64 nound
 	br i1 %7, label %.block.1, label %.block.2
 .block.1:
 	%8 = load %type.String*, %type.String** %self
-	call void(%type.String*, i64) @String_grow_by(%type.String* noundef %8, i64 noundef 1)
+	call void(%type.String*, i64) @"String::grow_by"(%type.String* noundef %8, i64 noundef 1)
 	br label %.block.2
 .block.2:
 	br label %.block.3
@@ -221,7 +221,7 @@ define dso_local void @String_insert(%type.String* noundef %.arg.self, i64 nound
 	%18 = load i64, i64* %index
 	%19 = load i8*, i8** %17
 	%20 = getelementptr inbounds i8, i8* %19, i64 %18
-	call void(i8*, i8*) @u8_swap(i8* noundef %ch, i8* noundef %20)
+	call void(i8*, i8*) @"u8::swap"(i8* noundef %ch, i8* noundef %20)
 	%21 = load i64, i64* %index
 	%22 = add nuw i64 %21, 1
 	store i64 %22, i64* %index
@@ -523,18 +523,18 @@ define dso_local void @student_stuff() {
 @.const.8 = private unnamed_addr constant [9 x i8] c"Age: %u\0A\00"
 @.const.9 = private unnamed_addr constant [24 x i8] c"Grades: %u, %u, %u, %u\0A\00"
 
-define dso_local %type.String @i64_to_string(i64 noundef %.arg.self) {
+define dso_local %type.String @"i64::to_string"(i64 noundef %.arg.self) {
 .block.0:
 	%self = alloca i64
 	store i64 %.arg.self, i64* %self
 	%string = alloca %type.String
-	%0 = call %type.String() @String_new()
+	%0 = call %type.String() @"String::new"()
 	store %type.String %0, %type.String* %string
 	%1 = load i64, i64* %self
 	%2 = icmp eq i64 %1, 0
 	br i1 %2, label %.block.1, label %.block.2
 .block.1:
-	call void(%type.String*, i8) @String_push(%type.String* noundef %string, i8 noundef 48)
+	call void(%type.String*, i8) @"String::push"(%type.String* noundef %string, i8 noundef 48)
 	br label %.block.3
 .block.2:
 	%is_negative = alloca i1
@@ -559,7 +559,7 @@ define dso_local %type.String @i64_to_string(i64 noundef %.arg.self) {
 	%11 = srem i64 %10, 10
 	%12 = trunc i64 %11 to i8
 	%13 = add nuw i8 %12, 48
-	call void(%type.String*, i64, i8) @String_insert(%type.String* noundef %string, i64 noundef 0, i8 noundef %13)
+	call void(%type.String*, i64, i8) @"String::insert"(%type.String* noundef %string, i64 noundef 0, i8 noundef %13)
 	%14 = load i64, i64* %self
 	%15 = sdiv i64 %14, 10
 	store i64 %15, i64* %self
@@ -568,7 +568,7 @@ define dso_local %type.String @i64_to_string(i64 noundef %.arg.self) {
 	%16 = load i1, i1* %is_negative
 	br i1 %16, label %.block.9, label %.block.10
 .block.9:
-	call void(%type.String*, i64, i8) @String_insert(%type.String* noundef %string, i64 noundef 0, i8 noundef 45)
+	call void(%type.String*, i64, i8) @"String::insert"(%type.String* noundef %string, i64 noundef 0, i8 noundef 45)
 	br label %.block.10
 .block.10:
 	br label %.block.3
@@ -586,40 +586,40 @@ define dso_local i32 @main() {
 	%0 = bitcast [4 x i8*]* %values to i8**
 	call void(i8**, i64) @omg_linked_list(i8** noundef %0, i64 noundef 4)
 	%string = alloca %type.String
-	%1 = call %type.String() @String_new()
+	%1 = call %type.String() @"String::new"()
 	store %type.String %1, %type.String* %string
-	call void(%type.String*, i8) @String_push(%type.String* noundef %string, i8 noundef 72)
-	call void(%type.String*, i8) @String_push(%type.String* noundef %string, i8 noundef 101)
-	call void(%type.String*, i8) @String_push(%type.String* noundef %string, i8 noundef 108)
-	call void(%type.String*, i8) @String_push(%type.String* noundef %string, i8 noundef 108)
-	call void(%type.String*, i8) @String_push(%type.String* noundef %string, i8 noundef 111)
-	call void(%type.String*, i8) @String_push(%type.String* noundef %string, i8 noundef 32)
-	call void(%type.String*, i8) @String_push(%type.String* noundef %string, i8 noundef 119)
-	call void(%type.String*, i8) @String_push(%type.String* noundef %string, i8 noundef 111)
-	call void(%type.String*, i8) @String_push(%type.String* noundef %string, i8 noundef 114)
-	call void(%type.String*, i8) @String_push(%type.String* noundef %string, i8 noundef 108)
-	call void(%type.String*, i8) @String_push(%type.String* noundef %string, i8 noundef 100)
-	call void(%type.String*, i8) @String_push(%type.String* noundef %string, i8 noundef 33)
-	call void(%type.String*, i8) @String_push(%type.String* noundef %string, i8 noundef 0)
+	call void(%type.String*, i8) @"String::push"(%type.String* noundef %string, i8 noundef 72)
+	call void(%type.String*, i8) @"String::push"(%type.String* noundef %string, i8 noundef 101)
+	call void(%type.String*, i8) @"String::push"(%type.String* noundef %string, i8 noundef 108)
+	call void(%type.String*, i8) @"String::push"(%type.String* noundef %string, i8 noundef 108)
+	call void(%type.String*, i8) @"String::push"(%type.String* noundef %string, i8 noundef 111)
+	call void(%type.String*, i8) @"String::push"(%type.String* noundef %string, i8 noundef 32)
+	call void(%type.String*, i8) @"String::push"(%type.String* noundef %string, i8 noundef 119)
+	call void(%type.String*, i8) @"String::push"(%type.String* noundef %string, i8 noundef 111)
+	call void(%type.String*, i8) @"String::push"(%type.String* noundef %string, i8 noundef 114)
+	call void(%type.String*, i8) @"String::push"(%type.String* noundef %string, i8 noundef 108)
+	call void(%type.String*, i8) @"String::push"(%type.String* noundef %string, i8 noundef 100)
+	call void(%type.String*, i8) @"String::push"(%type.String* noundef %string, i8 noundef 33)
+	call void(%type.String*, i8) @"String::push"(%type.String* noundef %string, i8 noundef 0)
 	%str = alloca %type.Str
-	%2 = call %type.Str(%type.String*) @String_as_str(%type.String* noundef %string)
+	%2 = call %type.Str(%type.String*) @"String::as_str"(%type.String* noundef %string)
 	store %type.Str %2, %type.Str* %str
 	%3 = getelementptr inbounds %type.Str, %type.Str* %str, i32 0, i32 0
 	%4 = load i8*, i8** %3
 	%5 = call i32(i8*, ...) @printf(i8* noundef bitcast ([4 x i8]* @.const.14 to i8*), i8* noundef %4)
 	%6 = load %type.String, %type.String* %string
-	call void(%type.String) @String_del(%type.String noundef %6)
+	call void(%type.String) @"String::del"(%type.String noundef %6)
 	%number_string = alloca %type.String
 	%7 = sub nsw i64 0, 12345
-	%8 = call %type.String(i64) @i64_to_string(i64 noundef %7)
+	%8 = call %type.String(i64) @"i64::to_string"(i64 noundef %7)
 	store %type.String %8, %type.String* %number_string
-	call void(%type.String*, i8) @String_push(%type.String* noundef %number_string, i8 noundef 0)
+	call void(%type.String*, i8) @"String::push"(%type.String* noundef %number_string, i8 noundef 0)
 	%9 = getelementptr inbounds %type.String, %type.String* %number_string, i32 0, i32 0
 	%10 = getelementptr inbounds %type.OwnStr, %type.OwnStr* %9, i32 0, i32 0
 	%11 = load i8*, i8** %10
-	%12 = call i32(i8*, ...) @printf(i8* noundef bitcast ([21 x i8]* @.const.15 to i8*), i8* noundef %11)
+	%12 = call i32(i8*, ...) @printf(i8* noundef bitcast ([22 x i8]* @.const.15 to i8*), i8* noundef %11)
 	%13 = load %type.String, %type.String* %number_string
-	call void(%type.String) @String_del(%type.String noundef %13)
+	call void(%type.String) @"String::del"(%type.String noundef %13)
 	ret i32 0
 }
 
@@ -628,7 +628,7 @@ define dso_local i32 @main() {
 @.const.12 = private unnamed_addr constant [8 x i8] c"Value 3\00"
 @.const.13 = private unnamed_addr constant [8 x i8] c"Value 4\00"
 @.const.14 = private unnamed_addr constant [4 x i8] c"%s\0A\00"
-@.const.15 = private unnamed_addr constant [21 x i8] c"i64_to_string: \22%s\22\0A\00"
+@.const.15 = private unnamed_addr constant [22 x i8] c"i64::to_string: \22%s\22\0A\00"
 
 %type.CFile = type opaque
 

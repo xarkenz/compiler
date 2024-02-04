@@ -4,6 +4,19 @@ use std::fmt;
 
 pub use crate::ast::PointerSemantics;
 
+fn quote_identifier_if_needed(mut identifier: String) -> String {
+    let needs_quotes = identifier.contains(|ch| !(matches!(ch,
+        '0'..='9' | 'A'..='Z' | 'a'..='z' | '-' | '_' | '.' | '$'
+    )));
+
+    if needs_quotes {
+        identifier.insert(0, '"');
+        identifier.push('"');
+    }
+
+    identifier
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct FunctionSignature {
     return_format: Format,
@@ -93,12 +106,13 @@ pub enum Format {
         members: Vec<(String, Format)>,
     },
     Identified {
-        identifier: String,
+        type_identifier: String,
         type_name: String,
     },
     Function {
         signature: Box<FunctionSignature>,
     },
+    Scope,
 }
 
 impl Format {
@@ -147,9 +161,13 @@ impl Format {
                 Some(padded_size)
             },
             Self::Identified { type_name, .. } => {
-                symbol_table.find(type_name)?.type_value()??.size(symbol_table)
+                symbol_table.find(type_name, None)?
+                    .type_value()?
+                    .definition_format()?
+                    .size(symbol_table)
             },
             Self::Function { .. } => None,
+            Self::Scope => None,
         }
     }
 
@@ -167,9 +185,13 @@ impl Format {
                     .max()
             },
             Self::Identified { type_name, .. } => {
-                symbol_table.find(type_name)?.type_value()??.alignment(symbol_table)
+                symbol_table.find(type_name, None)?
+                    .type_value()?
+                    .definition_format()?
+                    .alignment(symbol_table)
             },
             Self::Function { .. } => None,
+            Self::Scope => None,
         }
     }
 
@@ -275,6 +297,9 @@ impl Format {
             Self::Function { signature } => {
                 signature.rich_name()
             },
+            Self::Scope => {
+                "{scope}".into()
+            },
         }
     }
 }
@@ -317,11 +342,15 @@ impl fmt::Display for Format {
                 }
                 write!(f, "}}")
             },
-            Self::Identified { identifier, .. } => {
+            Self::Identified { type_identifier, .. } => {
+                let identifier = quote_identifier_if_needed(format!("type.{type_identifier}"));
                 write!(f, "%{identifier}")
             },
             Self::Function { signature } => {
                 write!(f, "{signature}")
+            },
+            Self::Scope => {
+                write!(f, "<ERROR scope format>")
             },
         }
     }
@@ -408,30 +437,30 @@ impl fmt::Display for IntegerValue {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Register {
-    name: String,
+    identifier: String,
     format: Format,
     is_global: bool,
 }
 
 impl Register {
-    pub fn new_global(name: String, format: Format) -> Self {
+    pub fn new_global(identifier: String, format: Format) -> Self {
         Self {
-            name,
+            identifier: quote_identifier_if_needed(identifier),
             format,
             is_global: true,
         }
     }
 
-    pub fn new_local(name: String, format: Format) -> Self {
+    pub fn new_local(identifier: String, format: Format) -> Self {
         Self {
-            name,
+            identifier: quote_identifier_if_needed(identifier),
             format,
             is_global: false,
         }
     }
 
-    pub fn name(&self) -> &str {
-        self.name.as_str()
+    pub fn identifier(&self) -> &str {
+        self.identifier.as_str()
     }
 
     pub fn format(&self) -> &Format {
@@ -445,7 +474,7 @@ impl Register {
 
 impl PartialOrd for Register {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.name().partial_cmp(other.name())
+        self.identifier().partial_cmp(other.identifier())
     }
 }
 
@@ -458,10 +487,10 @@ impl Ord for Register {
 impl fmt::Display for Register {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_global() {
-            write!(f, "@{}", self.name)
+            write!(f, "@{}", self.identifier)
         }
         else {
-            write!(f, "%{}", self.name)
+            write!(f, "%{}", self.identifier)
         }
     }
 }
@@ -499,6 +528,7 @@ pub enum Constant {
         indices: Vec<Constant>,
         semantics: PointerSemantics,
     },
+    Scope(Scope),
 }
 
 impl Constant {
@@ -523,6 +553,7 @@ impl Constant {
             Self::Indirect { loaded_format, .. } => loaded_format.clone(),
             Self::BitwiseCast { to_format, .. } => to_format.clone(),
             Self::GetElementPointer { element_format, semantics, .. } => element_format.clone().into_pointer(*semantics),
+            Self::Scope(_) => Format::Scope,
         }
     }
 }
@@ -573,6 +604,7 @@ impl fmt::Display for Constant {
                 }
                 write!(f, ")")
             },
+            Self::Scope(_) => write!(f, "<ERROR scope constant>"),
         }
     }
 }
@@ -609,7 +641,6 @@ impl Value {
                     Ok((*pointer, loaded_format))
                 }
                 else {
-                    println!("{} {pointer} -> {}", pointer.format().rich_name(), loaded_format.rich_name());
                     Err(Box::new(crate::Error::CannotMutateValue { type_name: loaded_format.rich_name() }))
                 }
             },
@@ -655,38 +686,103 @@ impl fmt::Display for Label {
     }
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, Debug)]
 pub struct Scope {
     id: usize,
+    name: Option<String>,
 }
 
 impl Scope {
     pub fn id(&self) -> usize {
         self.id
     }
+
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    pub fn get_member_identifier(&self, member_name: &str) -> String {
+        let mut member_identifier = self.name()
+            .map_or_else(String::new, |name| format!("{name}::"));
+        member_identifier.push_str(member_name);
+        
+        member_identifier
+    }
 }
 
-#[derive(Clone, PartialEq, Debug)]
+impl PartialEq for Scope {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FunctionSymbol {
+    register: Register,
+    signature: FunctionSignature,
+    is_defined: bool,
+}
+
+impl FunctionSymbol {
+    pub fn register(&self) -> &Register {
+        &self.register
+    }
+
+    pub fn signature(&self) -> &FunctionSignature {
+        &self.signature
+    }
+
+    pub fn is_defined(&self) -> bool {
+        self.is_defined
+    }
+
+    pub fn value(&self) -> Value {
+        Value::Constant(Constant::Register(self.register.clone()))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TypeSymbol {
+    definition_format: Option<Format>,
+    member_scope: Scope,
+}
+
+impl TypeSymbol {
+    pub fn definition_format(&self) -> Option<&Format> {
+        self.definition_format.as_ref()
+    }
+
+    pub fn member_scope(&self) -> &Scope {
+        &self.member_scope
+    }
+
+    pub fn value(&self) -> Value {
+        Value::Constant(Constant::Scope(self.member_scope.clone()))
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum Symbol {
     Global {
         name: String,
+        scope: Scope,
         value: Value,
     },
     Local {
         name: String,
-        value: Value,
         scope: Scope,
+        value: Value,
         version: usize,
     },
     Function {
         name: String,
-        register: Register,
-        signature: FunctionSignature,
-        is_defined: bool,
+        scope: Scope,
+        content: FunctionSymbol,
     },
     Type {
         name: String,
-        format: Option<Format>,
+        scope: Scope,
+        content: TypeSymbol,
     },
 }
 
@@ -700,25 +796,34 @@ impl Symbol {
         }
     }
 
-    pub fn value(&self) -> Option<Value> {
+    pub fn scope(&self) -> &Scope {
         match self {
-            Self::Global { value, .. } => Some(value.clone()),
-            Self::Local { value, .. } => Some(value.clone()),
-            Self::Function { register, .. } => Some(Value::Register(register.clone())),
+            Self::Global { scope, .. } => scope,
+            Self::Local { scope, .. } => scope,
+            Self::Function { scope, .. } => scope,
+            Self::Type { scope, .. } => scope,
+        }
+    }
+
+    pub fn value(&self) -> Value {
+        match self {
+            Self::Global { value, .. } => value.clone(),
+            Self::Local { value, .. } => value.clone(),
+            Self::Function { content, .. } => content.value(),
+            Self::Type { content, .. } => content.value(),
+        }
+    }
+
+    pub fn function_value(&self) -> Option<&FunctionSymbol> {
+        match self {
+            Self::Function { content, .. } => Some(content),
             _ => None
         }
     }
 
-    pub fn function_value(&self) -> Option<(&Register, &FunctionSignature, bool)> {
+    pub fn type_value(&self) -> Option<&TypeSymbol> {
         match self {
-            Self::Function { register, signature, is_defined, .. } => Some((register, signature, *is_defined)),
-            _ => None
-        }
-    }
-
-    pub fn type_value(&self) -> Option<Option<&Format>> {
-        match self {
-            Self::Type { format, .. } => Some(format.as_ref()),
+            Self::Type { content, .. } => Some(content),
             _ => None
         }
     }
@@ -741,9 +846,15 @@ impl SymbolTable {
     pub fn new(capacity: usize) -> Self {
         let mut hash_table_bins = Vec::new();
         hash_table_bins.resize_with(capacity, || None);
+
+        let outermost_scope = Scope {
+            id: 0,
+            name: None,
+        };
+
         Self {
             hash_table_buckets: hash_table_bins,
-            active_scopes: vec![Scope { id: 0 }],
+            active_scopes: vec![outermost_scope],
             next_scope_id: 1,
         }
     }
@@ -756,10 +867,23 @@ impl SymbolTable {
         self.active_scopes.last().unwrap()
     }
 
-    pub fn enter_scope(&mut self) {
+    pub fn create_inactive_scope(&mut self, name: Option<String>) -> Scope {
         let id = self.next_scope_id;
         self.next_scope_id += 1;
-        self.active_scopes.push(Scope { id });
+
+        Scope {
+            id,
+            name,
+        }
+    }
+
+    pub fn enter_new_scope(&mut self) {
+        let new_scope = self.create_inactive_scope(None);
+        self.active_scopes.push(new_scope);
+    }
+
+    pub fn enter_scope(&mut self, scope: Scope) {
+        self.active_scopes.push(scope);
     }
 
     pub fn leave_scope(&mut self) {
@@ -767,7 +891,7 @@ impl SymbolTable {
             self.active_scopes.pop();
         }
         else {
-            // This is a programmer error and should never happen
+            // This should never occur other than in the case of programmer error
             panic!("attempted to leave outermost scope");
         }
     }
@@ -776,22 +900,22 @@ impl SymbolTable {
         self.active_scopes.contains(scope)
     }
 
-    pub fn find(&self, name: &str) -> Option<&Symbol> {
+    pub fn find(&self, name: &str, in_scope: Option<&Scope>) -> Option<&Symbol> {
         let index = self.hash_index(name);
 
-        self.find_in_bucket(index, name)
+        self.find_in_bucket(index, name, in_scope)
     }
 
-    pub fn find_mut(&mut self, name: &str) -> Option<&mut Symbol> {
+    pub fn find_mut(&mut self, name: &str, in_scope: Option<&Scope>) -> Option<&mut Symbol> {
         let index = self.hash_index(name);
 
-        self.find_in_bucket_mut(index, name)
+        self.find_in_bucket_mut(index, name, in_scope)
     }
 
     pub fn clear_locals(&mut self) {
         for mut current_node_link in self.hash_table_buckets.iter_mut() {
             // FIXME: preferably could avoid the .as_mut().unwrap() with pattern matching but the borrow checker is weird
-            // i opened a stackoverflow question about it so we'll see haha
+            // (As it turns out, the code with pattern matching compiles under the nightly Polonius feature... guess I'm waiting on that then)
             while current_node_link.is_some() {
                 if let Symbol::Local { .. } = current_node_link.as_ref().unwrap().symbol {
                     // Remove the node by replacing the link to the current node with the link to the next node
@@ -800,6 +924,7 @@ impl SymbolTable {
                     // current_node_link already points to the next node, so it doesn't need to be advanced
                 }
                 else {
+                    // Advance current_node_link to the next node
                     current_node_link = &mut current_node_link.as_mut().unwrap().next_node;
                 }
             }
@@ -813,48 +938,61 @@ impl SymbolTable {
             .map_or(0, |(_, _, version)| version + 1)
     }
 
-    pub fn create_function_symbol(&self, name: String, signature: FunctionSignature, is_defined: bool) -> (Symbol, Register) {
-        let register = Register {
-            name: name.clone(),
-            format: Format::Function {
-                signature: Box::new(signature.clone()),
-            },
-            is_global: true,
+    pub fn create_type_symbol(&self, name: String, definition_format: Option<Format>, member_scope: Scope) -> Symbol {
+        let scope = self.current_scope().clone();
+        let content = TypeSymbol {
+            definition_format,
+            member_scope,
         };
+
+        Symbol::Type {
+            name,
+            scope,
+            content,
+        }
+    }
+
+    pub fn create_function_symbol(&self, name: String, signature: FunctionSignature, is_defined: bool) -> (Symbol, Register) {
+        let scope = self.current_scope().clone();
+        let identifier = scope.get_member_identifier(&name);
+        let format = Format::Function {
+            signature: Box::new(signature.clone()),
+        };
+        let register = Register::new_global(
+            identifier,
+            format,
+        );
+        let content = FunctionSymbol {
+            register: register.clone(),
+            signature,
+            is_defined,
+        };
+
         let symbol = Symbol::Function {
             name,
-            register: register.clone(),
-            is_defined,
-            signature,
+            scope,
+            content,
         };
 
         (symbol, register)
     }
 
-    pub fn create_type_definition_symbol(&self, name: String, format: Option<Format>) -> Symbol {
-        Symbol::Type {
-            name,
-            format,
-        }
-    }
-
     pub fn create_global_indirect_symbol(&self, name: String, loaded_format: Format, is_mutable: bool) -> (Symbol, Register) {
-        let semantics = if is_mutable {
-            PointerSemantics::Mutable
-        } else {
-            PointerSemantics::Immutable
-        };
-        let pointer = Register {
-            name: name.clone(),
-            format: loaded_format.clone().into_pointer(semantics),
-            is_global: true,
-        };
+        let scope = self.current_scope().clone();
+        let identifier = scope.get_member_identifier(&name);
+        let semantics = PointerSemantics::simple(is_mutable);
+        let pointer = Register::new_global(
+            identifier,
+            loaded_format.clone().into_pointer(semantics),
+        );
         let value = Value::Indirect {
             pointer: Box::new(Value::Register(pointer.clone())),
             loaded_format,
         };
+
         let symbol = Symbol::Global {
             name,
+            scope,
             value,
         };
 
@@ -864,28 +1002,24 @@ impl SymbolTable {
     pub fn create_local_indirect_symbol(&self, name: String, loaded_format: Format, is_mutable: bool) -> (Symbol, Register) {
         let scope = self.current_scope().clone();
         let version = self.next_local_symbol_version(&name);
-        let qualified_name = match version {
+        let identifier = match version {
             0 => format!("{name}"),
             _ => format!("{name}-{version}"),
         };
-        let semantics = if is_mutable {
-            PointerSemantics::Mutable
-        } else {
-            PointerSemantics::Immutable
-        };
-        let pointer = Register {
-            name: qualified_name,
-            format: loaded_format.clone().into_pointer(semantics),
-            is_global: false,
-        };
+        let semantics = PointerSemantics::simple(is_mutable);
+        let pointer = Register::new_local(
+            identifier,
+            loaded_format.clone().into_pointer(semantics),
+        );
         let value = Value::Indirect {
             pointer: Box::new(Value::Register(pointer.clone())),
             loaded_format,
         };
+
         let symbol = Symbol::Local {
             name,
-            value,
             scope,
+            value,
             version,
         };
 
@@ -895,23 +1029,23 @@ impl SymbolTable {
     pub fn create_indirect_local_constant_symbol(&self, name: String, loaded_format: Format, function_name: &str) -> (Symbol, Register) {
         let scope = self.current_scope().clone();
         let version = self.next_local_symbol_version(&name);
-        let qualified_name = match version {
+        let identifier = match version {
             0 => format!("{function_name}.{name}"),
             _ => format!("{function_name}.{name}-{version}"),
         };
-        let pointer = Register {
-            name: qualified_name,
-            format: loaded_format.clone().into_pointer(PointerSemantics::Immutable),
-            is_global: true,
-        };
+        let pointer = Register::new_global(
+            identifier,
+            loaded_format.clone().into_pointer(PointerSemantics::Immutable),
+        );
         let value = Value::Indirect {
             pointer: Box::new(Value::Register(pointer.clone())),
             loaded_format,
         };
+
         let symbol = Symbol::Local {
             name,
-            value,
             scope,
+            value,
             version,
         };
 
@@ -944,12 +1078,13 @@ impl SymbolTable {
         hash as usize % self.capacity()
     }
 
-    fn find_in_bucket(&self, index: usize, name: &str) -> Option<&Symbol> {
+    fn find_in_bucket(&self, index: usize, name: &str, in_scope: Option<&Scope>) -> Option<&Symbol> {
         let mut next_node = self.hash_table_buckets.get(index)?.as_deref();
 
         while let Some(current_node) = next_node {
             if let Symbol::Local { name: symbol_name, scope, .. } = &current_node.symbol {
-                if symbol_name == name && self.active_scopes.contains(scope) {
+                // FIXME: probably need to do more than just self.active_scopes.contains() to ensure the retrieved symbol is from the *closest* scope
+                if symbol_name == name && in_scope.map_or_else(|| self.active_scopes.contains(scope), |in_scope| in_scope == scope) {
                     return Some(&current_node.symbol);
                 }
             }
@@ -962,12 +1097,12 @@ impl SymbolTable {
         None
     }
 
-    fn find_in_bucket_mut(&mut self, index: usize, name: &str) -> Option<&mut Symbol> {
+    fn find_in_bucket_mut(&mut self, index: usize, name: &str, in_scope: Option<&Scope>) -> Option<&mut Symbol> {
         let mut next_node = self.hash_table_buckets.get_mut(index)?.as_deref_mut();
 
         while let Some(current_node) = next_node {
             if let Symbol::Local { name: symbol_name, scope, .. } = &current_node.symbol {
-                if symbol_name == name && self.active_scopes.contains(scope) {
+                if symbol_name == name && in_scope.map_or_else(|| self.active_scopes.contains(scope), |in_scope| in_scope == scope) {
                     return Some(&mut current_node.symbol);
                 }
             }

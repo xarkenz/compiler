@@ -90,6 +90,7 @@ pub enum Token {
     Dot2,
     Comma,
     Colon,
+    Colon2,
     Semicolon,
     Question,
     AtSign,
@@ -121,11 +122,12 @@ pub enum Token {
     Continue,
     Return,
     Let,
-    Function,
-    Struct,
     Const,
     Mut,
     Own,
+    Function,
+    Struct,
+    Implement,
     Literal(Literal),
 }
 
@@ -161,6 +163,7 @@ impl fmt::Display for Token {
             Self::Dot2 => write!(f, ".."),
             Self::Comma => write!(f, ","),
             Self::Colon => write!(f, ":"),
+            Self::Colon2 => write!(f, "::"),
             Self::Semicolon => write!(f, ";"),
             Self::Question => write!(f, "?"),
             Self::AtSign => write!(f, "@"),
@@ -192,11 +195,12 @@ impl fmt::Display for Token {
             Self::Continue => write!(f, "continue"),
             Self::Return => write!(f, "return"),
             Self::Let => write!(f, "let"),
-            Self::Function => write!(f, "function"),
-            Self::Struct => write!(f, "struct"),
             Self::Const => write!(f, "const"),
             Self::Mut => write!(f, "mut"),
             Self::Own => write!(f, "own"),
+            Self::Function => write!(f, "function"),
+            Self::Struct => write!(f, "struct"),
+            Self::Implement => write!(f, "implement"),
             Self::Literal(literal) => write!(f, "{literal}"),
         }
     }
@@ -232,6 +236,7 @@ pub const SYMBOLIC_TOKENS: &[(&str, Token)] = &[
     ("..", Token::Dot2),
     (",", Token::Comma),
     (":", Token::Colon),
+    ("::", Token::Colon2),
     (";", Token::Semicolon),
     ("?", Token::Question),
     ("@", Token::AtSign),
@@ -266,28 +271,32 @@ pub const KEYWORD_TOKENS: &[(&str, Token)] = &[
     ("continue", Token::Continue),
     ("return", Token::Return),
     ("let", Token::Let),
-    ("function", Token::Function),
-    ("struct", Token::Struct),
     ("const", Token::Const),
     ("mut", Token::Mut),
     ("own", Token::Own),
+    ("function", Token::Function),
+    ("struct", Token::Struct),
+    ("implement", Token::Implement),
 ];
 
 pub fn get_symbolic_token_partial_matches(start_content: &str) -> Vec<&'static Token> {
     SYMBOLIC_TOKENS.iter()
-        .filter(|(literal, _)| literal.starts_with(start_content))
-        .map(|(_, symbolic_token)| symbolic_token)
+        .filter_map(|&(literal, ref symbolic_token)| {
+            literal.starts_with(start_content).then_some(symbolic_token)
+        })
         .collect()
 }
 
 pub fn get_symbolic_token_match(content: &str) -> Option<&'static Token> {
     SYMBOLIC_TOKENS.iter()
-        .find(|(literal, _)| &content == literal)
-        .map(|(_, symbolic_token)| symbolic_token)
+        .find_map(|&(literal, ref symbolic_token)| {
+            (content == literal).then_some(symbolic_token)
+        })
 }
 
 pub fn get_keyword_token_match(content: &str) -> Option<&'static Token> {
     KEYWORD_TOKENS.iter()
-        .find(|(keyword, _)| &content == keyword)
-        .map(|(_, keyword_token)| keyword_token)
+        .find_map(|&(keyword, ref keyword_token)| {
+            (content == keyword).then_some(keyword_token)
+        })
 }

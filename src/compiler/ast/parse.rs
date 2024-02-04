@@ -117,7 +117,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         }
                     }
 
-                    Box::new(Node::Array {
+                    Box::new(Node::ArrayLiteral {
                         items,
                     })
                 },
@@ -234,7 +234,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 }
                 self.scan_token()?;
 
-                lhs = Box::new(Node::Structure {
+                lhs = Box::new(Node::StructureLiteral {
                     type_name: lhs,
                     members,
                 });
@@ -261,7 +261,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 }
 
                 Ok(TypeNode::Identified {
-                    name,
+                    type_name: name,
                 })
             },
             Token::Star => {
@@ -316,12 +316,12 @@ impl<'a, T: BufRead> Parser<'a, T> {
         }
     }
 
-    pub fn parse_statement(&mut self, is_global: bool, allow_empty: bool) -> crate::Result<Option<Box<Node>>> {
+    pub fn parse_statement(&mut self, is_global: bool, is_in_implement_block: bool, allow_empty: bool) -> crate::Result<Option<Box<Node>>> {
         match self.current_token() {
             Some(Token::Semicolon) if allow_empty => {
                 self.scan_token()?;
                 // Returning None would imply that the end of the file was reached, so recursively try to parse a statement instead
-                self.parse_statement(is_global, allow_empty)
+                self.parse_statement(is_global, is_in_implement_block, allow_empty)
             },
             Some(Token::Let) => {
                 self.scan_token()?;
@@ -420,11 +420,11 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.parse_type(Some(&[Token::CurlyLeft, Token::Semicolon]))?
                 } else {
                     TypeNode::Identified {
-                        name: "void".into(),
+                        type_name: "void".into(),
                     }
                 };
                 let body = if let Some(Token::CurlyLeft) = self.current_token() {
-                    self.parse_statement(false, false)?
+                    self.parse_statement(false, is_in_implement_block, false)?
                 } else {
                     self.scan_token()?;
                     None
@@ -468,9 +468,41 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     None
                 };
 
-                Ok(Some(Box::new(Node::StructureDefinition {
+                Ok(Some(Box::new(Node::Structure {
                     name,
                     members,
+                })))
+            },
+            Some(Token::Implement) if is_global && !is_in_implement_block => {
+                self.scan_token()?;
+                let self_type = self.parse_type(Some(&[Token::CurlyLeft]))?;
+                self.scan_token()?;
+
+                let mut statements = Vec::new();
+                loop {
+                    while let Some(Token::Semicolon) = self.current_token() {
+                        self.scan_token()?;
+                    }
+
+                    match self.current_token() {
+                        Some(Token::CurlyRight) => {
+                            self.scan_token()?;
+                            break;
+                        },
+                        None => {
+                            return Err(Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }));
+                        },
+                        _ => {
+                            let statement = self.parse_statement(is_global, true, false)?
+                                .ok_or_else(|| Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }))?;
+                            statements.push(statement);
+                        }
+                    }
+                }
+
+                Ok(Some(Box::new(Node::Implement {
+                    self_type,
+                    statements,
                 })))
             },
             Some(got_token) if is_global => {
@@ -478,7 +510,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     span: self.current_span(),
                     got_token: got_token.clone(),
                     // Semicolon is technically allowed, but like... why would you do that
-                    allowed_tokens: vec![Token::Let, Token::Function],
+                    allowed_tokens: vec![Token::Let, Token::Function, Token::Struct, Token::Implement],
                 }))
             },
             Some(Token::CurlyLeft) => {
@@ -498,7 +530,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                             return Err(Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }));
                         },
                         _ => {
-                            let statement = self.parse_statement(false, false)?
+                            let statement = self.parse_statement(is_global, is_in_implement_block, false)?
                                 .ok_or_else(|| Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }))?;
                             statements.push(statement);
                         }
@@ -515,12 +547,12 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.scan_token()?;
                 let condition = self.parse_expression(None, &[Token::ParenRight])?;
                 self.scan_token()?;
-                let consequent = self.parse_statement(is_global, false)?
+                let consequent = self.parse_statement(is_global, is_in_implement_block, false)?
                     .ok_or_else(|| Box::new(crate::Error::ExpectedStatement { span: self.current_span() }))?;
                 let alternative;
                 if let Some(Token::Else) = self.current_token() {
                     self.scan_token()?;
-                    alternative = self.parse_statement(is_global, false)?;
+                    alternative = self.parse_statement(is_global, is_in_implement_block, false)?;
                     if alternative.is_none() {
                         return Err(Box::new(crate::Error::ExpectedStatement { span: self.current_span() }));
                     }
@@ -544,7 +576,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.scan_token()?;
                 let condition = self.parse_expression(None, &[Token::ParenRight])?;
                 self.scan_token()?;
-                let body = self.parse_statement(is_global, false)?
+                let body = self.parse_statement(is_global, is_in_implement_block, false)?
                     .ok_or_else(|| Box::new(crate::Error::ExpectedStatement { span: self.current_span() }))?;
 
                 Ok(Some(Box::new(Node::While {
@@ -589,5 +621,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
             },
             None => Ok(None),
         }
+    }
+
+    pub fn parse_top_level_statement(&mut self) -> crate::Result<Option<Box<Node>>> {
+        self.parse_statement(true, false, true)
     }
 }
