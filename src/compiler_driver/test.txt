@@ -14,15 +14,15 @@ function strlen(str: *[u8]) -> u64;
 function isdigit(char: i32) -> i32;
 
 implement u8 {
-    function swap(self: *mut u8, other: *mut u8) {
-        let temp: u8 = *self;
+    function swap(self: *mut Self, other: *mut Self) {
+        let temp: Self = *self;
         *self = *other;
         *other = temp;
     }
 }
 
 implement u64 {
-    function max(self: u64, other: u64) -> u64 {
+    function max(self: Self, other: Self) -> Self {
         if (self > other) {
             return self;
         } else {
@@ -52,7 +52,7 @@ struct String {
 }
 
 implement String {
-    function new() -> String {
+    function new() -> Self {
         return String {
             str: OwnStr {
                 ptr: null,
@@ -62,18 +62,18 @@ implement String {
         };
     }
 
-    function del(self: String) {
+    function del(self: Self) {
         free(self.str.ptr);
     }
 
-    function as_str(self: *String) -> Str {
+    function as_str(self: *Self) -> Str {
         return Str {
             ptr: self.str.ptr,
             length: self.str.length,
         };
     }
 
-    function grow_by(self: *mut String, additional: u64) {
+    function grow_by(self: *mut Self, additional: u64) {
         let required_capacity: u64 = self.capacity + additional;
         let capacity: u64 = u64::max(self.capacity * 2, required_capacity);
         let mut ptr: *own [u8] = malloc(sizeof(u8) * capacity);
@@ -85,22 +85,22 @@ implement String {
         self.capacity = capacity;
     }
 
-    function push(self: *mut String, ch: u8) {
+    function push(self: *mut Self, ch: u8) {
         if (self.str.length == self.capacity) {
-            String::grow_by(self, 1);
+            self.grow_by(1);
         }
 
         self.str.ptr[self.str.length] = ch;
         self.str.length += 1;
     }
 
-    function insert(self: *mut String, mut index: u64, mut ch: u8) {
+    function insert(self: *mut Self, mut index: u64, mut ch: u8) {
         if (self.str.length == self.capacity) {
-            String::grow_by(self, 1);
+            self.grow_by(1);
         }
 
         while (index < self.str.length) {
-            u8::swap(&ch, &self.str.ptr[index]);
+            self.str.ptr[index].swap(&ch);
             index += 1;
         }
 
@@ -223,11 +223,11 @@ function student_stuff() {
 }
 
 implement i64 {
-    function to_string(mut self: i64) -> String {
+    function to_string(mut self: Self) -> String {
         let mut string: String = String::new();
 
         if (self == 0) {
-            String::push(&string, '0');
+            string.push('0');
         }
         else {
             let is_negative: bool = self < 0;
@@ -236,11 +236,11 @@ implement i64 {
             }
 
             while (self != 0) {
-                String::insert(&string, 0, (self % 10) as u8 + '0');
+                string.insert(0, (self % 10) as u8 + '0');
                 self /= 10;
             }
             if (is_negative) {
-                String::insert(&string, 0, '-');
+                string.insert(0, '-');
             }
         }
 
@@ -263,27 +263,27 @@ function main() -> i32 {
     omg_linked_list(&values, 4);
 
     let mut string: String = String::new();
-    String::push(&string, 'H');
-    String::push(&string, 'e');
-    String::push(&string, 'l');
-    String::push(&string, 'l');
-    String::push(&string, 'o');
-    String::push(&string, ' ');
-    String::push(&string, 'w');
-    String::push(&string, 'o');
-    String::push(&string, 'r');
-    String::push(&string, 'l');
-    String::push(&string, 'd');
-    String::push(&string, '!');
-    String::push(&string, '\0');
-    let str: Str = String::as_str(&string);
+    string.push('H');
+    string.push('e');
+    string.push('l');
+    string.push('l');
+    string.push('o');
+    string.push(' ');
+    string.push('w');
+    string.push('o');
+    string.push('r');
+    string.push('l');
+    string.push('d');
+    string.push('!');
+    string.push('\0');
+    let str: Str = string.as_str();
     printf("%s\n", str.ptr);
-    String::del(string);
+    string.del();
 
-    let mut number_string: String = i64::to_string(-12345);
-    String::push(&number_string, '\0');
+    let mut number_string: String = (-12345 as i64).to_string();
+    number_string.push('\0');
     printf("i64::to_string: \"%s\"\n", number_string.str.ptr);
-    String::del(number_string);
+    number_string.del();
 
     return 0;
 }

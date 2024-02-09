@@ -621,6 +621,10 @@ pub enum Value {
         pointer: Box<Value>,
         loaded_format: Format,
     },
+    BoundFunction {
+        self_value: Box<Value>,
+        function_register: Register,
+    },
 }
 
 impl Value {
@@ -631,6 +635,7 @@ impl Value {
             Self::Constant(constant) => constant.format(),
             Self::Register(register) => register.format().clone(),
             Self::Indirect { loaded_format, .. } => loaded_format.clone(),
+            Self::BoundFunction { function_register, .. } => function_register.format().clone(),
         }
     }
 
@@ -649,6 +654,13 @@ impl Value {
             }
         }
     }
+
+    pub fn bound_self_value(&self) -> Option<Value> {
+        match self {
+            Self::BoundFunction { self_value, .. } => Some(self_value.as_ref().clone()),
+            _ => None
+        }
+    }
 }
 
 impl fmt::Display for Value {
@@ -659,6 +671,7 @@ impl fmt::Display for Value {
             Self::Constant(constant) => write!(f, "{constant}"),
             Self::Register(register) => write!(f, "{register}"),
             Self::Indirect { pointer, .. } => write!(f, "<ERROR indirect value: {pointer}>"),
+            Self::BoundFunction { function_register, .. } => write!(f, "{function_register}"),
         }
     }
 }

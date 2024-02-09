@@ -221,7 +221,7 @@ define dso_local void @"String::insert"(%type.String* noundef %.arg.self, i64 no
 	%18 = load i64, i64* %index
 	%19 = load i8*, i8** %17
 	%20 = getelementptr inbounds i8, i8* %19, i64 %18
-	call void(i8*, i8*) @"u8::swap"(i8* noundef %ch, i8* noundef %20)
+	call void(i8*, i8*) @"u8::swap"(i8* noundef %20, i8* noundef %ch)
 	%21 = load i64, i64* %index
 	%22 = add nuw i64 %21, 1
 	store i64 %22, i64* %index
@@ -610,16 +610,17 @@ define dso_local i32 @main() {
 	%6 = load %type.String, %type.String* %string
 	call void(%type.String) @"String::del"(%type.String noundef %6)
 	%number_string = alloca %type.String
-	%7 = sub nsw i64 0, 12345
-	%8 = call %type.String(i64) @"i64::to_string"(i64 noundef %7)
-	store %type.String %8, %type.String* %number_string
+	%7 = sub nsw i32 0, 12345
+	%8 = sext i32 %7 to i64
+	%9 = call %type.String(i64) @"i64::to_string"(i64 noundef %8)
+	store %type.String %9, %type.String* %number_string
 	call void(%type.String*, i8) @"String::push"(%type.String* noundef %number_string, i8 noundef 0)
-	%9 = getelementptr inbounds %type.String, %type.String* %number_string, i32 0, i32 0
-	%10 = getelementptr inbounds %type.OwnStr, %type.OwnStr* %9, i32 0, i32 0
-	%11 = load i8*, i8** %10
-	%12 = call i32(i8*, ...) @printf(i8* noundef bitcast ([22 x i8]* @.const.15 to i8*), i8* noundef %11)
-	%13 = load %type.String, %type.String* %number_string
-	call void(%type.String) @"String::del"(%type.String noundef %13)
+	%10 = getelementptr inbounds %type.String, %type.String* %number_string, i32 0, i32 0
+	%11 = getelementptr inbounds %type.OwnStr, %type.OwnStr* %10, i32 0, i32 0
+	%12 = load i8*, i8** %11
+	%13 = call i32(i8*, ...) @printf(i8* noundef bitcast ([22 x i8]* @.const.15 to i8*), i8* noundef %12)
+	%14 = load %type.String, %type.String* %number_string
+	call void(%type.String) @"String::del"(%type.String noundef %14)
 	ret i32 0
 }
 

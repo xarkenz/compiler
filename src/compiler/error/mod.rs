@@ -256,6 +256,10 @@ pub enum Error {
     },
     InvalidStaticAccess {
     },
+    SelfOutsideImplement {
+    },
+    ExpectedSelfParameter {
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Box<Error>>;
@@ -263,23 +267,23 @@ pub type Result<T> = std::result::Result<T, Box<Error>>;
 impl Error {
     pub fn span(&self) -> Option<&Span> {
         match self {
-            Error::InvalidToken { span } => Some(span),
-            Error::NonAsciiCharacter { span, .. } => Some(span),
-            Error::InvalidEscape { span, .. } => Some(span),
-            Error::InvalidHexEscapeDigit { span, .. } => Some(span),
-            Error::UnclosedString { span } => Some(span),
-            Error::UnclosedCharacter { span } => Some(span),
-            Error::UnclosedComment { span } => Some(span),
-            Error::ExpectedToken { span } => Some(span),
-            Error::ExpectedTokenFromList { span, .. } => Some(span),
-            Error::ExpectedIdentifier { span } => Some(span),
-            Error::ExpectedOperand { span, .. } => Some(span),
-            Error::ExpectedOperation { span, .. } => Some(span),
-            Error::ExpectedType { span, .. } => Some(span),
-            Error::UnexpectedQualifier { span, .. } => Some(span),
-            Error::ExpectedClosingBracket { span, .. } => Some(span),
-            Error::ExpectedStatement { span } => Some(span),
-            Error::UnexpectedElse { span } => Some(span),
+            Self::InvalidToken { span } => Some(span),
+            Self::NonAsciiCharacter { span, .. } => Some(span),
+            Self::InvalidEscape { span, .. } => Some(span),
+            Self::InvalidHexEscapeDigit { span, .. } => Some(span),
+            Self::UnclosedString { span } => Some(span),
+            Self::UnclosedCharacter { span } => Some(span),
+            Self::UnclosedComment { span } => Some(span),
+            Self::ExpectedToken { span } => Some(span),
+            Self::ExpectedTokenFromList { span, .. } => Some(span),
+            Self::ExpectedIdentifier { span } => Some(span),
+            Self::ExpectedOperand { span, .. } => Some(span),
+            Self::ExpectedOperation { span, .. } => Some(span),
+            Self::ExpectedType { span, .. } => Some(span),
+            Self::UnexpectedQualifier { span, .. } => Some(span),
+            Self::ExpectedClosingBracket { span, .. } => Some(span),
+            Self::ExpectedStatement { span } => Some(span),
+            Self::UnexpectedElse { span } => Some(span),
             _ => None
         }
     }
@@ -384,6 +388,8 @@ impl fmt::Display for Error {
             Self::MissingReturnStatement { function_name } => write!(f, "non-void function '{function_name}' could finish without returning a value"),
             Self::UnsupportedConstantExpression {} => write!(f, "unsupported feature in constant expression"),
             Self::InvalidStaticAccess {} => write!(f, "invalid operands for '::'"),
+            Self::SelfOutsideImplement {} => write!(f, "type 'Self' can only be used inside an 'implement' block"),
+            Self::ExpectedSelfParameter {} => write!(f, "expected a first parameter of type 'Self', '*Self', or '*mut Self'"),
         }
     }
 }

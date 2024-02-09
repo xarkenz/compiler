@@ -307,6 +307,14 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     length,
                 })
             },
+            Token::SelfType => {
+                self.scan_token()?;
+                if let Some(allowed_ends) = allowed_ends {
+                    self.expect_token(allowed_ends)?;
+                }
+
+                Ok(TypeNode::SelfType)
+            },
             Token::Mut | Token::Own => {
                 Err(Box::new(crate::Error::UnexpectedQualifier { span: self.current_span(), got_token: self.get_token()?.clone() }))
             },
@@ -401,6 +409,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.expect_token(&[Token::Colon])?;
                     self.scan_token()?;
                     let parameter_type = self.parse_type(Some(&[Token::Comma, Token::ParenRight]))?;
+
                     parameters.push(FunctionParameter {
                         name: parameter_name,
                         type_node: parameter_type,
@@ -438,7 +447,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     body,
                 })))
             },
-            Some(Token::Struct) if is_global => {
+            Some(Token::Struct) if is_global && !is_in_implement_block => {
                 self.scan_token()?;
                 let name = self.expect_identifier()?;
                 self.scan_token()?;

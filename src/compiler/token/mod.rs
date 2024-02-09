@@ -128,6 +128,7 @@ pub enum Token {
     Function,
     Struct,
     Implement,
+    SelfType,
     Literal(Literal),
 }
 
@@ -201,6 +202,7 @@ impl fmt::Display for Token {
             Self::Function => write!(f, "function"),
             Self::Struct => write!(f, "struct"),
             Self::Implement => write!(f, "implement"),
+            Self::SelfType => write!(f, "Self"),
             Self::Literal(literal) => write!(f, "{literal}"),
         }
     }
@@ -277,6 +279,7 @@ pub const KEYWORD_TOKENS: &[(&str, Token)] = &[
     ("function", Token::Function),
     ("struct", Token::Struct),
     ("implement", Token::Implement),
+    ("Self", Token::SelfType),
 ];
 
 pub fn get_symbolic_token_partial_matches(start_content: &str) -> Vec<&'static Token> {

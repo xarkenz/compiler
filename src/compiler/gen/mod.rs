@@ -56,6 +56,7 @@ pub struct ScopeContext {
     function_context: Option<FunctionContext>,
     break_label: Option<Label>,
     continue_label: Option<Label>,
+    self_format: Option<Format>,
 }
 
 impl ScopeContext {
@@ -64,6 +65,7 @@ impl ScopeContext {
             function_context: None,
             break_label: None,
             continue_label: None,
+            self_format: None,
         }
     }
 
@@ -83,6 +85,10 @@ impl ScopeContext {
         self.continue_label.as_ref()
     }
 
+    pub fn self_format(&self) -> Option<&Format> {
+        self.self_format.as_ref()
+    }
+
     pub fn enter_function(&self, current_scope: &Scope, name: String, return_format: Format) -> Self {
         let mut new_scope = self.clone();
         new_scope.function_context = Some(FunctionContext::new(name, current_scope.clone(), return_format));
@@ -93,6 +99,12 @@ impl ScopeContext {
         let mut new_scope = self.clone();
         new_scope.break_label = Some(break_label);
         new_scope.continue_label = Some(continue_label);
+        new_scope
+    }
+
+    pub fn enter_implement(&self, self_format: Format) -> Self {
+        let mut new_scope = self.clone();
+        new_scope.self_format = Some(self_format);
         new_scope
     }
 }
@@ -173,30 +185,36 @@ impl<W: Write> Generator<W> {
         Ok(type_identifier.into())
     }
 
-    pub fn get_format_from_node(&self, type_node: &ast::TypeNode, allow_unsized: bool) -> crate::Result<Format> {
+    pub fn get_format_from_name(&self, type_name: &str) -> crate::Result<Format> {
+        let builtin_format = BUILTIN_FORMATS.iter()
+            .find_map(|&(builtin_type_name, ref builtin_format)| {
+                (type_name == builtin_type_name).then_some(builtin_format)
+            });
+        
+        let format = match builtin_format {
+            Some(builtin_format) => builtin_format.clone(),
+            None => Format::Identified {
+                type_identifier: self.get_type_identifier(type_name)?,
+                type_name: type_name.into(),
+            },
+        };
+
+        Ok(format)
+    }
+
+    pub fn get_format_from_node(&self, type_node: &ast::TypeNode, allow_unsized: bool, context: &ScopeContext) -> crate::Result<Format> {
         let format = match type_node {
             ast::TypeNode::Identified { type_name } => {
-                let builtin_format = BUILTIN_FORMATS.iter()
-                    .find_map(|&(builtin_type_name, ref builtin_format)| {
-                        (type_name == builtin_type_name).then_some(builtin_format)
-                    });
-                
-                match builtin_format {
-                    Some(builtin_format) => builtin_format.clone(),
-                    None => Format::Identified {
-                        type_identifier: self.get_type_identifier(type_name)?,
-                        type_name: type_name.clone(),
-                    },
-                }
+                self.get_format_from_name(type_name)?
             },
             ast::TypeNode::Pointer { pointee_type, semantics } => {
-                self.get_format_from_node(pointee_type, true)?
+                self.get_format_from_node(pointee_type, true, context)?
                     .into_pointer(*semantics)
             },
             ast::TypeNode::Array { item_type, length: Some(length) } => {
                 if let ast::Node::Literal(token::Literal::Integer(length)) = length.as_ref() {
                     Format::Array {
-                        item_format: Box::new(self.get_format_from_node(item_type, false)?),
+                        item_format: Box::new(self.get_format_from_node(item_type, false, context)?),
                         length: Some(*length as usize),
                     }
                 }
@@ -206,9 +224,14 @@ impl<W: Write> Generator<W> {
             },
             ast::TypeNode::Array { item_type, length: None } => {
                 Format::Array {
-                    item_format: Box::new(self.get_format_from_node(item_type, false)?),
+                    item_format: Box::new(self.get_format_from_node(item_type, false, context)?),
                     length: None,
                 }
+            },
+            ast::TypeNode::SelfType => {
+                context.self_format()
+                    .cloned()
+                    .ok_or_else(|| Box::new(crate::Error::SelfOutsideImplement {}))?
             },
         };
 
@@ -823,7 +846,7 @@ impl<W: Write> Generator<W> {
             },
             ast::UnaryOperation::GetSize => {
                 if let ast::Node::Type(type_node) = operand {
-                    let format = self.get_format_from_node(type_node, false)?;
+                    let format = self.get_format_from_node(type_node, false, context)?;
                     let size = format.expect_size(&self.symbol_table)?;
 
                     Value::Constant(Constant::Integer(IntegerValue::Unsigned64(size as u64)))
@@ -880,7 +903,7 @@ impl<W: Write> Generator<W> {
                     let value = self.generate_node(lhs, context, None)?;
                     let value = self.coerce_to_rvalue(value)?;
                     
-                    let target_format = self.get_format_from_node(type_node, false)?;
+                    let target_format = self.get_format_from_node(type_node, false, context)?;
 
                     self.change_format(value, &target_format)?
                 }
@@ -1273,18 +1296,32 @@ impl<W: Write> Generator<W> {
         Ok((constant, intermediate_constants))
     }
 
-    fn generate_member_access(&mut self, structure: Value, member_name: &ast::Node, _context: &ScopeContext) -> crate::Result<Value> {
-        let structure_format = structure.format();
-        let cannot_access_error = || Box::new(crate::Error::ExpectedStruct { type_name: structure_format.rich_name() });
+    fn generate_member_access(&mut self, container: Value, member_name: &ast::Node, _context: &ScopeContext) -> crate::Result<Value> {
+        let container_format = container.format();
+        let cannot_access_error = || Box::new(crate::Error::ExpectedStruct { type_name: container_format.rich_name() });
 
         if let ast::Node::Literal(token::Literal::Identifier(member_name)) = member_name {
-            match structure {
+            // First, search for a method on the container's type
+            let type_name = container_format.rich_name();
+            if let Ok(type_symbol) = self.get_type_symbol(&type_name) {
+                let member_scope = type_symbol.member_scope();
+                if let Some(function_symbol) = self.symbol_table.find(member_name, Some(member_scope)).and_then(Symbol::function_value) {
+                    // A method was found, so return it
+                    return Ok(Value::BoundFunction {
+                        self_value: Box::new(container),
+                        function_register: function_symbol.register().clone(),
+                    });
+                }
+            }
+
+            // No method was found, so attempt to get a struct member
+            match container {
                 Value::Indirect { pointer, loaded_format } => match &loaded_format {
                     Format::Identified { type_name, .. } => match self.get_type_definition_format(type_name)? {
                         Format::Structure { members, .. } => {
                             let semantics = pointer.format().pointer_semantics().unwrap();
                             let member_index = members.iter().position(|(name, _)| name == member_name)
-                                .ok_or_else(|| Box::new(crate::Error::UndefinedStructMember { member_name: member_name.clone(), type_name: structure_format.rich_name() }))?;
+                                .ok_or_else(|| Box::new(crate::Error::UndefinedStructMember { member_name: member_name.clone(), type_name: container_format.rich_name() }))?;
                             let member_format = members[member_index].1.clone();
                             let member_pointer = self.new_anonymous_register(member_format.clone().into_pointer(semantics));
                             let indices = &[
@@ -1358,16 +1395,50 @@ impl<W: Write> Generator<W> {
 
     fn generate_call_operation(&mut self, callee: &ast::Node, arguments: &[Box<ast::Node>], context: &ScopeContext) -> crate::Result<Value> {
         let callee = self.generate_node(callee, context, None)?;
-        let callee = self.coerce_to_rvalue(callee)?;
 
         if let Format::Function { signature } = callee.format() {
             let mut argument_values = Vec::new();
 
             // Ensure that when arguments and parameter formats are zipped, all arguments are generated
             // This is important for variadic arguments, which don't have corresponding parameters
-            let parameters_iter = signature.parameter_formats().iter()
+            let mut parameters_iter = signature.parameter_formats().iter()
                 .map(|parameter_format| Some(parameter_format))
                 .chain(std::iter::repeat(None));
+
+            if let Value::BoundFunction { self_value, .. } = &callee {
+                let self_target_format = parameters_iter.next().unwrap()
+                    .ok_or_else(|| Box::new(crate::Error::ExpectedSelfParameter {}))?;
+
+                // FIXME: once 'implement' works on arbitrary types, this logic will be flawed
+                let self_argument = match self_target_format {
+                    Format::Pointer { .. } => match self_value.as_ref() {
+                        Value::Indirect { pointer, .. } => {
+                            pointer.as_ref().clone()
+                        },
+                        _ => {
+                            // Allocate temporary space on the stack for the value so it can be pointed to
+                            let self_format = self_value.format();
+                            let self_value_pointer = self.new_anonymous_register(self_format.clone().into_pointer(PointerSemantics::Immutable));
+
+                            self.emitter.emit_local_allocation(&self_value_pointer, &self_format)?;
+
+                            let self_value_pointer = Value::Register(self_value_pointer);
+
+                            self.emitter.emit_store(self_value, &self_value_pointer)?;
+
+                            self_value_pointer
+                        }
+                    },
+                    _ => {
+                        self.coerce_to_rvalue(self_value.as_ref().clone())?
+                    }
+                };
+                
+                let self_argument = self.enforce_format(self_argument, self_target_format)?;
+
+                // Pass the bound 'self' value as the first argument
+                argument_values.push(self_argument);
+            }
 
             for (argument, parameter_format) in arguments.iter().zip(parameters_iter) {
                 let argument = self.generate_node(argument, context, parameter_format.cloned())?;
@@ -1377,7 +1448,7 @@ impl<W: Write> Generator<W> {
             }
 
             let expected_count = signature.parameter_formats().len();
-            let got_count = arguments.len();
+            let got_count = argument_values.len();
             if !signature.is_varargs() && got_count > expected_count {
                 return Err(Box::new(crate::Error::ExtraFunctionArguments { expected_count, got_count }));
             }
@@ -1412,7 +1483,7 @@ impl<W: Write> Generator<W> {
     }
 
     fn generate_let_statement(&mut self, name: &str, value_type: &ast::TypeNode, is_mutable: bool, value: Option<&ast::Node>, context: &ScopeContext) -> crate::Result<Value> {
-        let format = self.get_format_from_node(value_type, false)?;
+        let format = self.get_format_from_node(value_type, false, context)?;
 
         if context.is_global() {
             let init_value = if let Some(node) = value {
@@ -1451,7 +1522,7 @@ impl<W: Write> Generator<W> {
     }
 
     fn generate_let_constant_statement(&mut self, name: &str, value_type: &ast::TypeNode, value: &ast::Node, context: &ScopeContext) -> crate::Result<Value> {
-        let format = self.get_format_from_node(value_type, false)?;
+        let format = self.get_format_from_node(value_type, false, context)?;
 
         if let Some(function) = context.function() {
             let constant = self.generate_constant_node(value, context, Some(format.clone()))?;
@@ -1477,10 +1548,10 @@ impl<W: Write> Generator<W> {
         Ok(Value::Void)
     }
 
-    fn generate_function_declaration(&mut self, name: &str, parameters: &[ast::FunctionParameter], is_varargs: bool, return_type: &ast::TypeNode, _context: &ScopeContext) -> crate::Result<Value> {
-        let return_format = self.get_format_from_node(return_type, false)?;
+    fn generate_function_declaration(&mut self, name: &str, parameters: &[ast::FunctionParameter], is_varargs: bool, return_type: &ast::TypeNode, context: &ScopeContext) -> crate::Result<Value> {
+        let return_format = self.get_format_from_node(return_type, false, context)?;
         let parameter_formats: Vec<Format> = Result::from_iter(parameters.iter().map(|ast::FunctionParameter { type_node, ..}| {
-            self.get_format_from_node(type_node, false)
+            self.get_format_from_node(type_node, false, context)
         }))?;
 
         let new_signature = FunctionSignature::new(return_format.clone(), parameter_formats.clone(), is_varargs);
@@ -1497,7 +1568,7 @@ impl<W: Write> Generator<W> {
             }
         }
         else {
-            // Create a symbol for the function if one does not exist already
+            // Create a symbol for the function since one does not exist already
             let (symbol, function_register) = self.symbol_table.create_function_symbol(name.into(), new_signature, false);
             self.symbol_table.insert(symbol);
 
@@ -1515,12 +1586,10 @@ impl<W: Write> Generator<W> {
     }
 
     fn generate_function_definition(&mut self, name: &str, parameters: &[ast::FunctionParameter], is_varargs: bool, return_type: &ast::TypeNode, body: &ast::Node, context: &ScopeContext) -> crate::Result<Value> {
-        let return_format = self.get_format_from_node(return_type, false)?;
+        let return_format = self.get_format_from_node(return_type, false, context)?;
         let parameter_formats: Vec<Format> = Result::from_iter(parameters.iter().map(|ast::FunctionParameter { type_node, .. }| {
-            self.get_format_from_node(type_node, false)
+            self.get_format_from_node(type_node, false, context)
         }))?;
-
-        let function_context = context.enter_function(self.symbol_table.current_scope(), name.into(), return_format.clone());
 
         let parameter_handles: Vec<(Register, Symbol, Register)> = parameters.iter()
             .zip(parameter_formats.iter())
@@ -1549,10 +1618,14 @@ impl<W: Write> Generator<W> {
                 return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.into() }));
             }
         }
+        
+        let function_context = context.enter_function(self.symbol_table.current_scope(), name.into(), return_format.clone());
 
         // Define a symbol for the function, overwriting the function declaration symbol if it exists
         let (symbol, function_register) = self.symbol_table.create_function_symbol(name.into(), new_signature, true);
         self.symbol_table.insert(symbol);
+
+        self.symbol_table.enter_new_scope();
 
         let input_registers: Vec<Register> = parameter_handles.iter()
             .map(|(register, _, _)| register.clone())
@@ -1580,6 +1653,7 @@ impl<W: Write> Generator<W> {
 
         self.emitter.emit_function_exit()?;
 
+        self.symbol_table.leave_scope();
         self.clear_local_context();
 
         Ok(Value::Void)
@@ -1592,6 +1666,7 @@ impl<W: Write> Generator<W> {
             }
         }
         else {
+            // TODO: allow Self as the structure type
             let type_identifier = self.symbol_table.current_scope().get_member_identifier(type_name);
             let identified_format = Format::Identified {
                 type_identifier: type_identifier.clone(),
@@ -1609,7 +1684,7 @@ impl<W: Write> Generator<W> {
         Ok(Value::Void)
     }
 
-    fn generate_structure_definition(&mut self, type_name: &str, members: &[(String, ast::TypeNode)], _context: &ScopeContext) -> crate::Result<Value> {
+    fn generate_structure_definition(&mut self, type_name: &str, members: &[(String, ast::TypeNode)], context: &ScopeContext) -> crate::Result<Value> {
         let member_scope;
         if let Some(old_symbol) = self.symbol_table.find(type_name, Some(self.symbol_table.current_scope())) {
             if let Some(old_symbol) = old_symbol.type_value() {
@@ -1640,7 +1715,7 @@ impl<W: Write> Generator<W> {
             type_name: type_name.into(),
         };
         let members: Vec<(String, Format)> = crate::Result::from_iter(members.iter().map(|(member_name, member_type)| {
-            let member_format = self.get_format_from_node(member_type, false)?;
+            let member_format = self.get_format_from_node(member_type, false, context)?;
             Ok((member_name.clone(), member_format))
         }))?;
         let structure_format = Format::Structure {
@@ -1660,11 +1735,15 @@ impl<W: Write> Generator<W> {
     fn generate_implement_block(&mut self, self_type: &ast::TypeNode, statements: &[Box<ast::Node>], context: &ScopeContext) -> crate::Result<Value> {
         if let ast::TypeNode::Identified { type_name } = self_type {
             let type_symbol = self.get_type_symbol(type_name)?;
+
+            let self_format = self.get_format_from_name(type_name)?;
+            let implement_context = context.enter_implement(self_format);
+
             let member_scope = type_symbol.member_scope().clone();
             self.symbol_table.enter_scope(member_scope);
 
             for statement in statements {
-                self.generate_node(statement, context, Some(Format::Void))?;
+                self.generate_node(statement, &implement_context, Some(Format::Void))?;
             }
 
             self.symbol_table.leave_scope();
@@ -1838,7 +1917,7 @@ impl<W: Write> Generator<W> {
                         let (value, mut constants) = self.fold_as_constant(lhs, constant_id, context, None)?;
                         intermediate_constants.append(&mut constants);
                         
-                        let target_format = self.get_format_from_node(type_node, false)?;
+                        let target_format = self.get_format_from_node(type_node, false, context)?;
     
                         if let Constant::Integer(integer) = value {
                             let converted_integer = IntegerValue::new(integer.expanded_value(), &target_format)

@@ -293,6 +293,7 @@ pub enum TypeNode {
         item_type: Box<TypeNode>,
         length: Option<Box<Node>>,
     },
+    SelfType,
 }
 
 impl std::fmt::Display for TypeNode {
@@ -311,6 +312,9 @@ impl std::fmt::Display for TypeNode {
             },
             Self::Array { item_type, length: None } => {
                 write!(f, "[{item_type}]")
+            },
+            Self::SelfType => {
+                write!(f, "Self")
             },
         }
     }
