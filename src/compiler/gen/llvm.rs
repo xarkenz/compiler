@@ -632,19 +632,15 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_function_call(&mut self, result: Option<&Register>, callee: &Value, arguments: &[Value]) -> crate::Result<()> {
+        let Format::Function { signature } = callee.format() else {
+            panic!("expected function callee")
+        };
+
         if let Some(result) = result {
-            write!(
-                self.writer,
-                "\t{result} = call {callee_format} {callee}(",
-                callee_format = callee.format(),
-            )
+            write!(self.writer, "\t{result} = call {signature} {callee}(")
         }
         else {
-            write!(
-                self.writer,
-                "\tcall {callee_format} {callee}(",
-                callee_format = callee.format(),
-            )
+            write!(self.writer, "\tcall {signature} {callee}(")
         }
         .map_err(|cause| self.error(cause))?;
 

@@ -3,22 +3,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-struct MyStruct {
-    int32_t a;
-    int64_t b;
-    int8_t c;
-};
+void my_func(int32_t x) {
+    printf("%d\n", x);
+}
 
-struct MyStruct my_global_struct;
+void do_call(void(*pointer)(int32_t), int32_t value) {
+    pointer(value);
+}
 
 int32_t main() {
-    int x = 3, y = 2;
-    int z = (y += x);
-    bool b;
-    b = x == 3 && y == 5;
-    b = x > 2 || y > 8;
-    b = x < 4 && (y < 2 || y > 3);
-    int64_t test_b = 34;
-    ((struct MyStruct) {12, test_b, 56}).a = 5;
+    do_call(my_func, 8);
     return 0;
 }

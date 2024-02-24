@@ -20,8 +20,8 @@
 			"command": "./target/debug/compiler_driver.exe",
 			"args": [
 				"--debug",
-				"--src", "./src/compiler_driver/test.txt",
-				"--out", "./src/compiler_driver/test.ll"
+				"--src", "./src/compiler_driver/collections.txt",
+				"--out", "./src/compiler_driver/collections.ll"
 			],
 			"dependsOn": ["build compiler"],
 			"options": {

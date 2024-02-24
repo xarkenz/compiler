@@ -256,6 +256,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
             Token::Literal(Literal::Identifier(name)) => {
                 let name = name.clone();
                 self.scan_token()?;
+
                 if let Some(allowed_ends) = allowed_ends {
                     self.expect_token(allowed_ends)?;
                 }
@@ -298,6 +299,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     length = None;
                 }
                 self.scan_token()?;
+
                 if let Some(allowed_ends) = allowed_ends {
                     self.expect_token(allowed_ends)?;
                 }
@@ -307,8 +309,54 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     length,
                 })
             },
+            Token::Function => {
+                self.scan_token()?;
+                self.expect_token(&[Token::ParenLeft])?;
+                self.scan_token()?;
+
+                let mut parameter_types = Vec::new();
+                let mut is_varargs = false;
+                while !(matches!(self.current_token(), Some(Token::ParenRight))) {
+                    if let Some(Token::Dot2) = self.current_token() {
+                        is_varargs = true;
+                        self.scan_token()?;
+                        // The '..' for variadic arguments must be the end of the function signature
+                        self.expect_token(&[Token::ParenRight])?;
+                        break;
+                    }
+
+                    parameter_types.push(self.parse_type(Some(&[Token::Comma, Token::ParenRight]))?);
+
+                    if let Some(Token::Comma) = self.current_token() {
+                        self.scan_token()?;
+                    }
+                }
+
+                let return_type;
+                self.scan_token()?;
+                if let Some(Token::RightArrow) = self.current_token() {
+                    self.scan_token()?;
+                    return_type = Box::new(self.parse_type(allowed_ends)?);
+                }
+                else {
+                    return_type = Box::new(TypeNode::Identified {
+                        type_name: "void".into(),
+                    });
+
+                    if let Some(allowed_ends) = allowed_ends {
+                        self.expect_token(allowed_ends)?;
+                    }
+                }
+
+                Ok(TypeNode::Function {
+                    parameter_types,
+                    is_varargs,
+                    return_type,
+                })
+            },
             Token::SelfType => {
                 self.scan_token()?;
+
                 if let Some(allowed_ends) = allowed_ends {
                     self.expect_token(allowed_ends)?;
                 }

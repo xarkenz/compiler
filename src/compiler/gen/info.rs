@@ -136,7 +136,7 @@ impl Format {
             Self::Void => Some(0),
             Self::Boolean => Some(1),
             Self::Integer { size, .. } => Some(*size),
-            Self::Pointer { .. } => Some(8),
+            Self::Pointer { .. } | Self::Function { .. } => Some(8),
             Self::Array { length, item_format } => {
                 Some(length.clone()? * item_format.size(symbol_table)?)
             },
@@ -166,7 +166,6 @@ impl Format {
                     .definition_format()?
                     .size(symbol_table)
             },
-            Self::Function { .. } => None,
             Self::Scope => None,
         }
     }
@@ -177,7 +176,7 @@ impl Format {
             Self::Void => None,
             Self::Boolean => Some(1),
             Self::Integer { size, .. } => Some(*size),
-            Self::Pointer { .. } => Some(8),
+            Self::Pointer { .. } | Self::Function { .. } => Some(8),
             Self::Array { item_format, .. } => item_format.alignment(symbol_table),
             Self::Structure { members, .. } => {
                 members.iter()
@@ -190,7 +189,6 @@ impl Format {
                     .definition_format()?
                     .alignment(symbol_table)
             },
-            Self::Function { .. } => None,
             Self::Scope => None,
         }
     }
@@ -223,6 +221,13 @@ impl Format {
             (Self::Array { item_format: self_item, length: _ }, Self::Array { item_format: other_item, length: None }) => {
                 self_item.can_coerce_to(other_item, is_mutable)
             },
+            (Self::Function { signature: self_signature }, Self::Function { signature: other_signature }) => {
+                self_signature.is_varargs() == other_signature.is_varargs()
+                    && self_signature.return_format().can_coerce_to(other_signature.return_format(), false)
+                    && self_signature.parameter_formats().len() == other_signature.parameter_formats().len()
+                    && std::iter::zip(self_signature.parameter_formats(), other_signature.parameter_formats())
+                        .all(|(self_format, other_format)| self_format.can_coerce_to(other_format, false))
+            },
             (Self::Void, _) | (_, Self::Void) => true,
             _ => false
         }
@@ -236,12 +241,21 @@ impl Format {
             (Self::Array { item_format: self_item, length: self_length }, Self::Array { item_format: other_item, length: other_length }) => {
                 self_length != other_length || self_item.requires_bitcast_to(other_item)
             },
+            (Self::Function { signature: self_signature }, Self::Function { signature: other_signature }) => {
+                self_signature.return_format().requires_bitcast_to(other_signature.return_format())
+                    || std::iter::zip(self_signature.parameter_formats(), other_signature.parameter_formats())
+                        .any(|(self_format, other_format)| self_format.requires_bitcast_to(other_format))
+            },
             _ => true
         }
     }
 
     pub fn expect_size(&self, symbol_table: &SymbolTable) -> crate::Result<usize> {
         self.size(symbol_table).ok_or_else(|| Box::new(crate::Error::UnknownTypeSize { type_name: self.rich_name() }))
+    }
+
+    pub fn expect_alignment(&self, symbol_table: &SymbolTable) -> crate::Result<usize> {
+        self.alignment(symbol_table).ok_or_else(|| Box::new(crate::Error::UnknownTypeSize { type_name: self.rich_name() }))
     }
 
     pub fn rich_name(&self) -> String {
@@ -347,7 +361,7 @@ impl fmt::Display for Format {
                 write!(f, "%{identifier}")
             },
             Self::Function { signature } => {
-                write!(f, "{signature}")
+                write!(f, "{signature}*")
             },
             Self::Scope => {
                 write!(f, "<ERROR scope format>")
@@ -1095,13 +1109,11 @@ impl SymbolTable {
         let mut next_node = self.hash_table_buckets.get(index)?.as_deref();
 
         while let Some(current_node) = next_node {
-            if let Symbol::Local { name: symbol_name, scope, .. } = &current_node.symbol {
-                // FIXME: probably need to do more than just self.active_scopes.contains() to ensure the retrieved symbol is from the *closest* scope
-                if symbol_name == name && in_scope.map_or_else(|| self.active_scopes.contains(scope), |in_scope| in_scope == scope) {
-                    return Some(&current_node.symbol);
-                }
-            }
-            else if current_node.symbol.name() == name {
+            // FIXME: probably need to do more than just `self.active_scopes.contains()`` to ensure the retrieved symbol is from the *closest* scope
+            if current_node.symbol.name() == name && in_scope.map_or_else(
+                || self.active_scopes.contains(current_node.symbol.scope()),
+                |in_scope| in_scope == current_node.symbol.scope(),
+            ) {
                 return Some(&current_node.symbol);
             }
             next_node = current_node.next_node.as_deref();
@@ -1114,12 +1126,10 @@ impl SymbolTable {
         let mut next_node = self.hash_table_buckets.get_mut(index)?.as_deref_mut();
 
         while let Some(current_node) = next_node {
-            if let Symbol::Local { name: symbol_name, scope, .. } = &current_node.symbol {
-                if symbol_name == name && in_scope.map_or_else(|| self.active_scopes.contains(scope), |in_scope| in_scope == scope) {
-                    return Some(&mut current_node.symbol);
-                }
-            }
-            else if current_node.symbol.name() == name {
+            if current_node.symbol.name() == name && in_scope.map_or_else(
+                || self.active_scopes.contains(current_node.symbol.scope()),
+                |in_scope| in_scope == current_node.symbol.scope(),
+            ) {
                 return Some(&mut current_node.symbol);
             }
             next_node = current_node.next_node.as_deref_mut();

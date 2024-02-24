@@ -228,6 +228,17 @@ impl<W: Write> Generator<W> {
                     length: None,
                 }
             },
+            ast::TypeNode::Function { parameter_types, is_varargs, return_type } => {
+                Format::Function {
+                    signature: Box::new(FunctionSignature::new(
+                        self.get_format_from_node(return_type, false, context)?,
+                        Result::from_iter(parameter_types.iter().map(|parameter_type| {
+                            self.get_format_from_node(parameter_type, false, context)
+                        }))?,
+                        *is_varargs,
+                    )),
+                }
+            },
             ast::TypeNode::SelfType => {
                 context.self_format()
                     .cloned()
@@ -855,7 +866,17 @@ impl<W: Write> Generator<W> {
                     panic!("non-type operand for 'sizeof'");
                 }
             },
-            ast::UnaryOperation::GetAlign => todo!(),
+            ast::UnaryOperation::GetAlign => {
+                if let ast::Node::Type(type_node) = operand {
+                    let format = self.get_format_from_node(type_node, false, context)?;
+                    let align = format.expect_alignment(&self.symbol_table)?;
+
+                    Value::Constant(Constant::Integer(IntegerValue::Unsigned64(align as u64)))
+                }
+                else {
+                    panic!("non-type operand for 'alignof'");
+                }
+            },
         };
 
         Ok(result)
@@ -1395,6 +1416,7 @@ impl<W: Write> Generator<W> {
 
     fn generate_call_operation(&mut self, callee: &ast::Node, arguments: &[Box<ast::Node>], context: &ScopeContext) -> crate::Result<Value> {
         let callee = self.generate_node(callee, context, None)?;
+        let callee = self.coerce_to_rvalue(callee)?;
 
         if let Format::Function { signature } = callee.format() {
             let mut argument_values = Vec::new();
@@ -1610,7 +1632,7 @@ impl<W: Write> Generator<W> {
                 if &new_signature != old_symbol.signature() {
                     return Err(Box::new(crate::Error::FunctionSignatureConflict { function_name: name.into(), old_type: old_symbol.signature().rich_name(), new_type: new_signature.rich_name() }));
                 }
-                else if old_symbol.is_defined() {
+                if old_symbol.is_defined() {
                     return Err(Box::new(crate::Error::MultipleFunctionDefinition { function_name: name.into() }));
                 }
             }

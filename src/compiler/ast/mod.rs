@@ -293,6 +293,11 @@ pub enum TypeNode {
         item_type: Box<TypeNode>,
         length: Option<Box<Node>>,
     },
+    Function {
+        parameter_types: Vec<TypeNode>,
+        is_varargs: bool,
+        return_type: Box<TypeNode>,
+    },
     SelfType,
 }
 
@@ -312,6 +317,23 @@ impl std::fmt::Display for TypeNode {
             },
             Self::Array { item_type, length: None } => {
                 write!(f, "[{item_type}]")
+            },
+            Self::Function { parameter_types, is_varargs, return_type } => {
+                write!(f, "function(")?;
+                let mut parameter_types_iter = parameter_types.iter();
+                if let Some(parameter_type) = parameter_types_iter.next() {
+                    write!(f, "{parameter_type}")?;
+                    for parameter_type in parameter_types_iter {
+                        write!(f, ", {parameter_type}")?;
+                    }
+                    if *is_varargs {
+                        write!(f, ", ..")?;
+                    }
+                }
+                else if *is_varargs {
+                    write!(f, "..")?;
+                }
+                write!(f, ") -> {return_type}")
             },
             Self::SelfType => {
                 write!(f, "Self")

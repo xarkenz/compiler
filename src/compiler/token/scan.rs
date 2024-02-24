@@ -147,20 +147,27 @@ impl<T: BufRead> Scanner<T> {
         let start_index = self.next_index;
         let mut content = String::new();
 
+        // Consume characters as long as the current sequence is a valid token prefix
         while let Some(ch) = self.next_char()? {
             content.push(ch);
             let matches = get_symbolic_token_partial_matches(content.as_str());
             if matches.is_empty() {
+                let ch = content.pop().unwrap();
+                self.put_back(ch);
                 break;
             }
         }
 
-        while let Some(ch) = content.pop() {
-            self.put_back(ch);
+        // Backtrack to find the longest exact token match
+        while !content.is_empty() {
             if let Some(symbolic_token) = get_symbolic_token_match(content.as_str()) {
                 let span = self.create_span(start_index, self.next_index);
                 return Ok(Some((span, symbolic_token.clone())));
             }
+
+            // Since no match was found, take away a character and try again
+            let ch = content.pop().unwrap();
+            self.put_back(ch);
         }
 
         let span = self.create_span(start_index, start_index);
