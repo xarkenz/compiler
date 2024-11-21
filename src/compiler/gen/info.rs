@@ -204,15 +204,16 @@ impl Format {
         self == other || match (self, other) {
             (Self::Pointer { pointee_format: self_pointee, semantics: self_semantics }, Self::Pointer { pointee_format: other_pointee, semantics: other_semantics }) => {
                 // Not sure if this is right... needs testing
+                use PointerSemantics::*;
                 match (self_semantics, other_semantics) {
-                    (PointerSemantics::Immutable, PointerSemantics::Immutable) => self_pointee.can_coerce_to(other_pointee, false),
-                    (PointerSemantics::Immutable, _) => false,
-                    (PointerSemantics::Mutable, PointerSemantics::Immutable) => self_pointee.can_coerce_to(other_pointee, true),
-                    (PointerSemantics::Mutable, PointerSemantics::Mutable) => self_pointee.can_coerce_to(other_pointee, true),
-                    (PointerSemantics::Mutable, _) => false,
-                    (PointerSemantics::Owned, PointerSemantics::Immutable) => self_pointee.can_coerce_to(other_pointee, is_mutable),
-                    (PointerSemantics::Owned, PointerSemantics::Mutable) => is_mutable && self_pointee.can_coerce_to(other_pointee, is_mutable),
-                    (PointerSemantics::Owned, PointerSemantics::Owned) => self_pointee.can_coerce_to(other_pointee, is_mutable),
+                    (Immutable, Immutable) => self_pointee.can_coerce_to(other_pointee, false),
+                    (Immutable, _) => false,
+                    (Mutable, Immutable) => self_pointee.can_coerce_to(other_pointee, true),
+                    (Mutable, Mutable) => self_pointee.can_coerce_to(other_pointee, true),
+                    (Mutable, _) => false,
+                    (Owned, Immutable) => self_pointee.can_coerce_to(other_pointee, is_mutable),
+                    (Owned, Mutable) => is_mutable && self_pointee.can_coerce_to(other_pointee, is_mutable),
+                    (Owned, Owned) => self_pointee.can_coerce_to(other_pointee, is_mutable),
                 }
             },
             (Self::Array { item_format: self_item, length: Some(self_length) }, Self::Array { item_format: other_item, length: Some(other_length) }) => {

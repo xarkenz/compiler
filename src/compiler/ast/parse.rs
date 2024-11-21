@@ -121,6 +121,13 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         items,
                     })
                 },
+                Token::SelfType => {
+                    Box::new(Node::Type(TypeNode::SelfType))
+                },
+                Token::AngleLeft => {
+                    self.scan_token()?;
+                    Box::new(Node::Type(self.parse_type(Some(&[Token::AngleRight]))?))
+                },
                 _ => {
                     return Err(Box::new(crate::Error::ExpectedOperand { span: self.current_span(), got_token: token.clone() }));
                 }

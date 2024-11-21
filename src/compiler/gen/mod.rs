@@ -550,7 +550,7 @@ impl<W: Write> Generator<W> {
                 Value::Continue
             },
             ast::Node::Return { value } => {
-                let return_format = context.function().map(|function| function.return_format())
+                let return_format = context.function().map(FunctionContext::return_format)
                     .ok_or_else(|| Box::new(crate::Error::InvalidReturn {}))?;
 
                 if let Some(value) = value {
@@ -707,6 +707,10 @@ impl<W: Write> Generator<W> {
                     .ok_or_else(|| Box::new(crate::Error::PartialType { type_name: name.clone() }))?
                     .clone()
             },
+            ast::Node::Type(type_node) => {
+                // FIXME: we need the *definition* format, not the identified format
+                self.get_format_from_node(type_node, false, context)?
+            }
             _ => return Err(Box::new(crate::Error::InvalidStructIdentifier {}))
         };
 
@@ -1856,13 +1860,17 @@ impl<W: Write> Generator<W> {
                             .ok_or_else(|| Box::new(crate::Error::NonStructSymbol { name: name.clone() }))?
                             .definition_format()
                             .ok_or_else(|| Box::new(crate::Error::PartialType { type_name: name.clone() }))?
+                            .clone()
                     },
+                    ast::Node::Type(type_node) => {
+                        self.get_format_from_node(type_node, false, context)?
+                    }
                     _ => return Err(Box::new(crate::Error::InvalidStructIdentifier {}))
                 };
                 
                 if let Format::Structure { type_name: Some(type_name), members } = structure_format {
                     let result_format = Format::Identified {
-                        type_identifier: self.get_type_identifier(type_name)?,
+                        type_identifier: self.get_type_identifier(&type_name)?,
                         type_name: type_name.clone(),
                     };
 

@@ -1,0 +1,43 @@
+// stdio.h
+function printf(format: *[u8], ..) -> i32;
+// unistd.h
+function getpid() -> i32;
+function getppid() -> i32;
+function fork() -> i32;
+// sys/wait.h
+function wait(status: *i32) -> i32;
+
+function main() -> i32 {
+    // Approach:
+    // - Parent prints statement 1
+    // - Fork child process, parent waits for child to finish
+    // - Child prints statement 2
+    // - Child prints statement 3
+    // - Child finishes, so parent resumes
+    // - Parent prints statement 4
+
+    // Obtain the PID of the parent process (which is currently the only process)
+    let parent_pid: i32 = getpid();
+
+    printf("1. Parent (P) is having ID %d\n", parent_pid);
+
+    // Fork this process (and obtain the PID of the child process in parent process)
+    let mut child_pid: i32 = fork();
+
+    if (child_pid == 0) {
+        // This is the child process, so obtain the PID of this process
+        child_pid = getpid();
+
+        printf("2. Child is having ID %d\n", child_pid);
+
+        printf("3. My Parent ID is %d\n", parent_pid);
+    }
+    else {
+        // This is the parent process, so wait until the child process finishes
+        wait(null);
+
+        printf("4. ID of P's Child is %d\n", child_pid);
+    }
+
+    return 0;
+}

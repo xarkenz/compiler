@@ -1,0 +1,19 @@
+function malloc(size_bytes: u64) -> *own void;
+function free(alloc: *own void);
+function printf(format: *[u8], ..) -> u32;
+
+implement [i32; 2] {
+    function x(self: *Self) -> i32 {
+        return self[0];
+    }
+
+    function y(self: *Self) -> i32 {
+        return self[1];
+    }
+}
+
+function main() -> i32 {
+    let vector: [i32; 2] = [4, 8];
+    printf("(%d, %d)\n", vector.x(), vector.y());
+    return 0;
+}

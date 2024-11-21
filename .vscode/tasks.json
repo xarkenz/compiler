@@ -20,8 +20,8 @@
 			"command": "./target/debug/compiler_driver.exe",
 			"args": [
 				"--debug",
-				"--src", "./src/compiler_driver/collections.txt",
-				"--out", "./src/compiler_driver/collections.ll"
+				"--src", "./src/compiler_driver/unistd_test.txt",
+				"--out", "./src/compiler_driver/unistd_test.ll"
 			],
 			"dependsOn": ["build compiler"],
 			"options": {
