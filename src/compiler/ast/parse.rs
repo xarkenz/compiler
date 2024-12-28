@@ -268,8 +268,8 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.expect_token(allowed_ends)?;
                 }
 
-                Ok(TypeNode::Identified {
-                    type_name: name,
+                Ok(TypeNode::Named {
+                    name: name,
                 })
             },
             Token::Star => {
@@ -346,8 +346,8 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     return_type = Box::new(self.parse_type(allowed_ends)?);
                 }
                 else {
-                    return_type = Box::new(TypeNode::Identified {
-                        type_name: "void".into(),
+                    return_type = Box::new(TypeNode::Named {
+                        name: "void".into(),
                     });
 
                     if let Some(allowed_ends) = allowed_ends {
@@ -357,7 +357,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
                 Ok(TypeNode::Function {
                     parameter_types,
-                    is_varargs,
+                    is_variadic: is_varargs,
                     return_type,
                 })
             },
@@ -483,8 +483,8 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.scan_token()?;
                     self.parse_type(Some(&[Token::CurlyLeft, Token::Semicolon]))?
                 } else {
-                    TypeNode::Identified {
-                        type_name: "void".into(),
+                    TypeNode::Named {
+                        name: "void".into(),
                     }
                 };
                 let body = if let Some(Token::CurlyLeft) = self.current_token() {

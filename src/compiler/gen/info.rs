@@ -1,13 +1,13 @@
 use super::*;
 
+use crate::sema::*;
+
 use std::fmt;
 
-pub use crate::ast::PointerSemantics;
-
 fn quote_identifier_if_needed(mut identifier: String) -> String {
-    let needs_quotes = identifier.contains(|ch| !(matches!(ch,
+    let needs_quotes = identifier.contains(|ch| !matches!(ch,
         '0'..='9' | 'A'..='Z' | 'a'..='z' | '-' | '_' | '.' | '$'
-    )));
+    ));
 
     if needs_quotes {
         identifier.insert(0, '"');
@@ -15,360 +15,6 @@ fn quote_identifier_if_needed(mut identifier: String) -> String {
     }
 
     identifier
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct FunctionSignature {
-    return_format: Format,
-    parameter_formats: Vec<Format>,
-    is_varargs: bool,
-}
-
-impl FunctionSignature {
-    pub fn new(return_format: Format, parameter_formats: Vec<Format>, is_varargs: bool) -> Self {
-        Self {
-            return_format,
-            parameter_formats,
-            is_varargs,
-        }
-    }
-
-    pub fn return_format(&self) -> &Format {
-        &self.return_format
-    }
-
-    pub fn parameter_formats(&self) -> &[Format] {
-        &self.parameter_formats
-    }
-
-    pub fn is_varargs(&self) -> bool {
-        self.is_varargs
-    }
-
-    pub fn rich_name(&self) -> String {
-        let mut name = String::from("function(");
-        let mut parameters_iter = self.parameter_formats().iter();
-        if let Some(parameter) = parameters_iter.next() {
-            name = format!("{name}{parameter}", parameter = parameter.rich_name());
-            for parameter in parameters_iter {
-                name = format!("{name}, {parameter}", parameter = parameter.rich_name());
-            }
-            if self.is_varargs() {
-                name = format!("{name}, ..");
-            }
-        }
-        else if self.is_varargs() {
-            name = format!("{name}..");
-        }
-        format!("{name}) -> {return_format}", return_format = self.return_format().rich_name())
-    }
-}
-
-impl fmt::Display for FunctionSignature {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{return_format}(", return_format = self.return_format())?;
-        let mut parameters_iter = self.parameter_formats().iter();
-        if let Some(parameter) = parameters_iter.next() {
-            write!(f, "{parameter}")?;
-            for parameter in parameters_iter {
-                write!(f, ", {parameter}")?;
-            }
-            if self.is_varargs() {
-                write!(f, ", ...")?;
-            }
-        }
-        else if self.is_varargs() {
-            write!(f, "...")?;
-        }
-        write!(f, ")")
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Format {
-    Never,
-    Void,
-    Boolean,
-    Integer {
-        size: usize,
-        signed: bool,
-    },
-    Pointer {
-        pointee_format: Box<Format>,
-        semantics: PointerSemantics,
-    },
-    Array {
-        item_format: Box<Format>,
-        length: Option<usize>,
-    },
-    Structure {
-        type_name: Option<String>,
-        members: Vec<(String, Format)>,
-    },
-    Identified {
-        type_identifier: String,
-        type_name: String,
-    },
-    Function {
-        signature: Box<FunctionSignature>,
-    },
-    Scope,
-}
-
-impl Format {
-    pub fn opaque_pointer() -> Self {
-        Self::Pointer {
-            pointee_format: Box::new(Format::Void),
-            semantics: PointerSemantics::Immutable,
-        }
-    }
-
-    pub fn into_pointer(self, semantics: PointerSemantics) -> Self {
-        Self::Pointer {
-            pointee_format: Box::new(self),
-            semantics,
-        }
-    }
-
-    pub fn size(&self, symbol_table: &SymbolTable) -> Option<usize> {
-        match self {
-            Self::Never => Some(0),
-            Self::Void => Some(0),
-            Self::Boolean => Some(1),
-            Self::Integer { size, .. } => Some(*size),
-            Self::Pointer { .. } | Self::Function { .. } => Some(8),
-            Self::Array { length, item_format } => {
-                Some(length.clone()? * item_format.size(symbol_table)?)
-            },
-            Self::Structure { members, .. } => {
-                let mut current_size = 0;
-                let mut max_alignment = 0;
-
-                for (_name, format) in members {
-                    let alignment = format.alignment(symbol_table)?;
-                    max_alignment = max_alignment.max(alignment);
-
-                    // Calculate padding
-                    let intermediate_size = current_size + alignment - 1;
-                    let padded_size = intermediate_size - intermediate_size % alignment;
-                    current_size = padded_size + format.size(symbol_table)?;
-                }
-
-                // Pad for the largest member alignment
-                let intermediate_size = current_size + max_alignment - 1;
-                let padded_size = intermediate_size - intermediate_size % max_alignment;
-                
-                Some(padded_size)
-            },
-            Self::Identified { type_name, .. } => {
-                symbol_table.find(type_name, None)?
-                    .type_value()?
-                    .definition_format()?
-                    .size(symbol_table)
-            },
-            Self::Scope => None,
-        }
-    }
-
-    pub fn alignment(&self, symbol_table: &SymbolTable) -> Option<usize> {
-        match self {
-            Self::Never => None,
-            Self::Void => None,
-            Self::Boolean => Some(1),
-            Self::Integer { size, .. } => Some(*size),
-            Self::Pointer { .. } | Self::Function { .. } => Some(8),
-            Self::Array { item_format, .. } => item_format.alignment(symbol_table),
-            Self::Structure { members, .. } => {
-                members.iter()
-                    .map(|(_name, format)| format.alignment(symbol_table).unwrap())
-                    .max()
-            },
-            Self::Identified { type_name, .. } => {
-                symbol_table.find(type_name, None)?
-                    .type_value()?
-                    .definition_format()?
-                    .alignment(symbol_table)
-            },
-            Self::Scope => None,
-        }
-    }
-
-    pub fn pointer_semantics(&self) -> Option<PointerSemantics> {
-        match self {
-            Self::Pointer { semantics, .. } => Some(*semantics),
-            _ => None
-        }
-    }
-
-    pub fn can_coerce_to(&self, other: &Self, is_mutable: bool) -> bool {
-        self == other || match (self, other) {
-            (Self::Pointer { pointee_format: self_pointee, semantics: self_semantics }, Self::Pointer { pointee_format: other_pointee, semantics: other_semantics }) => {
-                // Not sure if this is right... needs testing
-                use PointerSemantics::*;
-                match (self_semantics, other_semantics) {
-                    (Immutable, Immutable) => self_pointee.can_coerce_to(other_pointee, false),
-                    (Immutable, _) => false,
-                    (Mutable, Immutable) => self_pointee.can_coerce_to(other_pointee, true),
-                    (Mutable, Mutable) => self_pointee.can_coerce_to(other_pointee, true),
-                    (Mutable, _) => false,
-                    (Owned, Immutable) => self_pointee.can_coerce_to(other_pointee, is_mutable),
-                    (Owned, Mutable) => is_mutable && self_pointee.can_coerce_to(other_pointee, is_mutable),
-                    (Owned, Owned) => self_pointee.can_coerce_to(other_pointee, is_mutable),
-                }
-            },
-            (Self::Array { item_format: self_item, length: Some(self_length) }, Self::Array { item_format: other_item, length: Some(other_length) }) => {
-                self_length == other_length && self_item.can_coerce_to(other_item, is_mutable)
-            },
-            (Self::Array { item_format: self_item, length: _ }, Self::Array { item_format: other_item, length: None }) => {
-                self_item.can_coerce_to(other_item, is_mutable)
-            },
-            (Self::Function { signature: self_signature }, Self::Function { signature: other_signature }) => {
-                self_signature.is_varargs() == other_signature.is_varargs()
-                    && self_signature.return_format().can_coerce_to(other_signature.return_format(), false)
-                    && self_signature.parameter_formats().len() == other_signature.parameter_formats().len()
-                    && std::iter::zip(self_signature.parameter_formats(), other_signature.parameter_formats())
-                        .all(|(self_format, other_format)| self_format.can_coerce_to(other_format, false))
-            },
-            (Self::Void, _) | (_, Self::Void) => true,
-            _ => false
-        }
-    }
-
-    pub fn requires_bitcast_to(&self, other: &Self) -> bool {
-        self != other && match (self, other) {
-            (Self::Pointer { pointee_format: self_pointee, .. }, Self::Pointer { pointee_format: other_pointee, .. }) => {
-                self_pointee.requires_bitcast_to(other_pointee)
-            },
-            (Self::Array { item_format: self_item, length: self_length }, Self::Array { item_format: other_item, length: other_length }) => {
-                self_length != other_length || self_item.requires_bitcast_to(other_item)
-            },
-            (Self::Function { signature: self_signature }, Self::Function { signature: other_signature }) => {
-                self_signature.return_format().requires_bitcast_to(other_signature.return_format())
-                    || std::iter::zip(self_signature.parameter_formats(), other_signature.parameter_formats())
-                        .any(|(self_format, other_format)| self_format.requires_bitcast_to(other_format))
-            },
-            _ => true
-        }
-    }
-
-    pub fn expect_size(&self, symbol_table: &SymbolTable) -> crate::Result<usize> {
-        self.size(symbol_table).ok_or_else(|| Box::new(crate::Error::UnknownTypeSize { type_name: self.rich_name() }))
-    }
-
-    pub fn expect_alignment(&self, symbol_table: &SymbolTable) -> crate::Result<usize> {
-        self.alignment(symbol_table).ok_or_else(|| Box::new(crate::Error::UnknownTypeSize { type_name: self.rich_name() }))
-    }
-
-    pub fn rich_name(&self) -> String {
-        match self {
-            Self::Never => {
-                "never".into()
-            }
-            Self::Void => {
-                "void".into()
-            },
-            Self::Boolean => {
-                "bool".into()
-            },
-            Self::Integer { size, signed: true } => {
-                format!("i{bits}", bits = size * 8)
-            },
-            Self::Integer { size, signed: false } => {
-                format!("u{bits}", bits = size * 8)
-            },
-            Self::Pointer { pointee_format, semantics } => {
-                let pointee_format = pointee_format.rich_name();
-                match semantics {
-                    PointerSemantics::Immutable => format!("*{pointee_format}"),
-                    PointerSemantics::Mutable => format!("*mut {pointee_format}"),
-                    PointerSemantics::Owned => format!("*own {pointee_format}"),
-                }
-            },
-            Self::Array { item_format, length: Some(length) } => {
-                format!("[{item_format}; {length}]", item_format = item_format.rich_name())
-            },
-            Self::Array { item_format, length: None } => {
-                format!("[{item_format}]", item_format = item_format.rich_name())
-            },
-            Self::Structure { type_name, members } => {
-                if let Some(type_name) = type_name {
-                    type_name.clone()
-                }
-                else {
-                    let mut name = String::from("(");
-                    let mut members_iter = members.iter();
-                    if let Some((_, member_format)) = members_iter.next() {
-                        name = format!("{name}{member_format}", member_format = member_format.rich_name());
-                        for (_, member_format) in members_iter {
-                            name = format!("{name}, {member_format}", member_format = member_format.rich_name());
-                        }
-                    }
-                    format!("{name})")
-                }
-            },
-            Self::Identified { type_name, .. } => {
-                type_name.clone()
-            },
-            Self::Function { signature } => {
-                signature.rich_name()
-            },
-            Self::Scope => {
-                "{scope}".into()
-            },
-        }
-    }
-}
-
-impl fmt::Display for Format {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Never | Self::Void => {
-                write!(f, "void")
-            },
-            Self::Boolean => {
-                write!(f, "i1")
-            },
-            Self::Integer { size, .. } => {
-                write!(f, "i{bits}", bits = size * 8)
-            },
-            Self::Pointer { pointee_format, .. } => {
-                if let Self::Void = pointee_format.as_ref() {
-                    write!(f, "{{}}*") // I wanted to use `ptr`, but LLVM complains unless -opaque-pointers is enabled
-                }
-                else {
-                    write!(f, "{pointee_format}*")
-                }
-            },
-            Self::Array { item_format, length: Some(length) } => {
-                write!(f, "[{length} x {item_format}]")
-            },
-            Self::Array { item_format, length: None } => {
-                write!(f, "{item_format}")
-            },
-            Self::Structure { members, .. } => {
-                write!(f, "{{")?;
-                let mut members_iter = members.iter();
-                if let Some((_, member_format)) = members_iter.next() {
-                    write!(f, " {member_format}")?;
-                    for (_, member_format) in members_iter {
-                        write!(f, ", {member_format}")?;
-                    }
-                    write!(f, " ")?;
-                }
-                write!(f, "}}")
-            },
-            Self::Identified { type_identifier, .. } => {
-                let identifier = quote_identifier_if_needed(format!("type.{type_identifier}"));
-                write!(f, "%{identifier}")
-            },
-            Self::Function { signature } => {
-                write!(f, "{signature}*")
-            },
-            Self::Scope => {
-                write!(f, "<ERROR scope format>")
-            },
-        }
-    }
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -384,33 +30,33 @@ pub enum IntegerValue {
 }
 
 impl IntegerValue {
-    pub fn new(raw: i128, format: &Format) -> Option<Self> {
-        match format {
-            Format::Integer { size: 1, signed: true } => Some(Self::Signed8(raw as i8)),
-            Format::Integer { size: 1, signed: false } => Some(Self::Unsigned8(raw as u8)),
-            Format::Integer { size: 2, signed: true } => Some(Self::Signed16(raw as i16)),
-            Format::Integer { size: 2, signed: false } => Some(Self::Unsigned16(raw as u16)),
-            Format::Integer { size: 4, signed: true } => Some(Self::Signed32(raw as i32)),
-            Format::Integer { size: 4, signed: false } => Some(Self::Unsigned32(raw as u32)),
-            Format::Integer { size: 8, signed: true } => Some(Self::Signed64(raw as i64)),
-            Format::Integer { size: 8, signed: false } => Some(Self::Unsigned64(raw as u64)),
+    pub fn new(raw: i128, type_info: &TypeInfo) -> Option<Self> {
+        match type_info {
+            TypeInfo::Integer { size: 1, signed: true } => Some(Self::Signed8(raw as i8)),
+            TypeInfo::Integer { size: 1, signed: false } => Some(Self::Unsigned8(raw as u8)),
+            TypeInfo::Integer { size: 2, signed: true } => Some(Self::Signed16(raw as i16)),
+            TypeInfo::Integer { size: 2, signed: false } => Some(Self::Unsigned16(raw as u16)),
+            TypeInfo::Integer { size: 4, signed: true } => Some(Self::Signed32(raw as i32)),
+            TypeInfo::Integer { size: 4, signed: false } => Some(Self::Unsigned32(raw as u32)),
+            TypeInfo::Integer { size: 8, signed: true } => Some(Self::Signed64(raw as i64)),
+            TypeInfo::Integer { size: 8, signed: false } => Some(Self::Unsigned64(raw as u64)),
             _ => None
         }
     }
 
     pub fn size(&self) -> usize {
         match self {
-            Self::Signed8(_) | Self::Unsigned8(_) => 1,
-            Self::Signed16(_) | Self::Unsigned16(_) => 2,
-            Self::Signed32(_) | Self::Unsigned32(_) => 4,
-            Self::Signed64(_) | Self::Unsigned64(_) => 8,
+            Self::Signed8(..) | Self::Unsigned8(..) => 1,
+            Self::Signed16(..) | Self::Unsigned16(..) => 2,
+            Self::Signed32(..) | Self::Unsigned32(..) => 4,
+            Self::Signed64(..) | Self::Unsigned64(..) => 8,
         }
     }
 
     pub fn is_signed(&self) -> bool {
         match self {
-            Self::Signed8(_) | Self::Signed16(_) | Self::Signed32(_) | Self::Signed64(_) => true,
-            Self::Unsigned8(_) | Self::Unsigned16(_) | Self::Unsigned32(_) | Self::Unsigned64(_) => false,
+            Self::Signed8(..) | Self::Signed16(..) | Self::Signed32(..) | Self::Signed64(..) => true,
+            Self::Unsigned8(..) | Self::Unsigned16(..) | Self::Unsigned32(..) | Self::Unsigned64(..) => false,
         }
     }
 
@@ -427,10 +73,16 @@ impl IntegerValue {
         }
     }
 
-    pub fn format(&self) -> Format {
-        Format::Integer {
-            size: self.size(),
-            signed: self.is_signed(),
+    pub fn value_type(&self) -> TypeHandle {
+        match self {
+            Self::Signed8(..) => TypeHandle::I8,
+            Self::Unsigned8(..) => TypeHandle::U8,
+            Self::Signed16(..) => TypeHandle::I16,
+            Self::Unsigned16(..) => TypeHandle::U16,
+            Self::Signed32(..) => TypeHandle::I32,
+            Self::Unsigned32(..) => TypeHandle::U32,
+            Self::Signed64(..) => TypeHandle::I64,
+            Self::Unsigned64(..) => TypeHandle::U64,
         }
     }
 }
@@ -453,37 +105,46 @@ impl fmt::Display for IntegerValue {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Register {
     identifier: String,
-    format: Format,
+    value_type: TypeHandle,
     is_global: bool,
 }
 
 impl Register {
-    pub fn new_global(identifier: String, format: Format) -> Self {
+    pub fn new_global(identifier: String, value_type: TypeHandle) -> Self {
         Self {
             identifier: quote_identifier_if_needed(identifier),
-            format,
+            value_type,
             is_global: true,
         }
     }
 
-    pub fn new_local(identifier: String, format: Format) -> Self {
+    pub fn new_local(identifier: String, value_type: TypeHandle) -> Self {
         Self {
             identifier: quote_identifier_if_needed(identifier),
-            format,
+            value_type,
             is_global: false,
         }
     }
 
     pub fn identifier(&self) -> &str {
-        self.identifier.as_str()
+        &self.identifier
     }
 
-    pub fn format(&self) -> &Format {
-        &self.format
+    pub fn value_type(&self) -> TypeHandle {
+        self.value_type
     }
 
     pub fn is_global(&self) -> bool {
         self.is_global
+    }
+    
+    pub fn get_llvm_syntax(&self) -> String {
+        if self.is_global() {
+            format!("@{}", self.identifier())
+        }
+        else {
+            format!("%{}", self.identifier())
+        }
     }
 }
 
@@ -499,127 +160,141 @@ impl Ord for Register {
     }
 }
 
-impl fmt::Display for Register {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_global() {
-            write!(f, "@{}", self.identifier)
-        }
-        else {
-            write!(f, "%{}", self.identifier)
-        }
-    }
-}
-
 #[derive(Clone, PartialEq, Debug)]
 pub enum Constant {
-    Undefined(Format),
-    Poison(Format),
-    ZeroInitializer(Format),
-    NullPointer(Format),
+    Undefined(TypeHandle),
+    Poison(TypeHandle),
+    ZeroInitializer(TypeHandle),
+    NullPointer(TypeHandle),
     Boolean(bool),
     Integer(IntegerValue),
-    String(token::StringValue),
+    String {
+        array_type: TypeHandle,
+        value: token::StringValue,
+    },
     Array {
+        array_type: TypeHandle,
         items: Vec<Constant>,
-        item_format: Format,
     },
     Structure {
+        struct_type: TypeHandle,
         members: Vec<Constant>,
-        format: Format,
     },
     Register(Register),
     Indirect {
+        pointee_type: TypeHandle,
         pointer: Box<Constant>,
-        loaded_format: Format,
     },
     BitwiseCast {
+        result_type: TypeHandle,
         value: Box<Constant>,
-        to_format: Format,
     },
     GetElementPointer {
-        element_format: Format,
-        aggregate_format: Format,
+        result_type: TypeHandle,
+        aggregate_type: TypeHandle,
         pointer: Box<Constant>,
         indices: Vec<Constant>,
-        semantics: PointerSemantics,
     },
     Scope(Scope),
 }
 
 impl Constant {
-    pub fn format(&self) -> Format {
-        match self {
-            Self::Undefined(format) => format.clone(),
-            Self::Poison(format) => format.clone(),
-            Self::ZeroInitializer(format) => format.clone(),
-            Self::NullPointer(format) => format.clone(),
-            Self::Boolean(_) => Format::Boolean,
-            Self::Integer(value) => value.format(),
-            Self::String(value) => Format::Array {
-                item_format: Box::new(Format::Integer { size: 1, signed: false }),
-                length: Some(value.len()),
-            },
-            Self::Array { items, item_format } => Format::Array {
-                item_format: Box::new(item_format.clone()),
-                length: Some(items.len()),
-            },
-            Self::Structure { format, .. } => format.clone(),
-            Self::Register(register) => register.format().clone(),
-            Self::Indirect { loaded_format, .. } => loaded_format.clone(),
-            Self::BitwiseCast { to_format, .. } => to_format.clone(),
-            Self::GetElementPointer { element_format, semantics, .. } => element_format.clone().into_pointer(*semantics),
-            Self::Scope(_) => Format::Scope,
+    pub fn get_type(&self) -> TypeHandle {
+        match *self {
+            Self::Undefined(value_type) => value_type,
+            Self::Poison(value_type) => value_type,
+            Self::ZeroInitializer(value_type) => value_type,
+            Self::NullPointer(value_type) => value_type,
+            Self::Boolean(..) => TypeHandle::BOOL,
+            Self::Integer(ref integer) => integer.value_type(),
+            Self::String { array_type, .. } => array_type,
+            Self::Array { array_type, .. } => array_type,
+            Self::Structure { struct_type, .. } => struct_type,
+            Self::Register(ref register) => register.value_type(),
+            Self::Indirect { pointee_type, .. } => pointee_type,
+            Self::BitwiseCast { result_type, .. } => result_type,
+            Self::GetElementPointer { result_type, .. } => result_type,
+            Self::Scope(..) => TypeHandle::META,
         }
     }
-}
 
-impl fmt::Display for Constant {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    pub fn get_llvm_syntax(&self, registry: &TypeRegistry) -> String {
         match self {
-            Self::Undefined(_) => write!(f, "undef"),
-            Self::Poison(_) => write!(f, "poison"),
-            Self::ZeroInitializer(_) => write!(f, "zeroinitializer"),
-            Self::NullPointer(_) => write!(f, "null"),
-            Self::Boolean(value) => write!(f, "{value}"),
-            Self::Integer(value) => write!(f, "{value}"),
-            Self::String(value) => write!(f, "{value}"),
+            Self::Undefined(..) => "undef".into(),
+            Self::Poison(..) => "poison".into(),
+            Self::ZeroInitializer(..) => "zeroinitializer".into(),
+            Self::NullPointer(..) => "null".into(),
+            Self::Boolean(value) => format!("{value}"),
+            Self::Integer(value) => format!("{value}"),
+            Self::String { value, .. } => format!("{value}"),
             Self::Array { items, .. } => {
-                write!(f, "[")?;
                 let mut items_iter = items.iter();
                 if let Some(item) = items_iter.next() {
-                    write!(f, " {format} {item}", format = item.format())?;
+                    let mut syntax = String::from("[ ");
+                    syntax.push_str(registry.get_llvm_syntax(item.get_type()));
+                    syntax.push(' ');
+                    syntax.push_str(&item.get_llvm_syntax(registry));
                     for item in items_iter {
-                        write!(f, ", {format} {item}", format = item.format())?;
+                        syntax.push_str(", ");
+                        syntax.push_str(registry.get_llvm_syntax(item.get_type()));
+                        syntax.push(' ');
+                        syntax.push_str(&item.get_llvm_syntax(registry));
                     }
-                    write!(f, " ")?;
+                    syntax.push_str(" ]");
+                    syntax
                 }
-                write!(f, "]")
+                else {
+                    "[]".into()
+                }
             },
             Self::Structure { members, .. } => {
-                write!(f, "{{")?;
                 let mut members_iter = members.iter();
                 if let Some(member) = members_iter.next() {
-                    write!(f, " {format} {member}", format = member.format())?;
+                    let mut syntax = String::from("{ ");
+                    syntax.push_str(registry.get_llvm_syntax(member.get_type()));
+                    syntax.push(' ');
+                    syntax.push_str(&member.get_llvm_syntax(registry));
                     for member in members_iter {
-                        write!(f, ", {format} {member}", format = member.format())?;
+                        syntax.push_str(", ");
+                        syntax.push_str(registry.get_llvm_syntax(member.get_type()));
+                        syntax.push(' ');
+                        syntax.push_str(&member.get_llvm_syntax(registry));
                     }
-                    write!(f, " ")?;
+                    syntax.push_str(" }");
+                    syntax
                 }
-                write!(f, "}}")
+                else {
+                    "{}".into()
+                }
             },
-            Self::Register(register) => write!(f, "{register}"),
-            Self::Indirect { pointer, .. } => write!(f, "<ERROR indirect constant: {pointer}>"),
-            Self::BitwiseCast { value, to_format } => {
-                write!(f, "bitcast ({format} {value} to {to_format})", format = value.format())
+            Self::Register(register) => register.get_llvm_syntax(),
+            Self::Indirect { pointer, .. } => format!("<ERROR indirect constant: {}>", pointer.get_llvm_syntax(registry)),
+            Self::BitwiseCast { value, result_type: to_type } => {
+                let value_type = value.get_type();
+                let value_syntax = value.get_llvm_syntax(registry);
+                format!(
+                    "bitcast ({} {value_syntax} to {})",
+                    registry.get_llvm_syntax(value_type),
+                    registry.get_llvm_syntax(*to_type),
+                )
             },
-            Self::GetElementPointer { aggregate_format, pointer, indices, .. } => {
-                write!(f, "getelementptr inbounds ({aggregate_format}, {pointer_format} {pointer}", pointer_format = pointer.format())?;
+            Self::GetElementPointer { aggregate_type, pointer, indices, .. } => {
+                let mut syntax = format!(
+                    "getelementptr inbounds ({}, {} {}",
+                    registry.get_llvm_syntax(*aggregate_type),
+                    registry.get_llvm_syntax(pointer.get_type()),
+                    pointer.get_llvm_syntax(registry),
+                );
                 for index in indices {
-                    write!(f, ", {index_format} {index}", index_format = index.format())?;
+                    syntax.push_str(", ");
+                    syntax.push_str(registry.get_llvm_syntax(index.get_type()));
+                    syntax.push(' ');
+                    syntax.push_str(&index.get_llvm_syntax(registry));
                 }
-                write!(f, ")")
+                syntax.push(')');
+                syntax
             },
-            Self::Scope(_) => write!(f, "<ERROR scope constant>"),
+            Self::Scope(..) => "<ERROR scope constant>".into(),
         }
     }
 }
@@ -634,7 +309,7 @@ pub enum Value {
     Register(Register),
     Indirect {
         pointer: Box<Value>,
-        loaded_format: Format,
+        pointee_type: TypeHandle,
     },
     BoundFunction {
         self_value: Box<Value>,
@@ -643,25 +318,25 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn format(&self) -> Format {
-        match self {
-            Self::Never | Self::Break | Self::Continue => Format::Never,
-            Self::Void => Format::Void,
-            Self::Constant(constant) => constant.format(),
-            Self::Register(register) => register.format().clone(),
-            Self::Indirect { loaded_format, .. } => loaded_format.clone(),
-            Self::BoundFunction { function_register, .. } => function_register.format().clone(),
+    pub fn get_type(&self) -> TypeHandle {
+        match *self {
+            Self::Never | Self::Break | Self::Continue => TypeHandle::NEVER,
+            Self::Void => TypeHandle::VOID,
+            Self::Constant(ref constant) => constant.get_type(),
+            Self::Register(ref register) => register.value_type(),
+            Self::Indirect { pointee_type, .. } => pointee_type,
+            Self::BoundFunction { ref function_register, .. } => function_register.value_type(),
         }
     }
 
-    pub fn into_mutable_lvalue(self) -> crate::Result<(Self, Format)> {
+    pub fn into_mutable_lvalue(self, registry: &TypeRegistry) -> crate::Result<(Self, TypeHandle)> {
         match self {
-            Self::Indirect { pointer, loaded_format } => {
-                if let Some(PointerSemantics::Mutable) = pointer.format().pointer_semantics() {
-                    Ok((*pointer, loaded_format))
+            Self::Indirect { pointer, pointee_type } => {
+                if let &TypeInfo::Pointer { semantics: PointerSemantics::Mutable, .. } = registry.get_info(pointer.get_type()) {
+                    Ok((*pointer, pointee_type))
                 }
                 else {
-                    Err(Box::new(crate::Error::CannotMutateValue { type_name: loaded_format.rich_name() }))
+                    Err(Box::new(crate::Error::CannotMutateValue { type_name: registry.get_identifier(pointee_type).into() }))
                 }
             },
             _ => {
@@ -676,17 +351,15 @@ impl Value {
             _ => None
         }
     }
-}
 
-impl fmt::Display for Value {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    pub fn get_llvm_syntax(&self, registry: &TypeRegistry) -> String {
         match self {
-            Self::Never | Self::Break | Self::Continue => write!(f, "<ERROR never value>"),
-            Self::Void => write!(f, "<ERROR void value>"),
-            Self::Constant(constant) => write!(f, "{constant}"),
-            Self::Register(register) => write!(f, "{register}"),
-            Self::Indirect { pointer, .. } => write!(f, "<ERROR indirect value: {pointer}>"),
-            Self::BoundFunction { function_register, .. } => write!(f, "{function_register}"),
+            Self::Never | Self::Break | Self::Continue => "<ERROR never value>".into(),
+            Self::Void => "<ERROR void value>".into(),
+            Self::Constant(constant) => constant.get_llvm_syntax(registry),
+            Self::Register(register) => register.get_llvm_syntax(),
+            Self::Indirect { pointer, .. } => format!("<ERROR indirect value: {}>", pointer.get_llvm_syntax(registry)),
+            Self::BoundFunction { function_register, .. } => function_register.get_llvm_syntax(),
         }
     }
 }
@@ -771,13 +444,13 @@ impl FunctionSymbol {
 
 #[derive(Clone, Debug)]
 pub struct TypeSymbol {
-    definition_format: Option<Format>,
+    type_handle: TypeHandle,
     member_scope: Scope,
 }
 
 impl TypeSymbol {
-    pub fn definition_format(&self) -> Option<&Format> {
-        self.definition_format.as_ref()
+    pub fn type_handle(&self) -> TypeHandle {
+        self.type_handle
     }
 
     pub fn member_scope(&self) -> &Scope {
@@ -799,8 +472,8 @@ pub enum Symbol {
     Local {
         name: String,
         scope: Scope,
-        value: Value,
         version: usize,
+        value: Value,
     },
     Function {
         name: String,
@@ -966,115 +639,93 @@ impl SymbolTable {
             .map_or(0, |(_, _, version)| version + 1)
     }
 
-    pub fn create_type_symbol(&self, name: String, definition_format: Option<Format>, member_scope: Scope) -> Symbol {
-        let scope = self.current_scope().clone();
-        let content = TypeSymbol {
-            definition_format,
-            member_scope,
-        };
-
+    pub fn create_type_symbol(&self, name: String, type_handle: TypeHandle, member_scope: Scope) -> Symbol {
         Symbol::Type {
             name,
-            scope,
-            content,
+            scope: self.current_scope().clone(),
+            content: TypeSymbol {
+                type_handle,
+                member_scope,
+            },
         }
     }
 
-    pub fn create_function_symbol(&self, name: String, signature: FunctionSignature, is_defined: bool) -> (Symbol, Register) {
-        let scope = self.current_scope().clone();
-        let identifier = scope.get_member_identifier(&name);
-        let format = Format::Function {
-            signature: Box::new(signature.clone()),
-        };
-        let register = Register::new_global(
-            identifier,
-            format,
-        );
-        let content = FunctionSymbol {
-            register: register.clone(),
-            signature,
-            is_defined,
-        };
+    pub fn create_function_symbol(&self, name: String, signature: FunctionSignature, is_defined: bool, registry: &mut TypeRegistry) -> (Symbol, Register) {
+        let identifier = self.current_scope().get_member_identifier(&name);
+        let function_type = registry.get_function_handle(&signature);
+        let register = Register::new_global(identifier, function_type);
 
         let symbol = Symbol::Function {
             name,
-            scope,
-            content,
+            scope: self.current_scope().clone(),
+            content: FunctionSymbol {
+                register: register.clone(),
+                signature,
+                is_defined,
+            },
         };
 
         (symbol, register)
     }
 
-    pub fn create_global_indirect_symbol(&self, name: String, loaded_format: Format, is_mutable: bool) -> (Symbol, Register) {
-        let scope = self.current_scope().clone();
-        let identifier = scope.get_member_identifier(&name);
+    pub fn create_global_indirect_symbol(&self, name: String, pointee_type: TypeHandle, is_mutable: bool, registry: &mut TypeRegistry) -> (Symbol, Register) {
+        let identifier = self.current_scope().get_member_identifier(&name);
         let semantics = PointerSemantics::simple(is_mutable);
-        let pointer = Register::new_global(
-            identifier,
-            loaded_format.clone().into_pointer(semantics),
-        );
-        let value = Value::Indirect {
-            pointer: Box::new(Value::Register(pointer.clone())),
-            loaded_format,
-        };
+        let pointer_type = registry.get_pointer_handle(pointee_type, semantics);
+        let pointer = Register::new_global(identifier, pointer_type);
 
         let symbol = Symbol::Global {
             name,
-            scope,
-            value,
+            scope: self.current_scope().clone(),
+            value: Value::Indirect {
+                pointer: Box::new(Value::Register(pointer.clone())),
+                pointee_type,
+            },
         };
 
         (symbol, pointer)
     }
 
-    pub fn create_local_indirect_symbol(&self, name: String, loaded_format: Format, is_mutable: bool) -> (Symbol, Register) {
-        let scope = self.current_scope().clone();
+    pub fn create_local_indirect_symbol(&self, name: String, pointee_type: TypeHandle, is_mutable: bool, registry: &mut TypeRegistry) -> (Symbol, Register) {
         let version = self.next_local_symbol_version(&name);
         let identifier = match version {
             0 => format!("{name}"),
-            _ => format!("{name}-{version}"),
+            1.. => format!("{name}-{version}"),
         };
         let semantics = PointerSemantics::simple(is_mutable);
-        let pointer = Register::new_local(
-            identifier,
-            loaded_format.clone().into_pointer(semantics),
-        );
-        let value = Value::Indirect {
-            pointer: Box::new(Value::Register(pointer.clone())),
-            loaded_format,
-        };
+        let pointer_type = registry.get_pointer_handle(pointee_type, semantics);
+        let pointer = Register::new_local(identifier, pointer_type);
 
         let symbol = Symbol::Local {
             name,
-            scope,
-            value,
+            scope: self.current_scope().clone(),
             version,
+            value: Value::Indirect {
+                pointer: Box::new(Value::Register(pointer.clone())),
+                pointee_type,
+            },
         };
 
         (symbol, pointer)
     }
 
-    pub fn create_indirect_local_constant_symbol(&self, name: String, loaded_format: Format, function_name: &str) -> (Symbol, Register) {
-        let scope = self.current_scope().clone();
+    pub fn create_indirect_local_constant_symbol(&self, name: String, pointee_type: TypeHandle, function_name: &str, registry: &mut TypeRegistry) -> (Symbol, Register) {
         let version = self.next_local_symbol_version(&name);
         let identifier = match version {
             0 => format!("{function_name}.{name}"),
-            _ => format!("{function_name}.{name}-{version}"),
+            1.. => format!("{function_name}.{name}-{version}"),
         };
-        let pointer = Register::new_global(
-            identifier,
-            loaded_format.clone().into_pointer(PointerSemantics::Immutable),
-        );
-        let value = Value::Indirect {
-            pointer: Box::new(Value::Register(pointer.clone())),
-            loaded_format,
-        };
+        let pointer_type = registry.get_pointer_handle(pointee_type, PointerSemantics::Immutable);
+        let pointer = Register::new_global(identifier, pointer_type);
 
         let symbol = Symbol::Local {
             name,
-            scope,
-            value,
+            scope: self.current_scope().clone(),
             version,
+            value: Value::Constant(Constant::Indirect {
+                pointer: Box::new(Constant::Register(pointer.clone())),
+                pointee_type,
+            }),
         };
 
         (symbol, pointer)

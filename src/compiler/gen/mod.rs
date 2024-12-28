@@ -6,21 +6,7 @@ use llvm::*;
 use crate::token;
 use crate::ast;
 
-use std::io::{Write, BufRead};
-
-pub const BUILTIN_FORMATS: &[(&str, Format)] = &[
-    ("never", Format::Never),
-    ("void", Format::Void),
-    ("bool", Format::Boolean),
-    ("i8", Format::Integer { size: 1, signed: true }),
-    ("u8", Format::Integer { size: 1, signed: false }),
-    ("i16", Format::Integer { size: 2, signed: true }),
-    ("u16", Format::Integer { size: 2, signed: false }),
-    ("i32", Format::Integer { size: 4, signed: true }),
-    ("u32", Format::Integer { size: 4, signed: false }),
-    ("i64", Format::Integer { size: 8, signed: true }),
-    ("u64", Format::Integer { size: 8, signed: false }),
-];
+use std::io::{BufRead, Write};
 
 #[derive(Clone, Debug)]
 pub struct FunctionContext {
@@ -56,7 +42,6 @@ pub struct ScopeContext {
     function_context: Option<FunctionContext>,
     break_label: Option<Label>,
     continue_label: Option<Label>,
-    self_format: Option<Format>,
 }
 
 impl ScopeContext {
@@ -65,7 +50,6 @@ impl ScopeContext {
             function_context: None,
             break_label: None,
             continue_label: None,
-            self_format: None,
         }
     }
 
@@ -171,7 +155,7 @@ impl<W: Write> Generator<W> {
 
     pub fn get_type_definition_format(&self, type_name: &str) -> crate::Result<Format> {
         self.get_type_symbol(type_name)?
-            .definition_format()
+            .type_handle()
             .cloned()
             .ok_or_else(|| Box::new(crate::Error::PartialType { type_name: type_name.into() }))
     }
@@ -204,7 +188,7 @@ impl<W: Write> Generator<W> {
 
     pub fn get_format_from_node(&self, type_node: &ast::TypeNode, allow_unsized: bool, context: &ScopeContext) -> crate::Result<Format> {
         let format = match type_node {
-            ast::TypeNode::Identified { type_name } => {
+            ast::TypeNode::Named { name: type_name } => {
                 self.get_format_from_name(type_name)?
             },
             ast::TypeNode::Pointer { pointee_type, semantics } => {
@@ -228,7 +212,7 @@ impl<W: Write> Generator<W> {
                     length: None,
                 }
             },
-            ast::TypeNode::Function { parameter_types, is_varargs, return_type } => {
+            ast::TypeNode::Function { parameter_types, is_variadic: is_varargs, return_type } => {
                 Format::Function {
                     signature: Box::new(FunctionSignature::new(
                         self.get_format_from_node(return_type, false, context)?,
@@ -254,7 +238,7 @@ impl<W: Write> Generator<W> {
     }
 
     pub fn enforce_format(&mut self, value: Value, target_format: &Format) -> crate::Result<Value> {
-        let got_format = value.format();
+        let got_format = value.get_type();
 
         if &got_format == target_format {
             Ok(value)
@@ -266,7 +250,7 @@ impl<W: Write> Generator<W> {
             else if let Value::Constant(constant) = value {
                 Ok(Value::Constant(Constant::BitwiseCast {
                     value: Box::new(constant),
-                    to_format: target_format.clone(),
+                    result_type: target_format.clone(),
                 }))
             }
             else {
@@ -283,7 +267,7 @@ impl<W: Write> Generator<W> {
     }
 
     pub fn enforce_constant_format(&self, constant: Constant, target_format: &Format) -> crate::Result<Constant> {
-        let got_format = constant.format();
+        let got_format = constant.get_type();
 
         if &got_format == target_format {
             Ok(constant)
@@ -292,7 +276,7 @@ impl<W: Write> Generator<W> {
             if got_format.requires_bitcast_to(target_format) {
                 Ok(Constant::BitwiseCast {
                     value: Box::new(constant),
-                    to_format: target_format.clone(),
+                    result_type: target_format.clone(),
                 })
             }
             else {
@@ -305,7 +289,7 @@ impl<W: Write> Generator<W> {
     }
 
     pub fn change_format(&mut self, value: Value, target_format: &Format) -> crate::Result<Value> {
-        let original_format = value.format();
+        let original_format = value.get_type();
 
         if &original_format == target_format {
             Ok(value)
@@ -356,10 +340,10 @@ impl<W: Write> Generator<W> {
     }
 
     pub fn coerce_to_rvalue(&mut self, value: Value) -> crate::Result<Value> {
-        if let Value::Indirect { pointer, mut loaded_format } = value {
+        if let Value::Indirect { pointer, pointee_type: mut loaded_format } = value {
             if let Format::Pointer { semantics, .. } = &mut loaded_format {
                 if let PointerSemantics::Owned = semantics {
-                    *semantics = pointer.format().pointer_semantics().unwrap();
+                    *semantics = pointer.get_type().pointer_semantics().unwrap();
                 }
             }
 
@@ -368,10 +352,10 @@ impl<W: Write> Generator<W> {
             
             Ok(Value::Register(result))
         }
-        else if let Value::Constant(Constant::Indirect { pointer, mut loaded_format }) = value {
+        else if let Value::Constant(Constant::Indirect { pointer, pointee_type: mut loaded_format }) = value {
             if let Format::Pointer { semantics, .. } = &mut loaded_format {
                 if let PointerSemantics::Owned = semantics {
-                    *semantics = pointer.format().pointer_semantics().unwrap();
+                    *semantics = pointer.get_type().pointer_semantics().unwrap();
                 }
             }
 
@@ -444,7 +428,7 @@ impl<W: Write> Generator<W> {
                 for statement in statements {
                     let statement_value = self.generate_node(statement, context, None)?;
 
-                    if statement_value.format() == Format::Never {
+                    if statement_value.get_type() == Format::Never {
                         // The rest of the statements in the block will never be executed, so they don't need to be generated
                         result = statement_value;
                         break;
@@ -469,14 +453,14 @@ impl<W: Write> Generator<W> {
 
                     self.emitter.emit_label(&consequent_label)?;
                     let consequent_value = self.generate_node(consequent, context, None)?;
-                    if consequent_value.format() != Format::Never {
+                    if consequent_value.get_type() != Format::Never {
                         let tail_label = tail_label.get_or_insert_with(|| self.new_block_label());
                         self.emitter.emit_unconditional_branch(tail_label)?;
                     }
 
                     self.emitter.emit_label(&alternative_label)?;
                     let alternative_value = self.generate_node(alternative, context, None)?;
-                    if alternative_value.format() != Format::Never {
+                    if alternative_value.get_type() != Format::Never {
                         let tail_label = tail_label.get_or_insert_with(|| self.new_block_label());
                         self.emitter.emit_unconditional_branch(tail_label)?;
                     }
@@ -493,7 +477,7 @@ impl<W: Write> Generator<W> {
                 else {
                     self.emitter.emit_label(&consequent_label)?;
                     let consequent_value = self.generate_node(consequent, context, None)?;
-                    if consequent_value.format() != Format::Never {
+                    if consequent_value.get_type() != Format::Never {
                         self.emitter.emit_unconditional_branch(&alternative_label)?;
                     }
 
@@ -631,7 +615,7 @@ impl<W: Write> Generator<W> {
             },
             token::Literal::String(value) => {
                 let constant = Constant::String(value.clone());
-                let pointer = self.new_anonymous_constant(constant.format());
+                let pointer = self.new_anonymous_constant(constant.get_type());
 
                 self.emitter.emit_anonymous_constant(&pointer, &constant)?;
 
@@ -664,7 +648,7 @@ impl<W: Write> Generator<W> {
                 let array_pointer = self.new_anonymous_register(array_format.clone().into_pointer(PointerSemantics::Immutable));
                 let initial_value = Value::Constant(Constant::Array {
                     items: constant_items,
-                    item_format: item_format.as_ref().clone(),
+                    item_type: item_format.as_ref().clone(),
                 });
 
                 self.emitter.emit_local_allocation(&array_pointer, array_format)?;
@@ -674,7 +658,7 @@ impl<W: Write> Generator<W> {
                 self.emitter.emit_store(&initial_value, &array_pointer)?;
                 
                 for (index, member) in non_constant_items {
-                    let item_pointer = self.new_anonymous_register(member.format().into_pointer(PointerSemantics::Mutable));
+                    let item_pointer = self.new_anonymous_register(member.get_type().into_pointer(PointerSemantics::Mutable));
                     let zero = Value::Constant(Constant::Integer(IntegerValue::Signed32(0)));
                     let index = Value::Constant(Constant::Integer(IntegerValue::Unsigned64(index as u64)));
 
@@ -684,7 +668,7 @@ impl<W: Write> Generator<W> {
 
                 Ok(Value::Indirect {
                     pointer: Box::new(array_pointer),
-                    loaded_format: array_format.clone(),
+                    pointee_type: array_format.clone(),
                 })
             }
             else {
@@ -703,7 +687,7 @@ impl<W: Write> Generator<W> {
                 self.get_symbol(name)?
                     .type_value()
                     .ok_or_else(|| Box::new(crate::Error::NonStructSymbol { name: name.clone() }))?
-                    .definition_format()
+                    .type_handle()
                     .ok_or_else(|| Box::new(crate::Error::PartialType { type_name: name.clone() }))?
                     .clone()
             },
@@ -761,7 +745,7 @@ impl<W: Write> Generator<W> {
             let structure_pointer = self.new_anonymous_register(result_format.clone().into_pointer(PointerSemantics::Immutable));
             let initial_value = Value::Constant(Constant::Structure {
                 members: constant_members,
-                format: result_format.clone(),
+                struct_type: result_format.clone(),
             });
 
             self.emitter.emit_local_allocation(&structure_pointer, &result_format)?;
@@ -771,7 +755,7 @@ impl<W: Write> Generator<W> {
             self.emitter.emit_store(&initial_value, &structure_pointer)?;
             
             for (index, member) in non_constant_members {
-                let member_pointer = self.new_anonymous_register(member.format().into_pointer(PointerSemantics::Mutable));
+                let member_pointer = self.new_anonymous_register(member.get_type().into_pointer(PointerSemantics::Mutable));
                 let zero = Value::Constant(Constant::Integer(IntegerValue::Signed32(0)));
                 let index = Value::Constant(Constant::Integer(IntegerValue::Signed32(index as i32)));
 
@@ -781,7 +765,7 @@ impl<W: Write> Generator<W> {
 
             Ok(Value::Indirect {
                 pointer: Box::new(structure_pointer),
-                loaded_format: result_format,
+                pointee_type: result_format,
             })
         }
         else {
@@ -803,7 +787,7 @@ impl<W: Write> Generator<W> {
             ast::UnaryOperation::Negative => {
                 let operand = self.generate_node(operand, context, expected_format.cloned())?;
                 let operand = self.coerce_to_rvalue(operand)?;
-                let result = self.new_anonymous_register(expected_format.cloned().unwrap_or(operand.format()));
+                let result = self.new_anonymous_register(expected_format.cloned().unwrap_or(operand.get_type()));
 
                 self.emitter.emit_negation(&result, &operand)?;
 
@@ -812,7 +796,7 @@ impl<W: Write> Generator<W> {
             ast::UnaryOperation::BitwiseNot => {
                 let operand = self.generate_node(operand, context, expected_format.cloned())?;
                 let operand = self.coerce_to_rvalue(operand)?;
-                let result = self.new_anonymous_register(expected_format.cloned().unwrap_or(operand.format()));
+                let result = self.new_anonymous_register(expected_format.cloned().unwrap_or(operand.get_type()));
 
                 self.emitter.emit_inversion(&result, &operand)?;
 
@@ -841,22 +825,22 @@ impl<W: Write> Generator<W> {
                 let operand = self.generate_node(operand, context, expected_format.map(|format| format.clone().into_pointer(PointerSemantics::Immutable)))?;
                 let operand = self.coerce_to_rvalue(operand)?;
                 
-                if let Format::Pointer { pointee_format, .. } = operand.format() {
+                if let Format::Pointer { pointee_format, .. } = operand.get_type() {
                     if let Value::Constant(constant) = operand {
                         Value::Constant(Constant::Indirect {
                             pointer: Box::new(constant),
-                            loaded_format: *pointee_format,
+                            pointee_type: *pointee_format,
                         })
                     }
                     else {
                         Value::Indirect {
                             pointer: Box::new(operand),
-                            loaded_format: *pointee_format,
+                            pointee_type: *pointee_format,
                         }
                     }
                 }
                 else {
-                    return Err(Box::new(crate::Error::ExpectedPointer { type_name: operand.format().rich_name() }));
+                    return Err(Box::new(crate::Error::ExpectedPointer { type_name: operand.get_type().rich_name() }));
                 }
             },
             ast::UnaryOperation::GetSize => {
@@ -894,11 +878,11 @@ impl<W: Write> Generator<W> {
             ast::BinaryOperation::Access => {
                 let lhs = self.generate_node(lhs, context, None)?;
 
-                if let Format::Pointer { pointee_format, .. } = lhs.format() {
+                if let Format::Pointer { pointee_format, .. } = lhs.get_type() {
                     let pointer = self.coerce_to_rvalue(lhs)?;
                     let structure = Value::Indirect {
                         pointer: Box::new(pointer),
-                        loaded_format: *pointee_format,
+                        pointee_type: *pointee_format,
                     };
 
                     self.generate_member_access(structure, rhs, context)?
@@ -1161,18 +1145,18 @@ impl<W: Write> Generator<W> {
         let rhs = self.generate_node(rhs, context, None)?;
         let rhs = self.coerce_to_rvalue(rhs)?;
         
-        if !(matches!(rhs.format(), Format::Integer { .. })) {
-            return Err(Box::new(crate::Error::ExpectedInteger { type_name: rhs.format().rich_name() }));
+        if !(matches!(rhs.get_type(), Format::Integer { .. })) {
+            return Err(Box::new(crate::Error::ExpectedInteger { type_name: rhs.get_type().rich_name() }));
         }
 
-        let lhs_format = lhs.format();
+        let lhs_format = lhs.get_type();
         let cannot_index_error = || Box::new(crate::Error::ExpectedArray { type_name: lhs_format.rich_name() });
 
         match lhs {
-            Value::Indirect { pointer, loaded_format } => match &loaded_format {
+            Value::Indirect { pointer, pointee_type: loaded_format } => match &loaded_format {
                 Format::Array { item_format, length } => {
                     // &[T; N], &[T]
-                    let semantics = pointer.format().pointer_semantics().unwrap();
+                    let semantics = pointer.get_type().pointer_semantics().unwrap();
                     let element_pointer = self.new_anonymous_register(item_format.as_ref().clone().into_pointer(semantics));
                     let indices = match length {
                         Some(_) => vec![Value::Constant(Constant::Integer(IntegerValue::Signed32(0))), rhs],
@@ -1188,14 +1172,14 @@ impl<W: Write> Generator<W> {
 
                     Ok(Value::Indirect {
                         pointer: Box::new(Value::Register(element_pointer)),
-                        loaded_format: item_format.as_ref().clone(),
+                        pointee_type: item_format.as_ref().clone(),
                     })
                 },
                 Format::Pointer { pointee_format, semantics } => match pointee_format.as_ref() {
                     Format::Array { item_format, length } => {
                         // &*[T; N], &*[T]
                         let semantics = match semantics {
-                            PointerSemantics::Owned => pointer.format().pointer_semantics().unwrap(),
+                            PointerSemantics::Owned => pointer.get_type().pointer_semantics().unwrap(),
                             _ => *semantics
                         };
                         let loaded_pointer = self.new_anonymous_register(loaded_format.clone());
@@ -1215,14 +1199,14 @@ impl<W: Write> Generator<W> {
 
                         Ok(Value::Indirect {
                             pointer: Box::new(Value::Register(element_pointer)),
-                            loaded_format: item_format.as_ref().clone(),
+                            pointee_type: item_format.as_ref().clone(),
                         })
                     },
                     _ => Err(cannot_index_error())
                 },
                 _ => Err(cannot_index_error())
             },
-            Value::Register(register) => match register.format().clone() {
+            Value::Register(register) => match register.value_type().clone() {
                 Format::Pointer { pointee_format, semantics } => match pointee_format.as_ref() {
                     Format::Array { item_format, length } => {
                         // *[T; N], *[T]
@@ -1241,7 +1225,7 @@ impl<W: Write> Generator<W> {
 
                         Ok(Value::Indirect {
                             pointer: Box::new(Value::Register(element_pointer)),
-                            loaded_format: item_format.as_ref().clone(),
+                            pointee_type: item_format.as_ref().clone(),
                         })
                     },
                     _ => Err(cannot_index_error())
@@ -1257,26 +1241,26 @@ impl<W: Write> Generator<W> {
         let (rhs, mut constants) = self.fold_as_constant(rhs, constant_id, context, None)?;
         intermediate_constants.append(&mut constants);
 
-        if !(matches!(rhs.format(), Format::Integer { .. })) {
-            return Err(Box::new(crate::Error::ExpectedInteger { type_name: rhs.format().rich_name() }));
+        if !(matches!(rhs.get_type(), Format::Integer { .. })) {
+            return Err(Box::new(crate::Error::ExpectedInteger { type_name: rhs.get_type().rich_name() }));
         }
 
-        let lhs_format = lhs.format();
+        let lhs_format = lhs.get_type();
         let cannot_index_error = || Box::new(crate::Error::ExpectedArray { type_name: lhs_format.rich_name() });
 
         let constant = match lhs {
-            Constant::Indirect { pointer, loaded_format } => match &loaded_format {
+            Constant::Indirect { pointer, pointee_type: loaded_format } => match &loaded_format {
                 Format::Array { item_format, length } => {
                     // const &[T; N], const &[T]
-                    let semantics = pointer.format().pointer_semantics().unwrap();
+                    let semantics = pointer.get_type().pointer_semantics().unwrap();
                     let indices = match length {
                         Some(_) => vec![Constant::Integer(IntegerValue::Signed32(0)), rhs],
                         None => vec![rhs],
                     };
 
                     let element_pointer = Constant::GetElementPointer {
-                        element_format: item_format.as_ref().clone().into_pointer(semantics),
-                        aggregate_format: loaded_format.clone(),
+                        element_type: item_format.as_ref().clone().into_pointer(semantics),
+                        aggregate_type: loaded_format.clone(),
                         pointer,
                         indices,
                         semantics,
@@ -1284,12 +1268,12 @@ impl<W: Write> Generator<W> {
 
                     Constant::Indirect {
                         pointer: Box::new(element_pointer),
-                        loaded_format: item_format.as_ref().clone(),
+                        pointee_type: item_format.as_ref().clone(),
                     }
                 },
                 _ => return Err(cannot_index_error())
             },
-            Constant::Register(register) => match register.format().clone() {
+            Constant::Register(register) => match register.value_type().clone() {
                 Format::Pointer { pointee_format, semantics } => match pointee_format.as_ref() {
                     Format::Array { item_format, length } => {
                         // const *[T; N], const *[T]
@@ -1299,8 +1283,8 @@ impl<W: Write> Generator<W> {
                         };
 
                         let element_pointer = Constant::GetElementPointer {
-                            element_format: item_format.as_ref().clone().into_pointer(semantics),
-                            aggregate_format: pointee_format.as_ref().clone(),
+                            element_type: item_format.as_ref().clone().into_pointer(semantics),
+                            aggregate_type: pointee_format.as_ref().clone(),
                             pointer: Box::new(Constant::Register(register)),
                             indices,
                             semantics,
@@ -1308,7 +1292,7 @@ impl<W: Write> Generator<W> {
 
                         Constant::Indirect {
                             pointer: Box::new(element_pointer),
-                            loaded_format: item_format.as_ref().clone(),
+                            pointee_type: item_format.as_ref().clone(),
                         }
                     },
                     _ => return Err(cannot_index_error())
@@ -1322,7 +1306,7 @@ impl<W: Write> Generator<W> {
     }
 
     fn generate_member_access(&mut self, container: Value, member_name: &ast::Node, _context: &ScopeContext) -> crate::Result<Value> {
-        let container_format = container.format();
+        let container_format = container.get_type();
         let cannot_access_error = || Box::new(crate::Error::ExpectedStruct { type_name: container_format.rich_name() });
 
         if let ast::Node::Literal(token::Literal::Identifier(member_name)) = member_name {
@@ -1341,10 +1325,10 @@ impl<W: Write> Generator<W> {
 
             // No method was found, so attempt to get a struct member
             match container {
-                Value::Indirect { pointer, loaded_format } => match &loaded_format {
+                Value::Indirect { pointer, pointee_type: loaded_format } => match &loaded_format {
                     Format::Identified { type_name, .. } => match self.get_type_definition_format(type_name)? {
                         Format::Structure { members, .. } => {
-                            let semantics = pointer.format().pointer_semantics().unwrap();
+                            let semantics = pointer.get_type().pointer_semantics().unwrap();
                             let member_index = members.iter().position(|(name, _)| name == member_name)
                                 .ok_or_else(|| Box::new(crate::Error::UndefinedStructMember { member_name: member_name.clone(), type_name: container_format.rich_name() }))?;
                             let member_format = members[member_index].1.clone();
@@ -1363,7 +1347,7 @@ impl<W: Write> Generator<W> {
 
                             Ok(Value::Indirect {
                                 pointer: Box::new(Value::Register(member_pointer)),
-                                loaded_format: member_format,
+                                pointee_type: member_format,
                             })
                         },
                         _ => Err(cannot_access_error())
@@ -1383,10 +1367,10 @@ impl<W: Write> Generator<W> {
         let lhs = self.generate_node(lhs, context, expected_format.cloned())?;
         let lhs = self.coerce_to_rvalue(lhs)?;
 
-        let rhs = self.generate_node(rhs, context, Some(lhs.format()))?;
+        let rhs = self.generate_node(rhs, context, Some(lhs.get_type()))?;
         let rhs = self.coerce_to_rvalue(rhs)?;
 
-        let result = self.new_anonymous_register(expected_format.cloned().unwrap_or_else(|| lhs.format()));
+        let result = self.new_anonymous_register(expected_format.cloned().unwrap_or_else(|| lhs.get_type()));
 
         Ok((result, lhs, rhs))
     }
@@ -1395,7 +1379,7 @@ impl<W: Write> Generator<W> {
         let lhs = self.generate_node(lhs, context, None)?;
         let lhs = self.coerce_to_rvalue(lhs)?;
 
-        let rhs = self.generate_node(rhs, context, Some(lhs.format()))?;
+        let rhs = self.generate_node(rhs, context, Some(lhs.get_type()))?;
         let rhs = self.coerce_to_rvalue(rhs)?;
 
         let result = self.new_anonymous_register(Format::Boolean);
@@ -1422,7 +1406,7 @@ impl<W: Write> Generator<W> {
         let callee = self.generate_node(callee, context, None)?;
         let callee = self.coerce_to_rvalue(callee)?;
 
-        if let Format::Function { signature } = callee.format() {
+        if let Format::Function { signature } = callee.get_type() {
             let mut argument_values = Vec::new();
 
             // Ensure that when arguments and parameter formats are zipped, all arguments are generated
@@ -1435,7 +1419,7 @@ impl<W: Write> Generator<W> {
                 let self_target_format = parameters_iter.next().unwrap()
                     .ok_or_else(|| Box::new(crate::Error::ExpectedSelfParameter {}))?;
 
-                // FIXME: once 'implement' works on arbitrary types, this logic will be flawed
+                // FIXME: once 'implement' works on arbitrary sema, this logic will be flawed
                 let self_argument = match self_target_format {
                     Format::Pointer { .. } => match self_value.as_ref() {
                         Value::Indirect { pointer, .. } => {
@@ -1443,7 +1427,7 @@ impl<W: Write> Generator<W> {
                         },
                         _ => {
                             // Allocate temporary space on the stack for the value so it can be pointed to
-                            let self_format = self_value.format();
+                            let self_format = self_value.get_type();
                             let self_value_pointer = self.new_anonymous_register(self_format.clone().into_pointer(PointerSemantics::Immutable));
 
                             self.emitter.emit_local_allocation(&self_value_pointer, &self_format)?;
@@ -1504,7 +1488,7 @@ impl<W: Write> Generator<W> {
             }
         }
         else {
-            Err(Box::new(crate::Error::ExpectedFunction { type_name: callee.format().rich_name() }))
+            Err(Box::new(crate::Error::ExpectedFunction { type_name: callee.get_type().rich_name() }))
         }
     }
 
@@ -1661,14 +1645,14 @@ impl<W: Write> Generator<W> {
         self.emitter.emit_label(&entry_label)?;
 
         for (input_register, symbol, pointer) in parameter_handles {
-            self.emitter.emit_local_allocation(&pointer, input_register.format())?;
+            self.emitter.emit_local_allocation(&pointer, input_register.value_type())?;
             self.emitter.emit_store(&Value::Register(input_register), &Value::Register(pointer))?;
             self.symbol_table.insert(symbol);
         }
 
         let body_result = self.generate_node(body, &function_context, None)?;
 
-        if body_result.format() != Format::Never {
+        if body_result.get_type() != Format::Never {
             if &return_format == &Format::Void {
                 self.emitter.emit_return(None)?;
             }
@@ -1714,7 +1698,7 @@ impl<W: Write> Generator<W> {
         let member_scope;
         if let Some(old_symbol) = self.symbol_table.find(type_name, Some(self.symbol_table.current_scope())) {
             if let Some(old_symbol) = old_symbol.type_value() {
-                if old_symbol.definition_format().is_none() {
+                if old_symbol.type_handle().is_none() {
                     member_scope = old_symbol.member_scope().clone();
                 }
                 else {
@@ -1759,7 +1743,7 @@ impl<W: Write> Generator<W> {
     }
 
     fn generate_implement_block(&mut self, self_type: &ast::TypeNode, statements: &[Box<ast::Node>], context: &ScopeContext) -> crate::Result<Value> {
-        if let ast::TypeNode::Identified { type_name } = self_type {
+        if let ast::TypeNode::Named { name: type_name } = self_type {
             let type_symbol = self.get_type_symbol(type_name)?;
 
             let self_format = self.get_format_from_name(type_name)?;
@@ -1795,7 +1779,7 @@ impl<W: Write> Generator<W> {
 
     pub fn fold_as_constant(&self, node: &ast::Node, constant_id: &mut usize, context: &ScopeContext, expected_format: Option<Format>) -> crate::Result<(Constant, Vec<(Register, Constant)>)> {
         let mut new_intermediate_constant = |constant: Constant| {
-            let pointer = Register::new_global(format!(".const.{constant_id}"), constant.format().into_pointer(PointerSemantics::Immutable));
+            let pointer = Register::new_global(format!(".const.{constant_id}"), constant.get_type().into_pointer(PointerSemantics::Immutable));
             *constant_id += 1;
             (pointer, constant)
         };
@@ -1845,7 +1829,7 @@ impl<W: Write> Generator<W> {
 
                     Constant::Array {
                         items,
-                        item_format: item_format.as_ref().clone(),
+                        item_type: item_format.as_ref().clone(),
                     }
                 }
                 else {
@@ -1858,7 +1842,7 @@ impl<W: Write> Generator<W> {
                     ast::Node::Literal(token::Literal::Identifier(name)) => {
                         self.get_symbol(name)?.type_value()
                             .ok_or_else(|| Box::new(crate::Error::NonStructSymbol { name: name.clone() }))?
-                            .definition_format()
+                            .type_handle()
                             .ok_or_else(|| Box::new(crate::Error::PartialType { type_name: name.clone() }))?
                             .clone()
                     },
@@ -1906,7 +1890,7 @@ impl<W: Write> Generator<W> {
 
                     Constant::Structure {
                         members,
-                        format: result_format,
+                        struct_type: result_format,
                     }
                 }
                 else {
@@ -1951,12 +1935,12 @@ impl<W: Write> Generator<W> {
     
                         if let Constant::Integer(integer) = value {
                             let converted_integer = IntegerValue::new(integer.expanded_value(), &target_format)
-                                .ok_or_else(|| Box::new(crate::Error::InconvertibleTypes { original_type: integer.format().rich_name(), target_type: target_format.rich_name() }))?;
+                                .ok_or_else(|| Box::new(crate::Error::InconvertibleTypes { original_type: integer.value_type().rich_name(), target_type: target_format.rich_name() }))?;
 
                             Constant::Integer(converted_integer)
                         }
                         else {
-                            return Err(Box::new(crate::Error::InconvertibleTypes { original_type: value.format().rich_name(), target_type: target_format.rich_name() }));
+                            return Err(Box::new(crate::Error::InconvertibleTypes { original_type: value.get_type().rich_name(), target_type: target_format.rich_name() }));
                         }
                     }
                     else {

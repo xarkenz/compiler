@@ -1,5 +1,6 @@
 pub mod parse;
 
+use crate::sema::PointerSemantics;
 use crate::token::*;
 
 use std::fmt;
@@ -261,29 +262,11 @@ impl BinaryOperation {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum PointerSemantics {
-    Immutable,
-    Mutable,
-    Owned,
-}
-
-impl PointerSemantics {
-    pub fn simple(is_mutable: bool) -> Self {
-        if is_mutable {
-            Self::Mutable
-        }
-        else {
-            Self::Immutable
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub enum TypeNode {
-    Identified {
+    Named {
         // TODO: scoped names (e.g. thinga::thingb::Type)
-        type_name: String,
+        name: String,
     },
     Pointer {
         pointee_type: Box<TypeNode>,
@@ -295,17 +278,17 @@ pub enum TypeNode {
     },
     Function {
         parameter_types: Vec<TypeNode>,
-        is_varargs: bool,
+        is_variadic: bool,
         return_type: Box<TypeNode>,
     },
     SelfType,
 }
 
-impl std::fmt::Display for TypeNode {
+impl fmt::Display for TypeNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Identified { type_name } => {
-                write!(f, "{type_name}")
+            Self::Named { name } => {
+                write!(f, "{name}")
             },
             Self::Pointer { pointee_type, semantics } => match semantics {
                 PointerSemantics::Immutable => write!(f, "*{pointee_type}"),
@@ -315,10 +298,10 @@ impl std::fmt::Display for TypeNode {
             Self::Array { item_type, length: Some(length) } => {
                 write!(f, "[{item_type}; {length}]")
             },
-            Self::Array { item_type, length: None } => {
+            Self::Array { item_type, length: _none } => {
                 write!(f, "[{item_type}]")
             },
-            Self::Function { parameter_types, is_varargs, return_type } => {
+            Self::Function { parameter_types, is_variadic, return_type } => {
                 write!(f, "function(")?;
                 let mut parameter_types_iter = parameter_types.iter();
                 if let Some(parameter_type) = parameter_types_iter.next() {
@@ -326,11 +309,11 @@ impl std::fmt::Display for TypeNode {
                     for parameter_type in parameter_types_iter {
                         write!(f, ", {parameter_type}")?;
                     }
-                    if *is_varargs {
+                    if *is_variadic {
                         write!(f, ", ..")?;
                     }
                 }
-                else if *is_varargs {
+                else if *is_variadic {
                     write!(f, "..")?;
                 }
                 write!(f, ") -> {return_type}")
@@ -416,6 +399,19 @@ pub enum Node {
         self_type: TypeNode,
         statements: Vec<Box<Node>>,
     },
+}
+
+impl Node {
+    pub fn as_array_length(&self) -> Option<usize> {
+        // Must be an integer literal
+        if let Self::Literal(Literal::Integer(value)) = *self {
+            // Must be an acceptable usize value
+            if value >= 0 && value <= usize::MAX as i128 {
+                return Some(value as usize);
+            }
+        }
+        None
+    }
 }
 
 impl fmt::Display for Node {

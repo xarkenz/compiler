@@ -17,3 +17,37 @@ function main() -> i32 {
     printf("(%d, %d)\n", vector.x(), vector.y());
     return 0;
 }
+
+module thing {
+    import super::*;
+
+    struct Thing {
+        x: *own Test,
+    }
+}
+
+struct Test {
+    a: *own test::Test,
+    b: *own test::test::Test,
+    c: *own thing::Thing,
+}
+
+module test {
+    import super::thing::Thing;
+
+    struct Test {
+        a: *own super::Test,
+        b: *own test::Test,
+        c: *own Thing,
+    }
+
+    module test {
+        import super::Thing;
+
+        struct Test {
+            a: *own super::super::Test,
+            b: *own super::Test,
+            c: *own Thing,
+        }
+    }
+}
