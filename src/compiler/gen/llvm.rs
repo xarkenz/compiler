@@ -1,11 +1,7 @@
-use super::*;
-
 use crate::sema::*;
 
 use std::collections::{BTreeSet, BTreeMap};
 use std::io::Write;
-
-use indoc::writedoc;
 
 macro_rules! emit {
     ($emitter:expr, $($args:tt)*) => {
@@ -55,11 +51,7 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_preamble(&mut self, module_id: usize, source_filename: &str) -> crate::Result<()> {
-        writedoc!(self.writer, "
-            ; module_id = {module_id}
-            source_filename = \"{source_filename}\"
-
-        ").map_err(|cause| self.error(cause))
+        emit!(self, "; module_id = {module_id}\nsource_filename = \"{source_filename}\"\n\n")
     }
 
     pub fn emit_postamble(&mut self) -> crate::Result<()> {
@@ -78,23 +70,24 @@ impl<W: Write> Emitter<W> {
         Ok(())
     }
 
-    pub fn queue_function_declaration(&mut self, function: &Register, registry: &TypeRegistry) {
+    pub fn queue_function_declaration(&mut self, function: &Register, context: &GlobalContext) {
         if !self.defined_functions.contains(function) && !self.queued_function_declarations.contains_key(function) {
-            let Some(signature) = registry.get_function_info(function.value_type()) else {
-                panic!("{} is not a valid function", function.get_llvm_syntax());
+            let TypeInfo::Function { signature } = function.get_type().info(context) else {
+                panic!("{} is not a valid function", function.llvm_syntax());
             };
+            
             let mut declaration = format!(
                 "declare {} {}(",
-                signature.return_type().get_llvm_syntax(registry),
-                function.get_llvm_syntax(),
+                signature.return_type().llvm_syntax(context),
+                function.llvm_syntax(),
             );
 
             let mut parameters_iter = signature.parameter_types().iter();
             if let Some(&parameter_type) = parameters_iter.next() {
-                declaration.push_str(parameter_type.get_llvm_syntax(registry));
+                declaration.push_str(parameter_type.llvm_syntax(context));
                 for &parameter_type in parameters_iter {
                     declaration.push_str(", ");
-                    declaration.push_str(parameter_type.get_llvm_syntax(registry));
+                    declaration.push_str(parameter_type.llvm_syntax(context));
                 }
                 if signature.is_variadic() {
                     declaration.push_str(", ...");
@@ -112,21 +105,21 @@ impl<W: Write> Emitter<W> {
         }
     }
 
-    pub fn emit_function_enter(&mut self, function: &Register, parameters: &[Register], registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_function_enter(&mut self, function: &Register, parameters: &[Register], context: &GlobalContext) -> crate::Result<()> {
         // Remove any forward declarations of this function from the declaration queue
         self.queued_function_declarations.remove(function);
 
-        let Some(signature) = registry.get_function_info(function.value_type()) else {
-            panic!("{} is not a valid function", function.get_llvm_syntax());
+        let TypeInfo::Function { signature } = function.get_type().info(context) else {
+            panic!("{} is not a valid function", function.llvm_syntax());
         };
 
-        emit!(self, "define {} {}(", signature.return_type().get_llvm_syntax(registry), function.get_llvm_syntax())?;
+        emit!(self, "define {} {}(", signature.return_type().llvm_syntax(context), function.llvm_syntax())?;
 
         let mut parameters_iter = parameters.iter();
         if let Some(parameter) = parameters_iter.next() {
-            emit!(self, "{} {}", parameter.value_type().get_llvm_syntax(registry), parameter.get_llvm_syntax())?;
+            emit!(self, "{} {}", parameter.get_type().llvm_syntax(context), parameter.llvm_syntax())?;
             for parameter in parameters_iter {
-                emit!(self, ", {} {}", parameter.value_type().get_llvm_syntax(registry), parameter.get_llvm_syntax())?;
+                emit!(self, ", {} {}", parameter.get_type().llvm_syntax(context), parameter.llvm_syntax())?;
             }
             if signature.is_variadic() {
                 emit!(self, ", ...")?;
@@ -162,8 +155,8 @@ impl<W: Write> Emitter<W> {
         Ok(())
     }
 
-    pub fn queue_type_declaration(&mut self, type_handle: TypeHandle, registry: &TypeRegistry) {
-        let syntax = type_handle.get_llvm_syntax(registry);
+    pub fn queue_type_declaration(&mut self, type_handle: TypeHandle, context: &GlobalContext) {
+        let syntax = type_handle.llvm_syntax(context);
 
         if !self.defined_types.contains(syntax) && !self.declared_types.contains(syntax) {
             // Enqueue the declaration, which will be written before the module postamble
@@ -172,22 +165,22 @@ impl<W: Write> Emitter<W> {
         }
     }
 
-    pub fn emit_type_definition(&mut self, type_handle: TypeHandle, registry: &TypeRegistry) -> crate::Result<()> {
-        let syntax = type_handle.get_llvm_syntax(registry);
+    pub fn emit_type_definition(&mut self, type_handle: TypeHandle, context: &GlobalContext) -> crate::Result<()> {
+        let syntax = type_handle.llvm_syntax(context);
 
         // Remove any forward declarations of this type from the declaration queue
         self.declared_types.remove(syntax);
 
-        let TypeInfo::Structure { members, .. } = registry.get_info(type_handle) else {
-            panic!("{} is not a structure type", type_handle.get_identifier(registry));
+        let TypeInfo::Structure { members, .. } = type_handle.info(context) else {
+            panic!("{} is not a structure type", type_handle.identifier(context));
         };
         
         emit!(self, "{syntax} = type ")?;
         let mut members_iter = members.iter();
-        if let Some(&StructureMember { value_type, .. }) = members_iter.next() {
-            emit!(self, "{{ {}", value_type.get_llvm_syntax(registry))?;
-            for &StructureMember { value_type, .. } in members_iter {
-                emit!(self, ", {}", value_type.get_llvm_syntax(registry))?;
+        if let Some(&StructureMember { member_type, .. }) = members_iter.next() {
+            emit!(self, "{{ {}", member_type.llvm_syntax(context))?;
+            for &StructureMember { member_type, .. } in members_iter {
+                emit!(self, ", {}", member_type.llvm_syntax(context))?;
             }
             emit!(self, " }}\n")
         }
@@ -196,13 +189,13 @@ impl<W: Write> Emitter<W> {
         }
     }
 
-    pub fn emit_global_allocation(&mut self, pointer: &Register, value: &Constant, is_constant: bool, registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_global_allocation(&mut self, pointer: &Register, value: &Constant, is_constant: bool, context: &GlobalContext) -> crate::Result<()> {
         let declaration = format!(
             "{} = {} {} {}",
-            pointer.get_llvm_syntax(),
+            pointer.llvm_syntax(),
             if is_constant { "constant" } else { "global" },
-            value.get_type().get_llvm_syntax(registry),
-            value.get_llvm_syntax(registry),
+            value.get_type().llvm_syntax(context),
+            value.llvm_syntax(context),
         );
         if self.is_global {
             // Write the constant declaration immediately
@@ -215,12 +208,12 @@ impl<W: Write> Emitter<W> {
         }
     }
 
-    pub fn emit_anonymous_constant(&mut self, pointer: &Register, value: &Constant, registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_anonymous_constant(&mut self, pointer: &Register, value: &Constant, context: &GlobalContext) -> crate::Result<()> {
         let declaration = format!(
             "{} = private unnamed_addr constant {} {}",
-            pointer.get_llvm_syntax(),
-            value.get_type().get_llvm_syntax(registry),
-            value.get_llvm_syntax(registry),
+            pointer.llvm_syntax(),
+            value.get_type().llvm_syntax(context),
+            value.llvm_syntax(context),
         );
         if self.is_global {
             // Write the constant declaration immediately
@@ -234,499 +227,504 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_label(&mut self, label: &Label) -> crate::Result<()> {
-        let label_name = label.name();
-        emit!(self, "{label_name}:\n")
+        emit!(self, "{}:\n", label.identifier())
     }
 
     pub fn emit_unconditional_branch(&mut self, label: &Label) -> crate::Result<()> {
-        emit!(self, "\tbr label {label}\n")
+        emit!(self, "\tbr label {}\n", label.llvm_syntax())
     }
 
-    pub fn emit_conditional_branch(&mut self, condition: &Value, consequent: &Label, alternative: &Label, registry: &TypeRegistry) -> crate::Result<()> {
-        emit!(self, "\tbr i1 {}, label {consequent}, label {alternative}\n", condition.get_llvm_syntax(registry))
+    pub fn emit_conditional_branch(&mut self, condition: &Value, consequent: &Label, alternative: &Label, context: &GlobalContext) -> crate::Result<()> {
+        emit!(
+            self,
+            "\tbr i1 {}, label {}, label {}\n",
+            condition.llvm_syntax(context),
+            consequent.llvm_syntax(),
+            alternative.llvm_syntax(),
+        )
     }
 
-    pub fn emit_local_allocation(&mut self, pointer: &Register, registry: &TypeRegistry) -> crate::Result<()> {
-        let &TypeInfo::Pointer { pointee_type, .. } = registry.get_info(pointer.value_type()) else {
-            panic!("{} is not a pointer", pointer.get_llvm_syntax());
+    pub fn emit_local_allocation(&mut self, pointer: &Register, context: &GlobalContext) -> crate::Result<()> {
+        let &TypeInfo::Pointer { pointee_type, .. } = pointer.get_type().info(context) else {
+            panic!("{} is not a pointer", pointer.llvm_syntax());
         };
         
-        emit!(self, "\t{} = alloca {}\n", pointer.get_llvm_syntax(), pointee_type.get_llvm_syntax(registry))
+        emit!(self, "\t{} = alloca {}\n", pointer.llvm_syntax(), pointee_type.llvm_syntax(context))
     }
 
-    pub fn emit_store(&mut self, value: &Value, pointer: &Value, registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_store(&mut self, value: &Value, pointer: &Value, context: &GlobalContext) -> crate::Result<()> {
         emit!(
             self,
             "\tstore {} {}, {} {}\n",
-            value.get_type().get_llvm_syntax(registry),
-            value.get_llvm_syntax(registry),
-            pointer.get_type().get_llvm_syntax(registry),
-            pointer.get_llvm_syntax(registry),
+            value.get_type().llvm_syntax(context),
+            value.llvm_syntax(context),
+            pointer.get_type().llvm_syntax(context),
+            pointer.llvm_syntax(context),
         )
     }
 
-    pub fn emit_load(&mut self, result: &Register, pointer: &Value, registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_load(&mut self, result: &Register, pointer: &Value, context: &GlobalContext) -> crate::Result<()> {
         emit!(
             self,
             "\t{} = load {}, {} {}\n",
-            result.get_llvm_syntax(),
-            result.value_type().get_llvm_syntax(registry),
-            pointer.get_type().get_llvm_syntax(registry),
-            pointer.get_llvm_syntax(registry),
+            result.llvm_syntax(),
+            result.get_type().llvm_syntax(context),
+            pointer.get_type().llvm_syntax(context),
+            pointer.llvm_syntax(context),
         )
     }
 
-    pub fn emit_get_element_pointer(&mut self, result: &Register, pointer: &Value, indices: &[Value], registry: &TypeRegistry) -> crate::Result<()> {
-        let &TypeInfo::Pointer { pointee_type, .. } = registry.get_info(pointer.get_type()) else {
-            panic!("{} is not a pointer", pointer.get_llvm_syntax(registry));
+    pub fn emit_get_element_pointer(&mut self, result: &Register, pointer: &Value, indices: &[Value], context: &GlobalContext) -> crate::Result<()> {
+        let &TypeInfo::Pointer { pointee_type, .. } = pointer.get_type().info(context) else {
+            panic!("{} is not a pointer", pointer.llvm_syntax(context));
         };
         
         emit!(
             self,
             "\t{} = getelementptr inbounds {}, {} {}",
-            result.get_llvm_syntax(),
-            pointee_type.get_llvm_syntax(registry),
-            pointer.get_type().get_llvm_syntax(registry),
-            pointer.get_llvm_syntax(registry),
+            result.llvm_syntax(),
+            pointee_type.llvm_syntax(context),
+            pointer.get_type().llvm_syntax(context),
+            pointer.llvm_syntax(context),
         )?;
 
         for index in indices {
             emit!(
                 self,
                 ", {} {}",
-                index.get_type().get_llvm_syntax(registry),
-                index.get_llvm_syntax(registry),
+                index.get_type().llvm_syntax(context),
+                index.llvm_syntax(context),
             )?;
         }
 
         emit!(self, "\n")
     }
 
-    pub fn emit_extract_value(&mut self, result: &Register, aggregate: &Value, indices: &[Value], registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_extract_value(&mut self, result: &Register, aggregate: &Value, indices: &[Value], context: &GlobalContext) -> crate::Result<()> {
         emit!(
             self,
             "\t{} = extractvalue {} {}",
-            result.get_llvm_syntax(),
-            aggregate.get_type().get_llvm_syntax(registry),
-            aggregate.get_llvm_syntax(registry),
+            result.llvm_syntax(),
+            aggregate.get_type().llvm_syntax(context),
+            aggregate.llvm_syntax(context),
         )?;
 
         for index in indices {
             emit!(
                 self,
                 ", {} {}",
-                index.get_type().get_llvm_syntax(registry),
-                index.get_llvm_syntax(registry),
+                index.get_type().llvm_syntax(context),
+                index.llvm_syntax(context),
             )?;
         }
 
         emit!(self, "\n")
     }
 
-    pub fn emit_insert_value(&mut self, result: &Register, aggregate: &Value, value: &Value, indices: &[Value], registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_insert_value(&mut self, result: &Register, aggregate: &Value, value: &Value, indices: &[Value], context: &GlobalContext) -> crate::Result<()> {
         emit!(
             self,
             "\t{} = insertvalue {} {}, {} {}",
-            result.get_llvm_syntax(),
-            aggregate.get_type().get_llvm_syntax(registry),
-            aggregate.get_llvm_syntax(registry),
-            value.get_type().get_llvm_syntax(registry),
-            value.get_llvm_syntax(registry),
+            result.llvm_syntax(),
+            aggregate.get_type().llvm_syntax(context),
+            aggregate.llvm_syntax(context),
+            value.get_type().llvm_syntax(context),
+            value.llvm_syntax(context),
         )?;
 
         for index in indices {
             emit!(
                 self,
                 ", {} {}",
-                index.get_type().get_llvm_syntax(registry),
-                index.get_llvm_syntax(registry),
+                index.get_type().llvm_syntax(context),
+                index.llvm_syntax(context),
             )?;
         }
 
         emit!(self, "\n")
     }
 
-    pub fn emit_bitwise_cast(&mut self, result: &Register, value: &Value, registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_bitwise_cast(&mut self, result: &Register, value: &Value, context: &GlobalContext) -> crate::Result<()> {
         emit!(
             self,
             "\t{} = bitcast {} {} to {}\n",
-            result.get_llvm_syntax(),
-            value.get_type().get_llvm_syntax(registry),
-            value.get_llvm_syntax(registry),
-            result.value_type().get_llvm_syntax(registry),
+            result.llvm_syntax(),
+            value.get_type().llvm_syntax(context),
+            value.llvm_syntax(context),
+            result.get_type().llvm_syntax(context),
         )
     }
 
-    pub fn emit_truncation(&mut self, result: &Register, value: &Value, registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_truncation(&mut self, result: &Register, value: &Value, context: &GlobalContext) -> crate::Result<()> {
         emit!(
             self,
             "\t{} = trunc {} {} to {}\n",
-            result.get_llvm_syntax(),
-            value.get_type().get_llvm_syntax(registry),
-            value.get_llvm_syntax(registry),
-            result.value_type().get_llvm_syntax(registry),
+            result.llvm_syntax(),
+            value.get_type().llvm_syntax(context),
+            value.llvm_syntax(context),
+            result.get_type().llvm_syntax(context),
         )
     }
 
-    pub fn emit_sign_extension(&mut self, result: &Register, value: &Value, registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_sign_extension(&mut self, result: &Register, value: &Value, context: &GlobalContext) -> crate::Result<()> {
         emit!(
             self,
             "\t{} = sext {} {} to {}\n",
-            result.get_llvm_syntax(),
-            value.get_type().get_llvm_syntax(registry),
-            value.get_llvm_syntax(registry),
-            result.value_type().get_llvm_syntax(registry),
+            result.llvm_syntax(),
+            value.get_type().llvm_syntax(context),
+            value.llvm_syntax(context),
+            result.get_type().llvm_syntax(context),
         )
     }
 
-    pub fn emit_zero_extension(&mut self, result: &Register, value: &Value, registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_zero_extension(&mut self, result: &Register, value: &Value, context: &GlobalContext) -> crate::Result<()> {
         emit!(
             self,
             "\t{} = zext {} {} to {}\n",
-            result.get_llvm_syntax(),
-            value.get_type().get_llvm_syntax(registry),
-            value.get_llvm_syntax(registry),
-            result.value_type().get_llvm_syntax(registry),
+            result.llvm_syntax(),
+            value.get_type().llvm_syntax(context),
+            value.llvm_syntax(context),
+            result.get_type().llvm_syntax(context),
         )
     }
 
-    pub fn emit_extension(&mut self, result: &Register, value: &Value, registry: &TypeRegistry) -> crate::Result<()> {
-        match registry.get_info(value.get_type()) {
-            TypeInfo::Integer { signed: true, .. } => self.emit_sign_extension(result, value, registry),
-            _ => self.emit_zero_extension(result, value, registry)
+    pub fn emit_extension(&mut self, result: &Register, value: &Value, context: &GlobalContext) -> crate::Result<()> {
+        match value.get_type().info(context) {
+            TypeInfo::Integer { signed: true, .. } => self.emit_sign_extension(result, value, context),
+            _ => self.emit_zero_extension(result, value, context)
         }
     }
 
-    pub fn emit_negation(&mut self, result: &Register, operand: &Value, registry: &TypeRegistry) -> crate::Result<()> {
-        match registry.get_info(operand.get_type()) {
+    pub fn emit_negation(&mut self, result: &Register, operand: &Value, context: &GlobalContext) -> crate::Result<()> {
+        match operand.get_type().info(context) {
             TypeInfo::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = sub nsw {} 0, {}\n",
-                result.get_llvm_syntax(),
-                operand.get_type().get_llvm_syntax(registry),
-                operand.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                operand.get_type().llvm_syntax(context),
+                operand.llvm_syntax(context),
             ),
             _ => emit!(
                 self,
                 "\t{} = sub {} 0, {}\n",
-                result.get_llvm_syntax(),
-                operand.get_type().get_llvm_syntax(registry),
-                operand.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                operand.get_type().llvm_syntax(context),
+                operand.llvm_syntax(context),
             )
         }
     }
 
-    pub fn emit_addition(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
-        match registry.get_info(lhs.get_type()) {
+    pub fn emit_addition(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
+        match lhs.get_type().info(context) {
             TypeInfo::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = add nsw {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             ),
             _ => emit!(
                 self,
                 "\t{} = add nuw {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             )
         }
     }
 
-    pub fn emit_subtraction(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
-        match registry.get_info(lhs.get_type()) {
+    pub fn emit_subtraction(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
+        match lhs.get_type().info(context) {
             TypeInfo::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = sub nsw {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             ),
             _ => emit!(
                 self,
                 "\t{} = sub nuw {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             )
         }
     }
 
-    pub fn emit_multiplication(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
-        match registry.get_info(lhs.get_type()) {
+    pub fn emit_multiplication(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
+        match lhs.get_type().info(context) {
             TypeInfo::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = mul nsw {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             ),
             _ => emit!(
                 self,
                 "\t{} = mul nuw {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             )
         }
     }
 
-    pub fn emit_division(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
-        match registry.get_info(lhs.get_type()) {
+    pub fn emit_division(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
+        match lhs.get_type().info(context) {
             TypeInfo::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = sdiv {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             ),
             _ => emit!(
                 self,
                 "\t{} = udiv {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             )
         }
     }
 
-    pub fn emit_remainder(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
-        match registry.get_info(lhs.get_type()) {
+    pub fn emit_remainder(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
+        match lhs.get_type().info(context) {
             TypeInfo::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = srem {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             ),
             _ => emit!(
                 self,
                 "\t{} = urem {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             )
         }
     }
 
-    pub fn emit_shift_left(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_shift_left(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
         emit!(
             self,
             "\t{} = shl {} {}, {}\n",
-            result.get_llvm_syntax(),
-            lhs.get_type().get_llvm_syntax(registry),
-            lhs.get_llvm_syntax(registry),
-            rhs.get_llvm_syntax(registry),
+            result.llvm_syntax(),
+            lhs.get_type().llvm_syntax(context),
+            lhs.llvm_syntax(context),
+            rhs.llvm_syntax(context),
         )
     }
 
-    pub fn emit_shift_right(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
-        match registry.get_info(lhs.get_type()) {
+    pub fn emit_shift_right(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
+        match lhs.get_type().info(context) {
             TypeInfo::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = ashr {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             ),
             _ => emit!(
                 self,
                 "\t{} = lshr {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             )
         }
     }
 
-    pub fn emit_bitwise_and(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_bitwise_and(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
         emit!(
             self,
             "\t{} = and {} {}, {}\n",
-            result.get_llvm_syntax(),
-            lhs.get_type().get_llvm_syntax(registry),
-            lhs.get_llvm_syntax(registry),
-            rhs.get_llvm_syntax(registry),
+            result.llvm_syntax(),
+            lhs.get_type().llvm_syntax(context),
+            lhs.llvm_syntax(context),
+            rhs.llvm_syntax(context),
         )
     }
 
-    pub fn emit_bitwise_or(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_bitwise_or(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
         emit!(
             self,
             "\t{} = or {} {}, {}\n",
-            result.get_llvm_syntax(),
-            lhs.get_type().get_llvm_syntax(registry),
-            lhs.get_llvm_syntax(registry),
-            rhs.get_llvm_syntax(registry),
+            result.llvm_syntax(),
+            lhs.get_type().llvm_syntax(context),
+            lhs.llvm_syntax(context),
+            rhs.llvm_syntax(context),
         )
     }
 
-    pub fn emit_bitwise_xor(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_bitwise_xor(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
         emit!(
             self,
             "\t{} = xor {} {}, {}\n",
-            result.get_llvm_syntax(),
-            lhs.get_type().get_llvm_syntax(registry),
-            lhs.get_llvm_syntax(registry),
-            rhs.get_llvm_syntax(registry),
+            result.llvm_syntax(),
+            lhs.get_type().llvm_syntax(context),
+            lhs.llvm_syntax(context),
+            rhs.llvm_syntax(context),
         )
     }
 
-    pub fn emit_inversion(&mut self, result: &Register, operand: &Value, registry: &TypeRegistry) -> crate::Result<()> {
-        match registry.get_info(operand.get_type()) {
+    pub fn emit_inversion(&mut self, result: &Register, operand: &Value, context: &GlobalContext) -> crate::Result<()> {
+        match operand.get_type().info(context) {
             TypeInfo::Boolean => emit!(
                 self,
                 "\t{} = xor {} {}, true\n",
-                result.get_llvm_syntax(),
-                operand.get_type().get_llvm_syntax(registry),
-                operand.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                operand.get_type().llvm_syntax(context),
+                operand.llvm_syntax(context),
             ),
             _ => emit!(
                 self,
                 "\t{} = xor {} {}, -1\n",
-                result.get_llvm_syntax(),
-                operand.get_type().get_llvm_syntax(registry),
-                operand.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                operand.get_type().llvm_syntax(context),
+                operand.llvm_syntax(context),
             )
         }
     }
 
-    pub fn emit_cmp_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_cmp_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
         emit!(
             self,
             "\t{} = icmp eq {} {}, {}\n",
-            result.get_llvm_syntax(),
-            lhs.get_type().get_llvm_syntax(registry),
-            lhs.get_llvm_syntax(registry),
-            rhs.get_llvm_syntax(registry),
+            result.llvm_syntax(),
+            lhs.get_type().llvm_syntax(context),
+            lhs.llvm_syntax(context),
+            rhs.llvm_syntax(context),
         )
     }
 
-    pub fn emit_cmp_not_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_cmp_not_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
         emit!(
             self,
             "\t{} = icmp ne {} {}, {}\n",
-            result.get_llvm_syntax(),
-            lhs.get_type().get_llvm_syntax(registry),
-            lhs.get_llvm_syntax(registry),
-            rhs.get_llvm_syntax(registry),
+            result.llvm_syntax(),
+            lhs.get_type().llvm_syntax(context),
+            lhs.llvm_syntax(context),
+            rhs.llvm_syntax(context),
         )
     }
 
-    pub fn emit_cmp_less_than(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
-        match registry.get_info(lhs.get_type()) {
+    pub fn emit_cmp_less_than(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
+        match lhs.get_type().info(context) {
             TypeInfo::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = icmp slt {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             ),
             _ => emit!(
                 self,
                 "\t{} = icmp ult {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             )
         }
     }
 
-    pub fn emit_cmp_less_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
-        match registry.get_info(lhs.get_type()) {
+    pub fn emit_cmp_less_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
+        match lhs.get_type().info(context) {
             TypeInfo::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = icmp sle {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             ),
             _ => emit!(
                 self,
                 "\t{} = icmp ule {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             )
         }
     }
 
-    pub fn emit_cmp_greater_than(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
-        match registry.get_info(lhs.get_type()) {
+    pub fn emit_cmp_greater_than(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
+        match lhs.get_type().info(context) {
             TypeInfo::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = icmp sgt {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             ),
             _ => emit!(
                 self,
                 "\t{} = icmp ugt {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             )
         }
     }
 
-    pub fn emit_cmp_greater_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value, registry: &TypeRegistry) -> crate::Result<()> {
-        match registry.get_info(lhs.get_type()) {
+    pub fn emit_cmp_greater_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
+        match lhs.get_type().info(context) {
             TypeInfo::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = icmp sge {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             ),
             _ => emit!(
                 self,
                 "\t{} = icmp uge {} {}, {}\n",
-                result.get_llvm_syntax(),
-                lhs.get_type().get_llvm_syntax(registry),
-                lhs.get_llvm_syntax(registry),
-                rhs.get_llvm_syntax(registry),
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
             )
         }
     }
 
-    pub fn emit_function_call(&mut self, result: Option<&Register>, callee: &Value, arguments: &[Value], registry: &TypeRegistry) -> crate::Result<()> {
-        let TypeInfo::Function { signature } = registry.get_info(callee.get_type()) else {
-            panic!("{} is not a function", callee.get_llvm_syntax(registry));
+    pub fn emit_function_call(&mut self, result: Option<&Register>, callee: &Value, arguments: &[Value], context: &GlobalContext) -> crate::Result<()> {
+        let TypeInfo::Function { signature } = callee.get_type().info(context) else {
+            panic!("{} is not a function", callee.llvm_syntax(context));
         };
 
         emit!(self, "\t")?;
         if let Some(result) = result {
-            emit!(self, "{} = ", result.get_llvm_syntax())?;
+            emit!(self, "{} = ", result.llvm_syntax())?;
         }
-        emit!(self, "\tcall {}(", signature.return_type().get_llvm_syntax(registry))?;
+        emit!(self, "\tcall {}(", signature.return_type().llvm_syntax(context))?;
         
         let mut parameters_iter = signature.parameter_types().iter();
         if let Some(&parameter_type) = parameters_iter.next() {
-            emit!(self, "{}", parameter_type.get_llvm_syntax(registry))?;
+            emit!(self, "{}", parameter_type.llvm_syntax(context))?;
             for &parameter_type in parameters_iter {
-                emit!(self, ", {}", parameter_type.get_llvm_syntax(registry))?;
+                emit!(self, ", {}", parameter_type.llvm_syntax(context))?;
             }
             if signature.is_variadic() {
                 emit!(self, ", ...")?;
@@ -736,22 +734,22 @@ impl<W: Write> Emitter<W> {
             emit!(self, "...")?;
         }
         
-        emit!(self, ") {}(", callee.get_llvm_syntax(registry))?;
+        emit!(self, ") {}(", callee.llvm_syntax(context))?;
 
         let mut arguments_iter = arguments.iter();
         if let Some(argument) = arguments_iter.next() {
-            emit!(self, "{} {}", argument.get_type().get_llvm_syntax(registry), argument.get_llvm_syntax(registry))?;
+            emit!(self, "{} {}", argument.get_type().llvm_syntax(context), argument.llvm_syntax(context))?;
             for argument in arguments_iter {
-                emit!(self, ", {} {}", argument.get_type().get_llvm_syntax(registry), argument.get_llvm_syntax(registry))?;
+                emit!(self, ", {} {}", argument.get_type().llvm_syntax(context), argument.llvm_syntax(context))?;
             }
         }
 
         emit!(self, ")\n")
     }
 
-    pub fn emit_return(&mut self, value: Option<&Value>, registry: &TypeRegistry) -> crate::Result<()> {
+    pub fn emit_return(&mut self, value: Option<&Value>, context: &GlobalContext) -> crate::Result<()> {
         if let Some(value) = value {
-            emit!(self, "\tret {} {}\n", value.get_type().get_llvm_syntax(registry), value.get_llvm_syntax(registry))
+            emit!(self, "\tret {} {}\n", value.get_type().llvm_syntax(context), value.llvm_syntax(context))
         }
         else {
             emit!(self, "\tret void\n")

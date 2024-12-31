@@ -188,7 +188,7 @@ impl<W: Write> Generator<W> {
 
     pub fn get_format_from_node(&self, type_node: &ast::TypeNode, allow_unsized: bool, context: &ScopeContext) -> crate::Result<Format> {
         let format = match type_node {
-            ast::TypeNode::Named { name: type_name } => {
+            ast::TypeNode::Path { names: type_name } => {
                 self.get_format_from_name(type_name)?
             },
             ast::TypeNode::Pointer { pointee_type, semantics } => {
@@ -1743,7 +1743,7 @@ impl<W: Write> Generator<W> {
     }
 
     fn generate_implement_block(&mut self, self_type: &ast::TypeNode, statements: &[Box<ast::Node>], context: &ScopeContext) -> crate::Result<Value> {
-        if let ast::TypeNode::Named { name: type_name } = self_type {
+        if let ast::TypeNode::Path { names: type_name } = self_type {
             let type_symbol = self.get_type_symbol(type_name)?;
 
             let self_format = self.get_format_from_name(type_name)?;

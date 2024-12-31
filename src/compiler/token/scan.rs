@@ -252,7 +252,7 @@ impl<T: BufRead> Scanner<T> {
                 // Add the NUL byte at the end
                 // TODO: syntax like r"hello" to opt out?
                 bytes.push(0);
-                return Ok(Some((span, Token::Literal(Literal::String(StringValue::new(bytes))))));
+                return Ok(Some((span, Token::Literal(Literal::String(crate::sema::StringValue::new(bytes))))));
             }
             else {
                 self.put_back(ch);

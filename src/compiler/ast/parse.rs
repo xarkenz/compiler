@@ -261,15 +261,21 @@ impl<'a, T: BufRead> Parser<'a, T> {
     pub fn parse_type(&mut self, allowed_ends: Option<&[Token]>) -> crate::Result<TypeNode> {
         match self.get_token()? {
             Token::Literal(Literal::Identifier(name)) => {
-                let name = name.clone();
+                let mut names = vec![name.clone()];
                 self.scan_token()?;
+                
+                while let Some(Token::Colon2) = self.current_token() {
+                    self.scan_token()?;
+                    names.push(self.expect_identifier()?);
+                    self.scan_token()?;
+                }
 
                 if let Some(allowed_ends) = allowed_ends {
                     self.expect_token(allowed_ends)?;
                 }
 
-                Ok(TypeNode::Named {
-                    name: name,
+                Ok(TypeNode::Path {
+                    names,
                 })
             },
             Token::Star => {
@@ -346,8 +352,8 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     return_type = Box::new(self.parse_type(allowed_ends)?);
                 }
                 else {
-                    return_type = Box::new(TypeNode::Named {
-                        name: "void".into(),
+                    return_type = Box::new(TypeNode::Path {
+                        names: vec!["void".into()],
                     });
 
                     if let Some(allowed_ends) = allowed_ends {
@@ -483,8 +489,8 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.scan_token()?;
                     self.parse_type(Some(&[Token::CurlyLeft, Token::Semicolon]))?
                 } else {
-                    TypeNode::Named {
-                        name: "void".into(),
+                    TypeNode::Path {
+                        names: vec!["void".into()],
                     }
                 };
                 let body = if let Some(Token::CurlyLeft) = self.current_token() {

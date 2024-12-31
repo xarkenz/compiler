@@ -2,151 +2,29 @@ use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use crate::ast::TypeNode;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub enum PointerSemantics {
-    Immutable,
-    Mutable,
-    Owned,
-}
+mod values;
+mod types;
+mod modules;
+mod local_ctx;
 
-impl PointerSemantics {
-    pub fn simple(is_mutable: bool) -> Self {
-        if is_mutable {
-            Self::Mutable
-        }
-        else {
-            Self::Immutable
-        }
-    }
-}
+pub use values::*;
+pub use types::*;
+pub use modules::*;
+pub use local_ctx::*;
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct StructureMember {
-    pub name: String,
-    pub value_type: TypeHandle,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub struct FunctionSignature {
-    return_type: TypeHandle,
-    parameter_types: Box<[TypeHandle]>,
-    is_variadic: bool,
-}
-
-impl FunctionSignature {
-    pub fn new(return_type: TypeHandle, parameter_types: Box<[TypeHandle]>, is_variadic: bool) -> Self {
-        Self {
-            return_type,
-            parameter_types,
-            is_variadic,
-        }
-    }
-
-    pub fn return_type(&self) -> TypeHandle {
-        self.return_type
-    }
-
-    pub fn parameter_types(&self) -> &[TypeHandle] {
-        &self.parameter_types
-    }
-
-    pub fn is_variadic(&self) -> bool {
-        self.is_variadic
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum TypeInfo {
-    Meta,
-    Never,
-    Void,
-    Boolean,
-    Integer {
-        size: usize,
-        signed: bool,
-    },
-    Pointer {
-        pointee_type: TypeHandle,
-        semantics: PointerSemantics,
-    },
-    Array {
-        item_type: TypeHandle,
-        length: Option<usize>,
-    },
-    Structure {
-        name: String,
-        members: Box<[StructureMember]>,
-    },
-    Function {
-        signature: FunctionSignature,
-    },
-    Opaque {
-        name: String,
-    },
-    Alias {
-        target: TypeHandle,
-    },
-}
-
-/// Order of elements is important! If anything is changed here, `TypeHandle::*` may need to be
-/// changed as well.
-const BUILTIN_TYPES: &[(TypeInfo, Option<&str>)] = &[
-    (TypeInfo::Meta, None),
-    (TypeInfo::Never, Some("never")),
-    (TypeInfo::Void, Some("void")),
-    (TypeInfo::Boolean, Some("bool")),
-    (TypeInfo::Integer { size: 1, signed: true }, Some("i8")),
-    (TypeInfo::Integer { size: 1, signed: false }, Some("u8")),
-    (TypeInfo::Integer { size: 2, signed: true }, Some("i16")),
-    (TypeInfo::Integer { size: 2, signed: false }, Some("u16")),
-    (TypeInfo::Integer { size: 4, signed: true }, Some("i32")),
-    (TypeInfo::Integer { size: 4, signed: false }, Some("u32")),
-    (TypeInfo::Integer { size: 8, signed: true }, Some("i64")),
-    (TypeInfo::Integer { size: 8, signed: false }, Some("u64")),
-];
-
-#[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct TypeHandle(NonZeroUsize);
-
-impl TypeHandle {
-    pub const META: TypeHandle = TypeHandle(unsafe { NonZeroUsize::new_unchecked(1) });
-    pub const NEVER: TypeHandle = TypeHandle(unsafe { NonZeroUsize::new_unchecked(2) });
-    pub const VOID: TypeHandle = TypeHandle(unsafe { NonZeroUsize::new_unchecked(3) });
-    pub const BOOL: TypeHandle = TypeHandle(unsafe { NonZeroUsize::new_unchecked(4) });
-    pub const I8: TypeHandle = TypeHandle(unsafe { NonZeroUsize::new_unchecked(5) });
-    pub const U8: TypeHandle = TypeHandle(unsafe { NonZeroUsize::new_unchecked(6) });
-    pub const I16: TypeHandle = TypeHandle(unsafe { NonZeroUsize::new_unchecked(7) });
-    pub const U16: TypeHandle = TypeHandle(unsafe { NonZeroUsize::new_unchecked(8) });
-    pub const I32: TypeHandle = TypeHandle(unsafe { NonZeroUsize::new_unchecked(9) });
-    pub const U32: TypeHandle = TypeHandle(unsafe { NonZeroUsize::new_unchecked(10) });
-    pub const I64: TypeHandle = TypeHandle(unsafe { NonZeroUsize::new_unchecked(11) });
-    pub const U64: TypeHandle = TypeHandle(unsafe { NonZeroUsize::new_unchecked(12) });
-    
-    pub fn get_identifier(self, registry: &TypeRegistry) -> &str {
-        registry.get_identifier(self)
-    }
-    
-    pub fn get_llvm_syntax(self, registry: &TypeRegistry) -> &str {
-        registry.get_llvm_syntax(self)
-    }
-}
-
-struct TypeEntry {
-    identifier: String,
-    info: TypeInfo,
-    alignment: usize,
-    size: Option<usize>,
-    llvm_syntax: String,
-}
-
-pub struct TypeRegistry {
+pub struct GlobalContext {
+    /// The size of a pointer in bytes.
     pointer_size: usize,
-    registered_types: Vec<TypeEntry>,
-    /// Get the type `Self` currently represents.
-    self_type: Option<TypeHandle>,
-    /// Find a type by name.
-    named_types: HashMap<String, TypeHandle>,
+    /// Table of all modules in existence.
+    module_registry: Vec<ModuleInfo>,
+    /// The module currently being analyzed.
+    current_module: ModuleHandle,
+    /// Table of all types in existence.
+    type_registry: Vec<TypeEntry>,
+    /// The type `Self` currently represents, or `None` if not in an `implement` block.
+    current_self_type: Option<TypeHandle>,
+    /// Find a primitive type by name.
+    primitive_types: HashMap<String, TypeHandle>,
     /// Find `*T`, `*mut T`, or `*own T`.
     pointer_types: HashMap<(TypeHandle, PointerSemantics), TypeHandle>,
     /// Find `[T; N]` or `[T]`.
@@ -155,133 +33,247 @@ pub struct TypeRegistry {
     function_types: HashMap<FunctionSignature, TypeHandle>,
 }
 
-impl TypeRegistry {
+struct TypeEntry {
+    identifier: String,
+    info: TypeInfo,
+    implementation: HashMap<String, GlobalSymbol>,
+    alignment: usize,
+    size: Option<usize>,
+    llvm_syntax: String,
+}
+
+impl GlobalContext {
     pub fn new() -> Self {
-        let mut registry = Self {
+        let mut context = Self {
             pointer_size: size_of::<*const ()>(),
-            registered_types: Vec::with_capacity(BUILTIN_TYPES.len()),
-            self_type: None,
-            named_types: HashMap::new(),
+            module_registry: vec![ModuleInfo::new(String::new(), None)],
+            current_module: ModuleHandle::ROOT,
+            type_registry: Vec::with_capacity(PRIMITIVE_TYPES.len()),
+            current_self_type: None,
+            primitive_types: HashMap::new(),
             pointer_types: HashMap::new(),
             array_types: HashMap::new(),
             function_types: HashMap::new(),
         };
-        for (info, identifier) in BUILTIN_TYPES {
-            let handle = registry.create_handle(identifier.unwrap_or("").into(), info.clone());
-            if let &Some(name) = identifier {
-                registry.named_types.insert(name.into(), handle);
-            }
+        
+        for &(ref info, identifier) in PRIMITIVE_TYPES {
+            let handle = context.create_type(info.clone(), identifier.into());
+            context.primitive_types.insert(identifier.into(), handle);
         }
-        registry
+        
+        context
     }
     
-    pub fn self_type(&self) -> Option<TypeHandle> {
-        self.self_type
+    pub fn pointer_size(&self) -> usize {
+        self.pointer_size
+    }
+    
+    pub fn current_module(&self) -> ModuleHandle {
+        self.current_module
+    }
+    
+    pub fn module_info(&self, handle: ModuleHandle) -> &ModuleInfo {
+        &self.module_registry[handle.registry_index()]
+    }
+    
+    pub fn module_info_mut(&mut self, handle: ModuleHandle) -> &mut ModuleInfo {
+        &mut self.module_registry[handle.registry_index()]
+    }
+    
+    pub fn current_module_info(&self) -> &ModuleInfo {
+        self.module_info(self.current_module())
+    }
+    
+    pub fn current_module_info_mut(&mut self) -> &mut ModuleInfo {
+        self.module_info_mut(self.current_module())
+    }
+    
+    pub fn current_self_type(&self) -> Option<TypeHandle> {
+        self.current_self_type
     }
     
     pub fn set_self_type(&mut self, self_type: Option<TypeHandle>) {
-        self.self_type = self_type;
+        self.current_self_type = self_type;
     }
     
-    fn get_entry(&self, handle: TypeHandle) -> &TypeEntry {
-        // Subtract 1 because the first created handle has value 1 but represents index 0
-        &self.registered_types[handle.0.get() - 1]
+    fn type_entry(&self, handle: TypeHandle) -> &TypeEntry {
+        &self.type_registry[handle.registry_index()]
     }
     
-    pub fn get_identifier(&self, handle: TypeHandle) -> &str {
-        &self.get_entry(handle).identifier
+    fn type_entry_mut(&mut self, handle: TypeHandle) -> &mut TypeEntry {
+        &mut self.type_registry[handle.registry_index()]
+    }
+    
+    pub fn type_identifier(&self, handle: TypeHandle) -> &str {
+        &self.type_entry(handle).identifier
     }
 
-    pub fn get_info(&self, handle: TypeHandle) -> &TypeInfo {
-        &self.get_entry(handle).info
+    pub fn type_info(&self, handle: TypeHandle) -> &TypeInfo {
+        &self.type_entry(handle).info
+    }
+
+    pub fn type_alignment(&self, handle: TypeHandle) -> usize {
+        self.type_entry(handle).alignment
+    }
+
+    pub fn type_size(&self, handle: TypeHandle) -> Option<usize> {
+        self.type_entry(handle).size
     }
     
-    pub fn get_function_info(&self, handle: TypeHandle) -> Option<&FunctionSignature> {
-        match &self.get_entry(handle).info {
-            TypeInfo::Function { signature } => Some(signature),
-            _ => None,
+    pub fn type_llvm_syntax(&self, handle: TypeHandle) -> &str {
+        &self.type_entry(handle).llvm_syntax
+    }
+    
+    pub fn enter_module(&mut self, name: String) -> crate::Result<()> {
+        let new_module_info = ModuleInfo::new(name.clone(), Some(self.current_module()));
+        let new_module = ModuleHandle::new(self.module_registry.len());
+        self.module_registry.push(new_module_info);
+        
+        self.current_module_info_mut().bind_module(name, new_module)?;
+        self.current_module = new_module;
+        
+        Ok(())
+    }
+    
+    pub fn leave_module(&mut self) -> crate::Result<()> {
+        self.current_module = self.current_module_info().super_module()
+            .expect("attempted to leave root module");
+        
+        Ok(())
+    }
+    
+    pub fn enter_implement_block(&mut self, self_type: TypeHandle) {
+        if self.current_self_type().is_some() {
+            panic!("attempted to enter nested implement block");
+        }
+        self.current_self_type = Some(self_type);
+    }
+    
+    pub fn leave_implement_block(&mut self) {
+        if self.current_self_type().is_none() {
+            panic!("attempted to leave inactive implement block");
+        }
+        self.current_self_type = None;
+    }
+
+    pub fn declare_symbol(&mut self, name: String, value: Value) -> crate::Result<()> {
+        if let Some(symbol) = self.find_conflicting_symbol(&name) {
+            if !self.types_are_equivalent(symbol.value.get_type(), value.get_type()) {
+                return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.clone() }));
+            }
+        }
+        else {
+            self.insert_symbol(name, value, false);
+        }
+        
+        Ok(())
+    }
+
+    pub fn define_symbol(&mut self, name: String, value: Value) -> crate::Result<()> {
+        if let Some(symbol) = self.find_conflicting_symbol(&name) {
+            if symbol.is_defined || !self.types_are_equivalent(symbol.value.get_type(), value.get_type()) {
+                return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.clone() }));
+            }
+        }
+
+        self.insert_symbol(name, value, true);
+
+        Ok(())
+    }
+    
+    /// "Conflicting" i.e. the symbol would conflict if a new symbol of the same name were
+    /// to be defined in the current scope. The current `implement`
+    /// block is searched if applicable, otherwise the current module is searched.
+    fn find_conflicting_symbol(&self, name: &str) -> Option<&GlobalSymbol> {
+        if let Some(self_type) = self.current_self_type() {
+            self.type_entry(self_type).implementation.get(name)
+        }
+        else {
+            self.current_module_info().find_symbol(name)
+        }
+    }
+    
+    fn insert_symbol(&mut self, name: String, value: Value, is_defined: bool) {
+        let symbol = GlobalSymbol {
+            value,
+            is_defined,
+        };
+        
+        if let Some(self_type) = self.current_self_type() {
+            self.type_entry_mut(self_type).implementation.insert(name, symbol);
+        }
+        else {
+            self.current_module_info_mut().insert_symbol(name, symbol);
         }
     }
 
-    pub fn get_alignment(&self, handle: TypeHandle) -> usize {
-        self.get_entry(handle).alignment
-    }
-
-    pub fn get_size(&self, handle: TypeHandle) -> Option<usize> {
-        self.get_entry(handle).size
-    }
-    
-    pub fn get_llvm_syntax(&self, handle: TypeHandle) -> &str {
-        &self.get_entry(handle).llvm_syntax
-    }
-    
-    fn create_handle(&mut self, identifier: String, info: TypeInfo) -> TypeHandle {
-        let alignment = self.calculate_alignment(&info);
-        let size = self.calculate_size(&info);
-        let llvm_syntax = self.generate_llvm_syntax(&identifier, &info);
-        let entry = TypeEntry {
-            identifier,
-            info,
-            alignment,
-            size,
-            llvm_syntax,
-        };
-        self.registered_types.push(entry);
-        TypeHandle(NonZeroUsize::new(self.registered_types.len()).unwrap())
-    }
-
-    pub fn get_handle(&mut self, type_node: &TypeNode) -> crate::Result<TypeHandle> {
+    pub fn get_type_handle_from_node(&mut self, type_node: &TypeNode) -> crate::Result<TypeHandle> {
         match type_node {
-            TypeNode::Named { name } => {
-                Ok(self.get_named_handle(name))
+            TypeNode::Path { names } => {
+                let (type_name, module_names) = names.split_last().unwrap();
+                let mut module = self.current_module();
+                for module_name in module_names {
+                    let module_info = self.module_info(module);
+                    if let Some(found_module) = module_info.module_binding(module_name) {
+                        module = found_module;
+                    }
+                    else {
+                        return Err(Box::new(crate::Error::UndefinedModule { name: module_info.create_member_identifier(module_name) }));
+                    }
+                }
+                let module_info = self.module_info(module);
+                module_info.type_binding(type_name)
+                    .ok_or_else(|| Box::new(crate::Error::UnknownType { type_name: module_info.create_member_identifier(type_name) }))
             }
             TypeNode::Pointer { pointee_type, semantics } => {
-                let pointee_type = self.get_handle(pointee_type)?;
-                Ok(self.get_pointer_handle(pointee_type, *semantics))
+                let pointee_type = self.get_type_handle_from_node(pointee_type)?;
+                Ok(self.get_pointer_type(pointee_type, *semantics))
             }
             TypeNode::Array { item_type, length } => {
-                let item_type = self.get_handle(item_type)?;
+                let item_type = self.get_type_handle_from_node(item_type)?;
                 let length = match length {
                     Some(node) => Some(node.as_array_length()
                         .ok_or_else(|| Box::new(crate::Error::NonConstantArrayLength {}))?),
                     None => None,
                 };
-                Ok(self.get_array_handle(item_type, length))
+                Ok(self.get_array_type(item_type, length))
             }
             TypeNode::Function { parameter_types, is_variadic, return_type } => {
                 let parameter_types: Box<[_]> = parameter_types.iter()
-                    .map(|type_node| self.get_handle(type_node))
+                    .map(|type_node| self.get_type_handle_from_node(type_node))
                     .collect::<Result<_, _>>()?;
-                let return_type = self.get_handle(return_type)?;
+                let return_type = self.get_type_handle_from_node(return_type)?;
                 let signature = FunctionSignature::new(return_type, parameter_types, *is_variadic);
-                Ok(self.get_function_handle(&signature))
+                Ok(self.get_function_type(&signature))
             }
             TypeNode::SelfType => {
-                self.self_type.ok_or_else(|| Box::new(crate::Error::SelfOutsideImplement {}))
+                self.current_self_type.ok_or_else(|| Box::new(crate::Error::SelfOutsideImplement {}))
             }
         }
     }
     
-    pub fn get_named_handle(&mut self, name: &str) -> TypeHandle {
-        if let Some(handle) = self.named_types.get(name) {
-            *handle
+    pub fn get_named_type(&mut self, module: ModuleHandle, name: &str) -> crate::Result<TypeHandle> {
+        if let Some(handle) = self.module_info(module).type_binding(name) {
+            Ok(handle)
         }
         else {
-            let info = TypeInfo::Opaque {
+            let info = TypeInfo::Undefined {
                 name: name.into(),
             };
-            let handle = self.create_handle(name.into(), info);
-            self.named_types.insert(name.into(), handle);
-            handle
+            let identifier = self.module_info_mut(module).create_member_identifier(name);
+            
+            let handle = self.create_type(info, identifier.into());
+            self.module_info_mut(module).bind_type(name.into(), handle)?;
+            Ok(handle)
         }
     }
     
-    pub fn get_pointer_handle(&mut self, pointee_type: TypeHandle, semantics: PointerSemantics) -> TypeHandle {
+    pub fn get_pointer_type(&mut self, pointee_type: TypeHandle, semantics: PointerSemantics) -> TypeHandle {
         if let Some(handle) = self.pointer_types.get(&(pointee_type, semantics)) {
             *handle
         }
         else {
-            let pointee_identifier = self.get_identifier(pointee_type);
+            let pointee_identifier = self.type_identifier(pointee_type);
             let identifier = match semantics {
                 PointerSemantics::Immutable => format!("*{pointee_identifier}"),
                 PointerSemantics::Mutable => format!("*mut {pointee_identifier}"),
@@ -291,18 +283,19 @@ impl TypeRegistry {
                 pointee_type,
                 semantics,
             };
-            let handle = self.create_handle(identifier, info);
+            
+            let handle = self.create_type(info, identifier);
             self.pointer_types.insert((pointee_type, semantics), handle);
             handle
         }
     }
     
-    pub fn get_array_handle(&mut self, item_type: TypeHandle, length: Option<usize>) -> TypeHandle {
+    pub fn get_array_type(&mut self, item_type: TypeHandle, length: Option<usize>) -> TypeHandle {
         if let Some(handle) = self.array_types.get(&(item_type, length)) {
             *handle
         }
         else {
-            let item_identifier = self.get_identifier(item_type);
+            let item_identifier = self.type_identifier(item_type);
             let identifier = match length {
                 Some(length) => format!("[{item_identifier}; {length}]"),
                 None => format!("[{item_identifier}]"),
@@ -311,13 +304,14 @@ impl TypeRegistry {
                 item_type,
                 length,
             };
-            let handle = self.create_handle(identifier, info);
+            
+            let handle = self.create_type(info, identifier);
             self.array_types.insert((item_type, length), handle);
             handle
         }
     }
     
-    pub fn get_function_handle(&mut self, signature: &FunctionSignature) -> TypeHandle {
+    pub fn get_function_type(&mut self, signature: &FunctionSignature) -> TypeHandle {
         if let Some(handle) = self.function_types.get(&signature) {
             *handle
         }
@@ -325,10 +319,10 @@ impl TypeRegistry {
             let mut identifier = String::from("function(");
             let mut parameter_types_iter = signature.parameter_types().iter();
             if let Some(&parameter_type) = parameter_types_iter.next() {
-                identifier.push_str(self.get_identifier(parameter_type));
+                identifier.push_str(self.type_identifier(parameter_type));
                 for &parameter_type in parameter_types_iter {
                     identifier.push_str(", ");
-                    identifier.push_str(self.get_identifier(parameter_type));
+                    identifier.push_str(self.type_identifier(parameter_type));
                 }
                 if signature.is_variadic() {
                     identifier.push_str(", ..");
@@ -338,68 +332,53 @@ impl TypeRegistry {
                 identifier.push_str("..");
             }
             identifier.push_str(") -> ");
-            identifier.push_str(self.get_identifier(signature.return_type()));
+            identifier.push_str(self.type_identifier(signature.return_type()));
             let info = TypeInfo::Function {
                 signature: signature.clone(),
             };
-            let handle = self.create_handle(identifier, info);
+            let handle = self.create_type(info, identifier);
             self.function_types.insert(signature.clone(), handle);
             handle
         }
     }
 
-    pub fn try_get_handle(&self, type_node: &TypeNode) -> Option<TypeHandle> {
-        match type_node {
-            TypeNode::Named { name } => {
-                self.named_types.get(name).cloned()
-            }
-            TypeNode::Pointer { pointee_type, semantics } => {
-                let pointee_type = self.try_get_handle(pointee_type)?;
-                self.pointer_types.get(&(pointee_type, *semantics)).cloned()
-            }
-            TypeNode::Array { item_type, length } => {
-                let item_type = self.try_get_handle(item_type)?;
-                let length = match length {
-                    Some(node) => Some(node.as_array_length()?),
-                    None => None,
-                };
-                self.array_types.get(&(item_type, length)).cloned()
-            }
-            TypeNode::Function { parameter_types, is_variadic, return_type } => {
-                let parameter_types: Box<[_]> = parameter_types.iter()
-                    .map(|type_node| self.try_get_handle(type_node))
-                    .collect::<Option<_>>()?;
-                let return_type = self.try_get_handle(return_type)?;
-                let signature = FunctionSignature::new(return_type, parameter_types, *is_variadic);
-                self.function_types.get(&signature).cloned()
-            }
-            TypeNode::SelfType => {
-                self.self_type
-            }
-        }
+    fn create_type(&mut self, info: TypeInfo, identifier: String) -> TypeHandle {
+        let alignment = self.calculate_alignment(&info);
+        let size = self.calculate_size(&info);
+        let llvm_syntax = self.generate_type_llvm_syntax(&identifier, &info);
+        let entry = TypeEntry {
+            identifier,
+            info,
+            implementation: HashMap::new(),
+            alignment,
+            size,
+            llvm_syntax,
+        };
+
+        let registry_index = self.type_registry.len();
+        self.type_registry.push(entry);
+        TypeHandle::new(registry_index)
     }
 
-    pub fn calculate_alignment(&self, info: &TypeInfo) -> usize {
+    fn calculate_alignment(&self, info: &TypeInfo) -> usize {
         match *info {
-            TypeInfo::Meta => 0,
             TypeInfo::Never => 0,
             TypeInfo::Void => 1,
             TypeInfo::Boolean => 1,
             TypeInfo::Integer { size, .. } => size,
             TypeInfo::Pointer { .. } => self.pointer_size,
             TypeInfo::Function { .. } => self.pointer_size,
-            TypeInfo::Array { item_type, .. } => self.get_alignment(item_type),
+            TypeInfo::Array { item_type, .. } => self.type_alignment(item_type),
             TypeInfo::Structure { ref members, .. } => members.iter()
-                .map(|member| self.get_alignment(member.value_type))
+                .map(|member| self.type_alignment(member.member_type))
                 .max().unwrap_or(1),
-            TypeInfo::Opaque { .. } => 0,
-            TypeInfo::Alias { target } => self.get_alignment(target),
+            TypeInfo::Undefined { .. } => 0,
+            TypeInfo::Alias { target } => self.type_alignment(target),
         }
     }
     
-    pub fn calculate_size(&self, info: &TypeInfo) -> Option<usize> {
+    fn calculate_size(&self, info: &TypeInfo) -> Option<usize> {
         match *info {
-            TypeInfo::Meta => None,
             TypeInfo::Never => Some(0),
             TypeInfo::Void => Some(0),
             TypeInfo::Boolean => Some(1),
@@ -408,7 +387,7 @@ impl TypeRegistry {
             TypeInfo::Function { .. } => Some(self.pointer_size),
             TypeInfo::Array { item_type, length } => {
                 let length = length?;
-                let item_size = self.get_size(item_type)?;
+                let item_size = self.type_size(item_type)?;
                 Some(length * item_size)
             }
             TypeInfo::Structure { ref members, .. } => {
@@ -416,13 +395,13 @@ impl TypeRegistry {
                 let mut max_alignment = 0;
 
                 for member in members {
-                    let alignment = self.get_alignment(member.value_type);
+                    let alignment = self.type_alignment(member.member_type);
                     max_alignment = max_alignment.max(alignment);
 
                     // Calculate padding
                     let intermediate_size = current_size + alignment - 1;
                     let padded_size = intermediate_size - intermediate_size % alignment;
-                    current_size = padded_size + self.get_size(member.value_type)?;
+                    current_size = padded_size + self.type_size(member.member_type)?;
                 }
 
                 // Pad for the largest member alignment
@@ -431,36 +410,35 @@ impl TypeRegistry {
 
                 Some(padded_size)
             }
-            TypeInfo::Opaque { .. } => None,
-            TypeInfo::Alias { target } => Some(self.get_alignment(target)),
+            TypeInfo::Undefined { .. } => None,
+            TypeInfo::Alias { target } => Some(self.type_alignment(target)),
         }
     }
     
-    pub fn generate_llvm_syntax(&self, identifier: &str, info: &TypeInfo) -> String {
+    fn generate_type_llvm_syntax(&self, identifier: &str, info: &TypeInfo) -> String {
         match *info {
-            TypeInfo::Meta => "<META>".into(),
             TypeInfo::Never => "void".into(),
             TypeInfo::Void => "void".into(),
             TypeInfo::Boolean => "i1".into(),
             TypeInfo::Integer { size, .. } => format!("i{}", size * 8),
             TypeInfo::Pointer { pointee_type, .. } => {
-                format!("{}*", self.get_llvm_syntax(pointee_type))
+                format!("{}*", self.type_llvm_syntax(pointee_type))
             }
             TypeInfo::Array { item_type, length } => match length {
-                Some(length) => format!("[{} x {}]", length, self.get_llvm_syntax(item_type)),
-                None => self.get_llvm_syntax(item_type).into(),
+                Some(length) => format!("[{} x {}]", length, self.type_llvm_syntax(item_type)),
+                None => self.type_llvm_syntax(item_type).into(),
             }
-            TypeInfo::Structure { .. } | TypeInfo::Opaque { .. } => {
+            TypeInfo::Structure { .. } | TypeInfo::Undefined { .. } => {
                 format!("%\"type.{identifier}\"")
             },
             TypeInfo::Function { ref signature, .. } => {
-                let mut syntax = format!("{}(", self.get_llvm_syntax(signature.return_type()));
+                let mut syntax = format!("{}(", self.type_llvm_syntax(signature.return_type()));
                 let mut parameters_iter = signature.parameter_types().iter();
                 if let Some(&parameter) = parameters_iter.next() {
-                    syntax.push_str(self.get_llvm_syntax(parameter));
+                    syntax.push_str(self.type_llvm_syntax(parameter));
                     for &parameter in parameters_iter {
                         syntax.push_str(", ");
-                        syntax.push_str(self.get_llvm_syntax(parameter));
+                        syntax.push_str(self.type_llvm_syntax(parameter));
                     }
                     if signature.is_variadic() {
                         syntax.push_str(", ...");
@@ -472,12 +450,17 @@ impl TypeRegistry {
                 syntax.push_str(")*");
                 syntax
             }
-            TypeInfo::Alias { target } => self.get_llvm_syntax(target).into(),
+            TypeInfo::Alias { target } => self.type_llvm_syntax(target).into(),
         }
     }
+    
+    pub fn types_are_equivalent(&self, lhs_type: TypeHandle, rhs_type: TypeHandle) -> bool {
+        // TODO
+        lhs_type == rhs_type
+    }
 
-    pub fn can_coerce(&self, from_type: TypeHandle, to_type: TypeHandle, from_mutable: bool) -> bool {
-        from_type == to_type || match (self.get_info(from_type), self.get_info(to_type)) {
+    pub fn can_coerce_type(&self, from_type: TypeHandle, to_type: TypeHandle, from_mutable: bool) -> bool {
+        from_type == to_type || match (self.type_info(from_type), self.type_info(to_type)) {
             (
                 &TypeInfo::Pointer { pointee_type: from_pointee, semantics: from_semantics },
                 &TypeInfo::Pointer { pointee_type: to_pointee, semantics: to_semantics },
@@ -485,38 +468,38 @@ impl TypeRegistry {
                 // Not sure if this is right... needs testing
                 use PointerSemantics::*;
                 match (from_semantics, to_semantics) {
-                    (Immutable, Immutable) => self.can_coerce(from_pointee, to_pointee, false),
+                    (Immutable, Immutable) => self.can_coerce_type(from_pointee, to_pointee, false),
                     (Immutable, _) => false,
-                    (Mutable, Immutable) => self.can_coerce(from_pointee, to_pointee, true),
-                    (Mutable, Mutable) => self.can_coerce(from_pointee, to_pointee, true),
+                    (Mutable, Immutable) => self.can_coerce_type(from_pointee, to_pointee, true),
+                    (Mutable, Mutable) => self.can_coerce_type(from_pointee, to_pointee, true),
                     (Mutable, _) => false,
-                    (Owned, Immutable) => self.can_coerce(from_pointee, to_pointee, from_mutable),
-                    (Owned, Mutable) => from_mutable && self.can_coerce(from_pointee, to_pointee, from_mutable),
-                    (Owned, Owned) => self.can_coerce(from_pointee, to_pointee, from_mutable),
+                    (Owned, Immutable) => self.can_coerce_type(from_pointee, to_pointee, from_mutable),
+                    (Owned, Mutable) => from_mutable && self.can_coerce_type(from_pointee, to_pointee, from_mutable),
+                    (Owned, Owned) => self.can_coerce_type(from_pointee, to_pointee, from_mutable),
                 }
             },
             (
                 &TypeInfo::Array { item_type: from_item, length: Some(from_length) },
                 &TypeInfo::Array { item_type: to_item, length: Some(to_length) },
             ) => {
-                from_length == to_length && self.can_coerce(from_item, to_item, from_mutable)
+                from_length == to_length && self.can_coerce_type(from_item, to_item, from_mutable)
             },
             (
                 &TypeInfo::Array { item_type: from_item, length: _ },
                 &TypeInfo::Array { item_type: to_item, length: None },
             ) => {
-                self.can_coerce(from_item, to_item, from_mutable)
+                self.can_coerce_type(from_item, to_item, from_mutable)
             },
             (
                 TypeInfo::Function { signature: from_signature },
                 TypeInfo::Function { signature: to_signature },
             ) => {
                 from_signature.is_variadic() == to_signature.is_variadic()
-                    && self.can_coerce(from_signature.return_type(), to_signature.return_type(), false)
+                    && self.can_coerce_type(from_signature.return_type(), to_signature.return_type(), false)
                     && from_signature.parameter_types().len() == to_signature.parameter_types().len()
                     && std::iter::zip(from_signature.parameter_types(), to_signature.parameter_types())
                         .all(|(&from_param, &to_param)| {
-                            self.can_coerce(from_param, to_param, false)
+                            self.can_coerce_type(from_param, to_param, false)
                         })
             },
             (TypeInfo::Void, _) | (_, TypeInfo::Void) => true,

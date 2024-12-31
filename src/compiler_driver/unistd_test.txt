@@ -1,4 +1,4 @@
-alias ProcessID = i32;
+import i32 as ProcessID;
 
 // stdio.h
 function printf(format: *[u8], ..) -> i32;

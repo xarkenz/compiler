@@ -264,9 +264,8 @@ impl BinaryOperation {
 
 #[derive(Clone, Debug)]
 pub enum TypeNode {
-    Named {
-        // TODO: scoped names (e.g. thinga::thingb::Type)
-        name: String,
+    Path {
+        names: Vec<String>,
     },
     Pointer {
         pointee_type: Box<TypeNode>,
@@ -287,8 +286,8 @@ pub enum TypeNode {
 impl fmt::Display for TypeNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Named { name } => {
-                write!(f, "{name}")
+            Self::Path { names } => {
+                write!(f, "{}", names.join("::"))
             },
             Self::Pointer { pointee_type, semantics } => match semantics {
                 PointerSemantics::Immutable => write!(f, "*{pointee_type}"),

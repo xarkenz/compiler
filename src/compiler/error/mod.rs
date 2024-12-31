@@ -155,6 +155,9 @@ pub enum Error {
     UndefinedSymbol {
         name: String,
     },
+    UndefinedModule {
+        name: String,
+    },
     PartialType {
         type_name: String,
     },
@@ -239,6 +242,9 @@ pub enum Error {
         got_count: usize,
     },
     GlobalSymbolConflict {
+        name: String,
+    },
+    TypeSymbolConflict {
         name: String,
     },
     FunctionSignatureConflict {
@@ -338,6 +344,7 @@ impl fmt::Display for Error {
             Self::CannotMutateValue { type_name } => write!(f, "cannot mutate value of type '{type_name}' as it is not 'mut'"),
             Self::ExpectedLValue {} => write!(f, "expected an lvalue"),
             Self::UndefinedSymbol { name } => write!(f, "undefined symbol '{name}'"),
+            Self::UndefinedModule { name } => write!(f, "undefined module '{name}'"),
             Self::PartialType { type_name } => write!(f, "type '{type_name}' is declared but not defined"),
             Self::UnknownType { type_name } => write!(f, "unrecognized type name '{type_name}'"),
             Self::NonConstantArrayLength {} => write!(f, "array length must be constant"),
@@ -379,6 +386,7 @@ impl fmt::Display for Error {
             Self::MissingFunctionArguments { expected_count, got_count } => write!(f, "too few arguments (expected {expected_count}, got {got_count})"),
             Self::ExtraFunctionArguments { expected_count, got_count } => write!(f, "too many arguments (expected {expected_count}, got {got_count})"),
             Self::GlobalSymbolConflict { name } => write!(f, "global name '{name}' is already in use"),
+            Self::TypeSymbolConflict { name } => write!(f, "module or type name '{name}' is already in use"),
             Self::FunctionSignatureConflict { function_name, old_type, new_type } => {
                 writeln!(f, "conflicting signatures for function '{function_name}':")?;
                 writeln!(f, "old: {old_type}")?;

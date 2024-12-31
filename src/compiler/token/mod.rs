@@ -3,48 +3,12 @@ pub mod scan;
 use std::fmt;
 
 #[derive(Clone, PartialEq, Debug)]
-pub struct StringValue {
-    bytes: Vec<u8>,
-}
-
-impl StringValue {
-    pub fn new(bytes: Vec<u8>) -> Self {
-        Self {
-            bytes,
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
-    pub fn bytes(&self) -> &[u8] {
-        &self.bytes
-    }
-}
-
-impl fmt::Display for StringValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "c\"")?;
-        for &byte in self.bytes() {
-            if byte != b'"' && (byte == b' ' || byte.is_ascii_graphic()) {
-                write!(f, "{}", byte as char)?;
-            }
-            else {
-                write!(f, "\\{byte:02X}")?;
-            }
-        }
-        write!(f, "\"")
-    }
-}
-
-#[derive(Clone, PartialEq, Debug)]
 pub enum Literal {
     Identifier(String),
     Integer(i128),
     Boolean(bool),
     NullPointer,
-    String(StringValue),
+    String(crate::sema::StringValue),
 }
 
 impl fmt::Display for Literal {

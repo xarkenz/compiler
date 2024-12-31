@@ -43,10 +43,11 @@ module test {
 
     module test {
         import super::Thing;
+        import super::Test as SuperTest;
 
         struct Test {
             a: *own super::super::Test,
-            b: *own super::Test,
+            b: *own SuperTest,
             c: *own Thing,
         }
     }
