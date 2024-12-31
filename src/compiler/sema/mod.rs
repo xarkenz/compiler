@@ -92,10 +92,6 @@ impl GlobalContext {
         self.current_self_type
     }
     
-    pub fn set_self_type(&mut self, self_type: Option<TypeHandle>) {
-        self.current_self_type = self_type;
-    }
-    
     fn type_entry(&self, handle: TypeHandle) -> &TypeEntry {
         &self.type_registry[handle.registry_index()]
     }
@@ -204,6 +200,15 @@ impl GlobalContext {
         }
         else {
             self.current_module_info_mut().insert_symbol(name, symbol);
+        }
+    }
+
+    pub fn create_member_identifier(&self, member_name: &str) -> String {
+        if let Some(self_type) = self.current_self_type() {
+            format!("{}::{member_name}", self_type.identifier(self))
+        }
+        else {
+            self.current_module_info().create_member_identifier(member_name)
         }
     }
 

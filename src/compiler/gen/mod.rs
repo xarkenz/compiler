@@ -1,7 +1,5 @@
-pub mod info;
 pub mod llvm;
 
-use info::*;
 use llvm::*;
 use crate::token;
 use crate::ast;
