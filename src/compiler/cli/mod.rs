@@ -1,4 +1,5 @@
 use clap::Parser;
+use crate::sema::GlobalContext;
 
 #[derive(Parser, Debug)]
 #[command(author, version)]
@@ -37,8 +38,10 @@ pub fn invoke(args: &CompilerArgs) -> crate::Result<()> {
         let mut parser = crate::ast::parse::Parser::new(&mut scanner)?;
 
         let output_filename = args.output_path();
-        crate::gen::Generator::from_filename(output_filename.to_owned())?
+        let context = GlobalContext::new();
+        crate::gen::Generator::from_filename(output_filename.into(), context)?
             .generate(&mut parser, args.source_paths())?;
+        
         println!("LLVM successfully written to '{output_filename}'.");
     }
 

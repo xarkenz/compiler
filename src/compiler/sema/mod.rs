@@ -55,35 +55,35 @@ impl GlobalContext {
             array_types: HashMap::new(),
             function_types: HashMap::new(),
         };
-        
+
         for &(ref info, identifier) in PRIMITIVE_TYPES {
             let handle = context.create_type(info.clone(), identifier.into());
             context.primitive_types.insert(identifier.into(), handle);
         }
-        
+
         context
     }
-    
+
     pub fn pointer_size(&self) -> usize {
         self.pointer_size
     }
-    
+
     pub fn current_module(&self) -> ModuleHandle {
         self.current_module
     }
-    
+
     pub fn module_info(&self, handle: ModuleHandle) -> &ModuleInfo {
         &self.module_registry[handle.registry_index()]
     }
-    
+
     pub fn module_info_mut(&mut self, handle: ModuleHandle) -> &mut ModuleInfo {
         &mut self.module_registry[handle.registry_index()]
     }
-    
+
     pub fn current_module_info(&self) -> &ModuleInfo {
         self.module_info(self.current_module())
     }
-    
+
     pub fn current_module_info_mut(&mut self) -> &mut ModuleInfo {
         self.module_info_mut(self.current_module())
     }
@@ -95,7 +95,7 @@ impl GlobalContext {
     fn type_entry(&self, handle: TypeHandle) -> &TypeEntry {
         &self.type_registry[handle.registry_index()]
     }
-    
+
     fn type_entry_mut(&mut self, handle: TypeHandle) -> &mut TypeEntry {
         &mut self.type_registry[handle.registry_index()]
     }
@@ -119,33 +119,33 @@ impl GlobalContext {
     pub fn type_llvm_syntax(&self, handle: TypeHandle) -> &str {
         &self.type_entry(handle).llvm_syntax
     }
-    
+
     pub fn enter_module(&mut self, name: String) -> crate::Result<()> {
         let new_module_info = ModuleInfo::new(name.clone(), Some(self.current_module()));
         let new_module = ModuleHandle::new(self.module_registry.len());
         self.module_registry.push(new_module_info);
-        
+
         self.current_module_info_mut().bind_module(name, new_module)?;
         self.current_module = new_module;
-        
+
         Ok(())
     }
-    
-    pub fn leave_module(&mut self) -> crate::Result<()> {
+
+    pub fn exit_module(&mut self) -> crate::Result<()> {
         self.current_module = self.current_module_info().super_module()
             .expect("attempted to leave root module");
-        
+
         Ok(())
     }
-    
+
     pub fn enter_implement_block(&mut self, self_type: TypeHandle) {
         if self.current_self_type().is_some() {
             panic!("attempted to enter nested implement block");
         }
         self.current_self_type = Some(self_type);
     }
-    
-    pub fn leave_implement_block(&mut self) {
+
+    pub fn exit_implement_block(&mut self) {
         if self.current_self_type().is_none() {
             panic!("attempted to leave inactive implement block");
         }
@@ -161,7 +161,7 @@ impl GlobalContext {
         else {
             self.insert_symbol(name, value, false);
         }
-        
+
         Ok(())
     }
 
@@ -176,7 +176,7 @@ impl GlobalContext {
 
         Ok(())
     }
-    
+
     /// "Conflicting" i.e. the symbol would conflict if a new symbol of the same name were
     /// to be defined in the current scope. The current `implement`
     /// block is searched if applicable, otherwise the current module is searched.
@@ -188,19 +188,23 @@ impl GlobalContext {
             self.current_module_info().find_symbol(name)
         }
     }
-    
+
     fn insert_symbol(&mut self, name: String, value: Value, is_defined: bool) {
         let symbol = GlobalSymbol {
             value,
             is_defined,
         };
-        
+
         if let Some(self_type) = self.current_self_type() {
             self.type_entry_mut(self_type).implementation.insert(name, symbol);
         }
         else {
             self.current_module_info_mut().insert_symbol(name, symbol);
         }
+    }
+    
+    pub fn find_type_implementation_symbol(&self, self_type: TypeHandle, name: &str) -> Option<&GlobalSymbol> {
+        self.type_entry(self_type).implementation.get(name)
     }
 
     pub fn create_member_identifier(&self, member_name: &str) -> String {
@@ -212,7 +216,7 @@ impl GlobalContext {
         }
     }
 
-    pub fn get_type_handle_from_node(&mut self, type_node: &TypeNode) -> crate::Result<TypeHandle> {
+    pub fn get_type_from_node(&mut self, type_node: &TypeNode) -> crate::Result<TypeHandle> {
         match type_node {
             TypeNode::Path { names } => {
                 let (type_name, module_names) = names.split_last().unwrap();
@@ -226,16 +230,15 @@ impl GlobalContext {
                         return Err(Box::new(crate::Error::UndefinedModule { name: module_info.create_member_identifier(module_name) }));
                     }
                 }
-                let module_info = self.module_info(module);
-                module_info.type_binding(type_name)
-                    .ok_or_else(|| Box::new(crate::Error::UnknownType { type_name: module_info.create_member_identifier(type_name) }))
+                
+                self.get_named_type(module, type_name)
             }
             TypeNode::Pointer { pointee_type, semantics } => {
-                let pointee_type = self.get_type_handle_from_node(pointee_type)?;
+                let pointee_type = self.get_type_from_node(pointee_type)?;
                 Ok(self.get_pointer_type(pointee_type, *semantics))
             }
             TypeNode::Array { item_type, length } => {
-                let item_type = self.get_type_handle_from_node(item_type)?;
+                let item_type = self.get_type_from_node(item_type)?;
                 let length = match length {
                     Some(node) => Some(node.as_array_length()
                         .ok_or_else(|| Box::new(crate::Error::NonConstantArrayLength {}))?),
@@ -245,9 +248,9 @@ impl GlobalContext {
             }
             TypeNode::Function { parameter_types, is_variadic, return_type } => {
                 let parameter_types: Box<[_]> = parameter_types.iter()
-                    .map(|type_node| self.get_type_handle_from_node(type_node))
+                    .map(|type_node| self.get_type_from_node(type_node))
                     .collect::<Result<_, _>>()?;
-                let return_type = self.get_type_handle_from_node(return_type)?;
+                let return_type = self.get_type_from_node(return_type)?;
                 let signature = FunctionSignature::new(return_type, parameter_types, *is_variadic);
                 Ok(self.get_function_type(&signature))
             }
@@ -258,17 +261,59 @@ impl GlobalContext {
     }
     
     pub fn get_named_type(&mut self, module: ModuleHandle, name: &str) -> crate::Result<TypeHandle> {
-        if let Some(handle) = self.module_info(module).type_binding(name) {
+        if let Some(handle) = self.get_existing_named_type(module, name) {
             Ok(handle)
         }
         else {
             let info = TypeInfo::Undefined {
                 name: name.into(),
             };
-            let identifier = self.module_info_mut(module).create_member_identifier(name);
-            
-            let handle = self.create_type(info, identifier.into());
+            let identifier = self.module_info(module).create_member_identifier(name);
+
+            let handle = self.create_type(info, identifier);
             self.module_info_mut(module).bind_type(name.into(), handle)?;
+            
+            Ok(handle)
+        }
+    }
+    
+    pub fn get_existing_named_type(&self, module: ModuleHandle, name: &str) -> Option<TypeHandle> {
+        if let Some(&handle) = self.primitive_types.get(name) {
+            Some(handle)
+        }
+        else {
+            self.module_info(module).type_binding(name)
+        }
+    }
+    
+    pub fn define_named_type(&mut self, module: ModuleHandle, name: &str, new_info: TypeInfo) -> crate::Result<TypeHandle> {
+        if let Some(handle) = self.module_info(module).type_binding(name) {
+            let TypeInfo::Undefined { .. } = self.type_info(handle) else {
+                return Err(Box::new(crate::Error::TypeSymbolConflict {
+                    name: self.type_identifier(handle).into(),
+                }));
+            };
+            
+            let new_identifier = self.module_info(module).create_member_identifier(name);
+            let new_alignment = self.calculate_alignment(&new_info);
+            let new_size = self.calculate_size(&new_info);
+            let new_llvm_syntax = self.generate_type_llvm_syntax(&new_identifier, &new_info);
+            
+            let entry = self.type_entry_mut(handle);
+            entry.identifier = new_identifier;
+            entry.info = new_info;
+            entry.alignment = new_alignment;
+            entry.size = new_size;
+            entry.llvm_syntax = new_llvm_syntax;
+            
+            Ok(handle)
+        }
+        else {
+            let identifier = self.module_info(module).create_member_identifier(name);
+            
+            let handle = self.create_type(new_info, identifier);
+            self.module_info_mut(module).bind_type(name.into(), handle)?;
+            
             Ok(handle)
         }
     }
@@ -288,7 +333,7 @@ impl GlobalContext {
                 pointee_type,
                 semantics,
             };
-            
+
             let handle = self.create_type(info, identifier);
             self.pointer_types.insert((pointee_type, semantics), handle);
             handle
@@ -309,7 +354,7 @@ impl GlobalContext {
                 item_type,
                 length,
             };
-            
+
             let handle = self.create_type(info, identifier);
             self.array_types.insert((item_type, length), handle);
             handle
@@ -317,7 +362,7 @@ impl GlobalContext {
     }
     
     pub fn get_function_type(&mut self, signature: &FunctionSignature) -> TypeHandle {
-        if let Some(handle) = self.function_types.get(&signature) {
+        if let Some(handle) = self.function_types.get(signature) {
             *handle
         }
         else {
@@ -427,7 +472,10 @@ impl GlobalContext {
             TypeInfo::Boolean => "i1".into(),
             TypeInfo::Integer { size, .. } => format!("i{}", size * 8),
             TypeInfo::Pointer { pointee_type, .. } => {
-                format!("{}*", self.type_llvm_syntax(pointee_type))
+                match self.type_llvm_syntax(pointee_type) {
+                    "void" => "{}*".into(),
+                    pointee_syntax => format!("{pointee_syntax}*")
+                }
             }
             TypeInfo::Array { item_type, length } => match length {
                 Some(length) => format!("[{} x {}]", length, self.type_llvm_syntax(item_type)),
@@ -458,7 +506,7 @@ impl GlobalContext {
             TypeInfo::Alias { target } => self.type_llvm_syntax(target).into(),
         }
     }
-    
+
     pub fn types_are_equivalent(&self, lhs_type: TypeHandle, rhs_type: TypeHandle) -> bool {
         // TODO
         lhs_type == rhs_type
@@ -510,5 +558,11 @@ impl GlobalContext {
             (TypeInfo::Void, _) | (_, TypeInfo::Void) => true,
             _ => false
         }
+    }
+}
+
+impl Default for GlobalContext {
+    fn default() -> Self {
+        Self::new()
     }
 }

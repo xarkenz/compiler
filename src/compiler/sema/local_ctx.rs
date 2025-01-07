@@ -8,6 +8,8 @@ pub struct LocalContext {
     continue_stack: Vec<Label>,
     symbol_versions: HashMap<String, usize>,
     scope_stack: Vec<HashMap<String, Value>>,
+    next_anonymous_register_id: usize,
+    next_basic_block_id: usize,
 }
 
 impl LocalContext {
@@ -19,6 +21,8 @@ impl LocalContext {
             continue_stack: Vec::new(),
             symbol_versions: HashMap::new(),
             scope_stack: vec![HashMap::new()],
+            next_anonymous_register_id: 0,
+            next_basic_block_id: 0,
         }
     }
     
@@ -64,7 +68,9 @@ impl LocalContext {
     }
     
     pub fn find_symbol(&self, name: &str) -> Option<&Value> {
-        self.current_scope().get(name)
+        self.scope_stack.iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
     }
     
     pub fn define_indirect_symbol(&mut self, name: String, pointer_type: TypeHandle, pointee_type: TypeHandle) -> Register {
@@ -106,14 +112,20 @@ impl LocalContext {
     }
     
     pub fn define_symbol(&mut self, name: String, value: Value) {
-        self.current_scope_mut().insert(name, value);
+        self.scope_stack.last_mut().unwrap().insert(name, value);
     }
-    
-    fn current_scope(&self) -> &HashMap<String, Value> {
-        self.scope_stack.last().expect("scope stack is empty")
+
+    pub fn new_anonymous_register(&mut self, value_type: TypeHandle) -> Register {
+        let id = self.next_anonymous_register_id;
+        self.next_anonymous_register_id += 1;
+
+        Register::new_local(id.to_string(), value_type)
     }
-    
-    fn current_scope_mut(&mut self) -> &mut HashMap<String, Value> {
-        self.scope_stack.last_mut().expect("scope stack is empty")
+
+    pub fn new_block_label(&mut self) -> Label {
+        let id = self.next_basic_block_id;
+        self.next_basic_block_id += 1;
+
+        Label::new(format!(".block.{id}"))
     }
 }

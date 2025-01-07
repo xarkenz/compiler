@@ -503,7 +503,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 Ok(Some(Box::new(Node::Function {
                     name,
                     parameters,
-                    is_varargs,
+                    is_variadic: is_varargs,
                     return_type,
                     body,
                 })))

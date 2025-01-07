@@ -386,7 +386,7 @@ pub enum Node {
     Function {
         name: String,
         parameters: Vec<FunctionParameter>,
-        is_varargs: bool,
+        is_variadic: bool,
         return_type: TypeNode,
         body: Option<Box<Node>>,
     },
@@ -398,6 +398,13 @@ pub enum Node {
         self_type: TypeNode,
         statements: Vec<Box<Node>>,
     },
+    Module {
+        name: String,
+        statements: Vec<Box<Node>>,
+    },
+    Import {
+        names: Vec<String>,
+    }
 }
 
 impl Node {
@@ -418,16 +425,16 @@ impl fmt::Display for Node {
         match self {
             Self::Literal(literal) => {
                 write!(f, "{literal}")
-            },
+            }
             Self::Type(value_type) => {
                 write!(f, "{value_type}")
-            },
+            }
             Self::Unary { operation, operand } => {
                 write!(f, "({operation})", operation = operation.to_string_with_operand(operand.as_ref()))
-            },
+            }
             Self::Binary { operation, lhs, rhs } => {
                 write!(f, "({operation})", operation = operation.to_string_with_operands(lhs.as_ref(), rhs.as_ref()))
-            },
+            }
             Self::Call { callee, arguments } => {
                 write!(f, "({callee}(")?;
                 let mut arguments_iter = arguments.iter();
@@ -438,7 +445,7 @@ impl fmt::Display for Node {
                     }
                 }
                 write!(f, "))")
-            },
+            }
             Self::ArrayLiteral { items } => {
                 write!(f, "[")?;
                 let mut items_iter = items.iter();
@@ -449,7 +456,7 @@ impl fmt::Display for Node {
                     }
                 }
                 write!(f, "]")
-            },
+            }
             Self::StructureLiteral { type_name, members } => {
                 write!(f, "({type_name} {{")?;
                 let mut members_iter = members.iter();
@@ -461,14 +468,14 @@ impl fmt::Display for Node {
                     write!(f, " ")?;
                 }
                 write!(f, "}})")
-            },
+            }
             Self::Scope { statements } => {
                 write!(f, " {{")?;
                 for statement in statements {
                     write!(f, "{statement}")?;
                 }
                 write!(f, " }}")
-            },
+            }
             Self::Conditional { condition, consequent, alternative } => {
                 if let Some(alternative) = alternative {
                     write!(f, " if ({condition}){consequent} else{alternative}")
@@ -476,16 +483,16 @@ impl fmt::Display for Node {
                 else {
                     write!(f, " if ({condition}){consequent}")
                 }
-            },
+            }
             Self::While { condition, body } => {
                 write!(f, " while ({condition}){body}")
             }
             Self::Break => {
                 write!(f, " break;")
-            },
+            }
             Self::Continue => {
                 write!(f, " continue;")
-            },
+            }
             Self::Return { value } => {
                 if let Some(value) = value {
                     write!(f, " return {value};")
@@ -493,7 +500,7 @@ impl fmt::Display for Node {
                 else {
                     write!(f, " return;")
                 }
-            },
+            }
             Self::Let { name, value_type, is_mutable, value } => {
                 if *is_mutable {
                     write!(f, " let mut {name}: {value_type}")?;
@@ -507,11 +514,11 @@ impl fmt::Display for Node {
                 else {
                     write!(f, ";")
                 }
-            },
+            }
             Self::Constant { name, value_type, value } => {
                 write!(f, " let const {name}: {value_type} = {value};")
-            },
-            Self::Function { name, parameters, is_varargs, return_type, body } => {
+            }
+            Self::Function { name, parameters, is_variadic: is_varargs, return_type, body } => {
                 write!(f, " function {name}(")?;
                 let mut parameters_iter = parameters.iter();
                 if let Some(FunctionParameter { name: parameter_name, type_node: parameter_type, is_mutable }) = parameters_iter.next() {
@@ -539,7 +546,7 @@ impl fmt::Display for Node {
                 else {
                     write!(f, ") -> {return_type};")
                 }
-            },
+            }
             Self::Structure { name, members } => {
                 if let Some(members) = members {
                     write!(f, " struct {name} {{")?;
@@ -556,14 +563,24 @@ impl fmt::Display for Node {
                 else {
                     write!(f, " struct {name};")
                 }
-            },
+            }
             Self::Implement { self_type, statements } => {
                 write!(f, " implement {self_type} {{")?;
                 for statement in statements {
                     write!(f, "{statement}")?;
                 }
                 write!(f, " }}")
-            },
+            }
+            Self::Module { name, statements } => {
+                write!(f, " module {name} {{")?;
+                for statement in statements {
+                    write!(f, "{statement}")?;
+                }
+                write!(f, " }}")
+            }
+            Self::Import { names } => {
+                write!(f, " import {};", names.join("::"))
+            }
         }
     }
 }

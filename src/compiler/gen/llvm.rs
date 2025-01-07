@@ -50,8 +50,8 @@ impl<W: Write> Emitter<W> {
         Box::new(crate::Error::OutputFileWrite { filename: self.filename.clone(), cause })
     }
 
-    pub fn emit_preamble(&mut self, module_id: usize, source_filename: &str) -> crate::Result<()> {
-        emit!(self, "; module_id = {module_id}\nsource_filename = \"{source_filename}\"\n\n")
+    pub fn emit_preamble(&mut self, file_id: usize, source_filename: &str) -> crate::Result<()> {
+        emit!(self, "; file_id = {file_id}\nsource_filename = \"{source_filename}\"\n\n")
     }
 
     pub fn emit_postamble(&mut self) -> crate::Result<()> {
@@ -718,7 +718,7 @@ impl<W: Write> Emitter<W> {
         if let Some(result) = result {
             emit!(self, "{} = ", result.llvm_syntax())?;
         }
-        emit!(self, "\tcall {}(", signature.return_type().llvm_syntax(context))?;
+        emit!(self, "call {}(", signature.return_type().llvm_syntax(context))?;
         
         let mut parameters_iter = signature.parameter_types().iter();
         if let Some(&parameter_type) = parameters_iter.next() {

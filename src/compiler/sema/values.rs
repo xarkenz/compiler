@@ -330,6 +330,24 @@ impl Constant {
     }
 }
 
+impl From<bool> for Constant {
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
+    }
+}
+
+impl From<IntegerValue> for Constant {
+    fn from(value: IntegerValue) -> Self {
+        Self::Integer(value)
+    }
+}
+
+impl From<Register> for Constant {
+    fn from(register: Register) -> Self {
+        Self::Register(register)
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum Value {
     Never,
@@ -344,7 +362,7 @@ pub enum Value {
     },
     BoundFunction {
         self_value: Box<Value>,
-        function_register: Register,
+        function_value: Box<Value>,
     },
 }
 
@@ -356,7 +374,7 @@ impl Value {
             Self::Constant(ref constant) => constant.get_type(),
             Self::Register(ref register) => register.get_type(),
             Self::Indirect { pointee_type, .. } => pointee_type,
-            Self::BoundFunction { ref function_register, .. } => function_register.get_type(),
+            Self::BoundFunction { function_value: ref function_register, .. } => function_register.get_type(),
         }
     }
 
@@ -390,8 +408,32 @@ impl Value {
             Self::Constant(constant) => constant.llvm_syntax(context),
             Self::Register(register) => register.llvm_syntax(),
             Self::Indirect { pointer, .. } => format!("<ERROR indirect value: {}>", pointer.llvm_syntax(context)),
-            Self::BoundFunction { function_register, .. } => function_register.llvm_syntax(),
+            Self::BoundFunction { function_value, .. } => function_value.llvm_syntax(context),
         }
+    }
+}
+
+impl From<bool> for Value {
+    fn from(value: bool) -> Self {
+        Self::Constant(Constant::Boolean(value))
+    }
+}
+
+impl From<IntegerValue> for Value {
+    fn from(value: IntegerValue) -> Self {
+        Self::Constant(Constant::Integer(value))
+    }
+}
+
+impl From<Constant> for Value {
+    fn from(constant: Constant) -> Self {
+        Self::Constant(constant)
+    }
+}
+
+impl From<Register> for Value {
+    fn from(register: Register) -> Self {
+        Self::Register(register)
     }
 }
 

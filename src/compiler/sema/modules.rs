@@ -1,5 +1,57 @@
 use super::*;
 
+#[derive(Clone, Debug)]
+pub struct GlobalSymbol {
+    pub value: Value,
+    pub is_defined: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum ContainerHandle {
+    Module(ModuleHandle),
+    Type(TypeHandle),
+}
+
+impl ContainerHandle {
+    pub fn container_binding(self, name: &str, context: &GlobalContext) -> Option<ContainerHandle> {
+        match self {
+            ContainerHandle::Module(handle) => {
+                context.module_info(handle).container_binding(name)
+            }
+            ContainerHandle::Type(..) => None,
+        }
+    }
+
+    pub fn module_binding(self, name: &str, context: &GlobalContext) -> Option<ModuleHandle> {
+        match self {
+            ContainerHandle::Module(handle) => {
+                context.module_info(handle).module_binding(name)
+            }
+            ContainerHandle::Type(..) => None,
+        }
+    }
+
+    pub fn type_binding(self, name: &str, context: &GlobalContext) -> Option<TypeHandle> {
+        match self {
+            ContainerHandle::Module(handle) => {
+                context.module_info(handle).type_binding(name)
+            }
+            ContainerHandle::Type(..) => None,
+        }
+    }
+
+    pub fn find_symbol<'a>(self, name: &str, context: &'a GlobalContext) -> Option<&'a GlobalSymbol> {
+        match self {
+            ContainerHandle::Module(handle) => {
+                context.module_info(handle).find_symbol(name)
+            }
+            ContainerHandle::Type(handle) => {
+                context.find_type_implementation_symbol(handle, name)
+            }
+        }
+    }
+}
+
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ModuleHandle(NonZeroUsize);
@@ -20,15 +72,8 @@ impl ModuleHandle {
 pub struct ModuleInfo {
     identifier: String,
     super_module: Option<ModuleHandle>,
-    module_bindings: HashMap<String, ModuleHandle>,
-    type_bindings: HashMap<String, TypeHandle>,
+    container_bindings: HashMap<String, ContainerHandle>,
     symbols: HashMap<String, GlobalSymbol>
-}
-
-#[derive(Clone, Debug)]
-pub struct GlobalSymbol {
-    pub value: Value,
-    pub is_defined: bool,
 }
 
 impl ModuleInfo {
@@ -36,8 +81,7 @@ impl ModuleInfo {
         Self {
             identifier,
             super_module,
-            module_bindings: HashMap::new(),
-            type_bindings: HashMap::new(),
+            container_bindings: HashMap::new(),
             symbols: HashMap::new(),
         }
     }
@@ -59,30 +103,44 @@ impl ModuleInfo {
         }
     }
     
+    pub fn container_binding(&self, name: &str) -> Option<ContainerHandle> {
+        self.container_bindings.get(name).copied()
+    }
+    
     pub fn module_binding(&self, name: &str) -> Option<ModuleHandle> {
-        self.module_bindings.get(name).copied()
+        if let Some(ContainerHandle::Module(handle)) = self.container_binding(name) {
+            Some(handle)
+        }
+        else {
+            None
+        }
     }
     
     pub fn bind_module(&mut self, name: String, handle: ModuleHandle) -> crate::Result<()> {
-        if self.module_bindings.contains_key(&name) || self.type_bindings.contains_key(&name) {
+        if self.container_bindings.contains_key(&name) {
             Err(Box::new(crate::Error::TypeSymbolConflict { name: name.clone() }))
         }
         else {
-            self.module_bindings.insert(name, handle);
+            self.container_bindings.insert(name, ContainerHandle::Module(handle));
             Ok(())
         }
     }
     
     pub fn type_binding(&self, name: &str) -> Option<TypeHandle> {
-        self.type_bindings.get(name).copied()
+        if let Some(ContainerHandle::Type(handle)) = self.container_binding(name) {
+            Some(handle)
+        }
+        else {
+            None
+        }
     }
     
     pub fn bind_type(&mut self, name: String, handle: TypeHandle) -> crate::Result<()> {
-        if self.module_bindings.contains_key(&name) || self.type_bindings.contains_key(&name) {
+        if self.container_bindings.contains_key(&name) {
             Err(Box::new(crate::Error::TypeSymbolConflict { name: name.clone() }))
         }
         else {
-            self.type_bindings.insert(name, handle);
+            self.container_bindings.insert(name, ContainerHandle::Type(handle));
             Ok(())
         }
     }
