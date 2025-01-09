@@ -112,7 +112,7 @@ impl<T: BufRead> Scanner<T> {
         Ok(Some((span, Token::Literal(Literal::Integer(value)))))
     }
 
-    fn scan_identifier_literal(&mut self) -> crate::Result<Option<(crate::Span, Token)>> {
+    fn scan_word_literal(&mut self) -> crate::Result<Option<(crate::Span, Token)>> {
         let start_index = self.next_index;
         let mut content = String::new();
 
@@ -136,7 +136,10 @@ impl<T: BufRead> Scanner<T> {
                 "true" => Literal::Boolean(true),
                 "false" => Literal::Boolean(false),
                 "null" => Literal::NullPointer,
-                _ => Literal::Identifier(content)
+                _ => match crate::sema::TypeHandle::primitive(&content) {
+                    Some(primitive_type) => Literal::PrimitiveType(primitive_type),
+                    None => Literal::Name(content),
+                }
             };
 
             Ok(Some((span, Token::Literal(literal))))
@@ -340,7 +343,7 @@ impl<T: BufRead> Scanner<T> {
             }
             else if ch == '_' || ch.is_ascii_alphanumeric() {
                 self.put_back(ch);
-                self.scan_identifier_literal()
+                self.scan_word_literal()
             }
             else {
                 if ch == '/' {

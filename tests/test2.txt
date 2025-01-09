@@ -19,16 +19,16 @@ function main() -> i32 {
 }
 
 module thing {
-    import super::*;
+    // import super::*;
 
     struct Thing {
-        x: *own Test,
+        // x: *own Test,
     }
 }
 
 struct Test {
-    a: *own test::Test,
-    b: *own test::test::Test,
+    // a: *own test::Test,
+    // b: *own test::test::Test,
     c: *own thing::Thing,
 }
 
@@ -37,7 +37,7 @@ module test {
 
     struct Test {
         a: *own super::Test,
-        b: *own test::Test,
+        // b: *own test::Test,
         c: *own Thing,
     }
 

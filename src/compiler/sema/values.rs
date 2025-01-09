@@ -46,15 +46,15 @@ impl IntegerValue {
     }
 
     pub fn expanded_value(&self) -> i128 {
-        match self {
-            &IntegerValue::Signed8(value) => value as i128,
-            &IntegerValue::Unsigned8(value) => value as i128,
-            &IntegerValue::Signed16(value) => value as i128,
-            &IntegerValue::Unsigned16(value) => value as i128,
-            &IntegerValue::Signed32(value) => value as i128,
-            &IntegerValue::Unsigned32(value) => value as i128,
-            &IntegerValue::Signed64(value) => value as i128,
-            &IntegerValue::Unsigned64(value) => value as i128,
+        match *self {
+            IntegerValue::Signed8(value) => value as i128,
+            IntegerValue::Unsigned8(value) => value as i128,
+            IntegerValue::Signed16(value) => value as i128,
+            IntegerValue::Unsigned16(value) => value as i128,
+            IntegerValue::Signed32(value) => value as i128,
+            IntegerValue::Unsigned32(value) => value as i128,
+            IntegerValue::Signed64(value) => value as i128,
+            IntegerValue::Unsigned64(value) => value as i128,
         }
     }
 
@@ -101,6 +101,10 @@ impl StringValue {
 
     pub fn len(&self) -> usize {
         self.bytes.len()
+    }
+    
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
     }
 
     pub fn bytes(&self) -> &[u8] {
@@ -184,7 +188,7 @@ impl Register {
 
 impl PartialOrd for Register {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.identifier().partial_cmp(other.identifier())
+        Some(self.cmp(other))
     }
 }
 
@@ -229,9 +233,25 @@ pub enum Constant {
         pointer: Box<Constant>,
         indices: Vec<Constant>,
     },
+    Container(ContainerHandle),
 }
 
 impl Constant {
+    pub fn as_container(&self) -> Option<ContainerHandle> {
+        match *self {
+            Self::Container(container) => Some(container),
+            _ => None
+        }
+    }
+
+    pub fn as_type(&self) -> Option<TypeHandle> {
+        self.as_container().and_then(ContainerHandle::as_type)
+    }
+
+    pub fn as_module(&self) -> Option<ModuleHandle> {
+        self.as_container().and_then(ContainerHandle::as_module)
+    }
+    
     pub fn get_type(&self) -> TypeHandle {
         match *self {
             Self::Undefined(value_type) => value_type,
@@ -247,15 +267,16 @@ impl Constant {
             Self::Indirect { pointee_type, .. } => pointee_type,
             Self::BitwiseCast { result_type, .. } => result_type,
             Self::GetElementPointer { result_type, .. } => result_type,
+            Self::Container(..) => TypeHandle::META,
         }
     }
 
     pub fn llvm_syntax(&self, context: &GlobalContext) -> String {
         match self {
-            Self::Undefined(..) => "undef".into(),
-            Self::Poison(..) => "poison".into(),
-            Self::ZeroInitializer(..) => "zeroinitializer".into(),
-            Self::NullPointer(..) => "null".into(),
+            Self::Undefined(..) => "undef".to_owned(),
+            Self::Poison(..) => "poison".to_owned(),
+            Self::ZeroInitializer(..) => "zeroinitializer".to_owned(),
+            Self::NullPointer(..) => "null".to_owned(),
             Self::Boolean(value) => format!("{value}"),
             Self::Integer(value) => format!("{value}"),
             Self::String { value, .. } => format!("{value}"),
@@ -276,13 +297,13 @@ impl Constant {
                     syntax
                 }
                 else {
-                    "[]".into()
+                    "[]".to_owned()
                 }
-            },
+            }
             Self::Structure { members, .. } => {
                 let mut members_iter = members.iter();
                 if let Some(member) = members_iter.next() {
-                    let mut syntax = String::from("{ ");
+                    let mut syntax = "{ ".to_owned();
                     syntax.push_str(context.type_llvm_syntax(member.get_type()));
                     syntax.push(' ');
                     syntax.push_str(&member.llvm_syntax(context));
@@ -298,7 +319,7 @@ impl Constant {
                 else {
                     "{}".into()
                 }
-            },
+            }
             Self::Register(register) => register.llvm_syntax(),
             Self::Indirect { pointer, .. } => format!("<ERROR indirect constant: {}>", pointer.llvm_syntax(context)),
             Self::BitwiseCast { value, result_type: to_type } => {
@@ -309,7 +330,7 @@ impl Constant {
                     context.type_llvm_syntax(value_type),
                     context.type_llvm_syntax(*to_type),
                 )
-            },
+            }
             Self::GetElementPointer { aggregate_type, pointer, indices, .. } => {
                 let mut syntax = format!(
                     "getelementptr inbounds ({}, {} {}",
@@ -325,7 +346,8 @@ impl Constant {
                 }
                 syntax.push(')');
                 syntax
-            },
+            }
+            Self::Container(..) => "<ERROR meta constant>".to_owned(),
         }
     }
 }
@@ -348,6 +370,12 @@ impl From<Register> for Constant {
     }
 }
 
+impl<T: Into<ContainerHandle>> From<T> for Constant {
+    fn from(container: T) -> Self {
+        Self::Container(container.into())
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum Value {
     Never,
@@ -364,9 +392,26 @@ pub enum Value {
         self_value: Box<Value>,
         function_value: Box<Value>,
     },
+    Container(ContainerHandle),
 }
 
 impl Value {
+    pub fn as_container(&self) -> Option<ContainerHandle> {
+        match *self {
+            Self::Constant(ref constant) => constant.as_container(),
+            Self::Container(container) => Some(container),
+            _ => None
+        }
+    }
+    
+    pub fn as_type(&self) -> Option<TypeHandle> {
+        self.as_container().and_then(ContainerHandle::as_type)
+    }
+    
+    pub fn as_module(&self) -> Option<ModuleHandle> {
+        self.as_container().and_then(ContainerHandle::as_module)
+    }
+    
     pub fn get_type(&self) -> TypeHandle {
         match *self {
             Self::Never | Self::Break | Self::Continue => TypeHandle::NEVER,
@@ -374,7 +419,8 @@ impl Value {
             Self::Constant(ref constant) => constant.get_type(),
             Self::Register(ref register) => register.get_type(),
             Self::Indirect { pointee_type, .. } => pointee_type,
-            Self::BoundFunction { function_value: ref function_register, .. } => function_register.get_type(),
+            Self::BoundFunction { ref function_value, .. } => function_value.get_type(),
+            Self::Container(..) => TypeHandle::META,
         }
     }
 
@@ -387,28 +433,29 @@ impl Value {
                 else {
                     Err(Box::new(crate::Error::CannotMutateValue { type_name: pointee_type.identifier(context).into() }))
                 }
-            },
+            }
             _ => {
                 Err(Box::new(crate::Error::ExpectedLValue {}))
             }
         }
     }
 
-    pub fn bound_self_value(&self) -> Option<Value> {
+    pub fn bound_self_value(&self) -> Option<&Value> {
         match self {
-            Self::BoundFunction { self_value, .. } => Some(self_value.as_ref().clone()),
+            Self::BoundFunction { self_value, .. } => Some(self_value.as_ref()),
             _ => None
         }
     }
 
     pub fn llvm_syntax(&self, context: &GlobalContext) -> String {
         match self {
-            Self::Never | Self::Break | Self::Continue => "<ERROR never value>".into(),
-            Self::Void => "<ERROR void value>".into(),
+            Self::Never | Self::Break | Self::Continue => "<ERROR never value>".to_owned(),
+            Self::Void => "<ERROR void value>".to_owned(),
             Self::Constant(constant) => constant.llvm_syntax(context),
             Self::Register(register) => register.llvm_syntax(),
             Self::Indirect { pointer, .. } => format!("<ERROR indirect value: {}>", pointer.llvm_syntax(context)),
             Self::BoundFunction { function_value, .. } => function_value.llvm_syntax(context),
+            Self::Container(..) => "<ERROR meta value>".to_owned(),
         }
     }
 }
@@ -434,6 +481,12 @@ impl From<Constant> for Value {
 impl From<Register> for Value {
     fn from(register: Register) -> Self {
         Self::Register(register)
+    }
+}
+
+impl<T: Into<ContainerHandle>> From<T> for Value {
+    fn from(container: T) -> Self {
+        Self::Container(container.into())
     }
 }
 

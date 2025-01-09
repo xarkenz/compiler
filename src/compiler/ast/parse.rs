@@ -62,9 +62,54 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
     pub fn expect_identifier(&self) -> crate::Result<String> {
         match self.get_token()? {
-            Token::Literal(Literal::Identifier(name)) => Ok(name.clone()),
+            Token::Literal(Literal::Name(name)) => Ok(name.clone()),
             _ => Err(Box::new(crate::Error::ExpectedIdentifier { span: self.current_span() }))
         }
+    }
+    
+    pub fn parse_path(&mut self, first_segment: Option<PathSegment>) -> crate::Result<Vec<PathSegment>> {
+        let mut segments = Vec::from_iter(first_segment);
+
+        loop {
+            match self.get_token()? {
+                Token::Literal(Literal::Name(name)) => {
+                    segments.push(PathSegment::Name(name.clone()));
+                }
+                Token::Colon2 if segments.is_empty() => {
+                    segments.push(PathSegment::RootModule);
+                    continue;
+                }
+                Token::Super => {
+                    segments.push(PathSegment::SuperModule);
+                }
+                Token::Module => {
+                    segments.push(PathSegment::SelfModule);
+                }
+                Token::SelfType if segments.is_empty() => {
+                    segments.push(PathSegment::SelfType);
+                }
+                Token::Literal(Literal::PrimitiveType(primitive_type)) if segments.is_empty() => {
+                    segments.push(PathSegment::PrimitiveType(*primitive_type));
+                }
+                Token::AngleLeft if segments.is_empty() => {
+                    self.scan_token()?;
+                    let type_node = self.parse_type(Some(&[Token::AngleRight]))?;
+                    segments.push(PathSegment::Type(Box::new(type_node)));
+                }
+                got_token => return Err(Box::new(crate::Error::ExpectedType {
+                    span: self.current_span(),
+                    got_token: got_token.clone(),
+                }))
+            }
+
+            self.scan_token()?;
+            let Some(Token::Colon2) = self.current_token() else {
+                break;
+            };
+            self.scan_token()?;
+        }
+        
+        Ok(segments)
     }
 
     pub fn parse_operand(&mut self, allowed_ends: &[Token]) -> crate::Result<Box<Node>> {
@@ -74,18 +119,12 @@ impl<'a, T: BufRead> Parser<'a, T> {
             self.scan_token()?;
             let operand;
             match operation {
-                UnaryOperation::GetSize => {
+                UnaryOperation::GetSize | UnaryOperation::GetAlign => {
                     self.expect_token(&[Token::ParenLeft])?;
                     self.scan_token()?;
                     operand = Box::new(Node::Type(self.parse_type(Some(&[Token::ParenRight]))?));
                     self.scan_token()?;
-                },
-                UnaryOperation::GetAlign => {
-                    self.expect_token(&[Token::ParenLeft])?;
-                    self.scan_token()?;
-                    operand = Box::new(Node::Type(self.parse_type(Some(&[Token::ParenRight]))?));
-                    self.scan_token()?;
-                },
+                }
                 _ => {
                     operand = self.parse_expression(Some(Precedence::Prefix), allowed_ends)?;
                 }
@@ -100,11 +139,32 @@ impl<'a, T: BufRead> Parser<'a, T> {
             let mut operand = match token {
                 Token::ParenLeft => {
                     self.scan_token()?;
-                    self.parse_expression(None, &[Token::ParenRight])?
-                },
+                    let expression = self.parse_expression(None, &[Token::ParenRight])?;
+                    self.scan_token()?;
+                    
+                    expression
+                }
                 Token::Literal(literal) => {
-                    Box::new(Node::Literal(literal.clone()))
-                },
+                    let literal = literal.clone();
+                    let literal_span = self.current_span();
+                    self.scan_token()?;
+                    
+                    if let Some(Token::Colon2) = self.current_token() {
+                        let first_segment = match literal {
+                            Literal::Name(name) => PathSegment::Name(name),
+                            Literal::PrimitiveType(primitive_type) => PathSegment::PrimitiveType(primitive_type),
+                            _ => return Err(Box::new(crate::Error::ExpectedIdentifier { span: literal_span }))
+                        };
+                        self.scan_token()?;
+                        
+                        Box::new(Node::Path {
+                            segments: self.parse_path(Some(first_segment))?,
+                        })
+                    }
+                    else {
+                        Box::new(Node::Literal(literal))
+                    }
+                }
                 Token::SquareLeft => {
                     self.scan_token()?;
                     let mut items = Vec::new();
@@ -116,23 +176,24 @@ impl<'a, T: BufRead> Parser<'a, T> {
                             self.scan_token()?;
                         }
                     }
+                    self.scan_token()?;
 
                     Box::new(Node::ArrayLiteral {
                         items,
                     })
-                },
-                Token::SelfType => {
-                    Box::new(Node::Type(TypeNode::SelfType))
-                },
-                Token::AngleLeft => {
-                    self.scan_token()?;
-                    Box::new(Node::Type(self.parse_type(Some(&[Token::AngleRight]))?))
-                },
+                }
+                Token::Colon2 | Token::Super | Token::Module | Token::SelfType | Token::AngleLeft => {
+                    Box::new(Node::Path {
+                        segments: self.parse_path(None)?,
+                    })
+                }
                 _ => {
-                    return Err(Box::new(crate::Error::ExpectedOperand { span: self.current_span(), got_token: token.clone() }));
+                    return Err(Box::new(crate::Error::ExpectedOperand {
+                        span: self.current_span(),
+                        got_token: token.clone(),
+                    }));
                 }
             };
-            self.scan_token()?;
 
             while let Some(operation) = UnaryOperation::from_postfix_token(self.get_token()?) {
                 operand = Box::new(Node::Unary {
@@ -242,7 +303,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.scan_token()?;
 
                 lhs = Box::new(Node::StructureLiteral {
-                    type_name: lhs,
+                    structure_type: lhs,
                     members,
                 });
             }
@@ -260,35 +321,17 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
     pub fn parse_type(&mut self, allowed_ends: Option<&[Token]>) -> crate::Result<TypeNode> {
         match self.get_token()? {
-            Token::Literal(Literal::Identifier(name)) => {
-                let mut names = vec![name.clone()];
-                self.scan_token()?;
-                
-                while let Some(Token::Colon2) = self.current_token() {
-                    self.scan_token()?;
-                    names.push(self.expect_identifier()?);
-                    self.scan_token()?;
-                }
-
-                if let Some(allowed_ends) = allowed_ends {
-                    self.expect_token(allowed_ends)?;
-                }
-
-                Ok(TypeNode::Path {
-                    names,
-                })
-            },
             Token::Star => {
                 self.scan_token()?;
                 let semantics = match self.current_token() {
                     Some(Token::Mut) => {
                         self.scan_token()?;
                         PointerSemantics::Mutable
-                    },
+                    }
                     Some(Token::Own) => {
                         self.scan_token()?;
                         PointerSemantics::Owned
-                    },
+                    }
                     _ => {
                         PointerSemantics::Immutable
                     }
@@ -299,7 +342,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     pointee_type,
                     semantics,
                 })
-            },
+            }
             Token::SquareLeft => {
                 self.scan_token()?;
                 let item_type = Box::new(self.parse_type(Some(&[Token::Semicolon, Token::SquareRight]))?);
@@ -321,7 +364,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     item_type,
                     length,
                 })
-            },
+            }
             Token::Function => {
                 self.scan_token()?;
                 self.expect_token(&[Token::ParenLeft])?;
@@ -353,7 +396,10 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 }
                 else {
                     return_type = Box::new(TypeNode::Path {
-                        names: vec!["void".into()],
+                        segments: vec![PathSegment::PrimitiveType(crate::sema::PrimitiveType {
+                            name: "void",
+                            handle: crate::sema::TypeHandle::VOID
+                        })],
                     });
 
                     if let Some(allowed_ends) = allowed_ends {
@@ -366,21 +412,20 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     is_variadic: is_varargs,
                     return_type,
                 })
-            },
-            Token::SelfType => {
-                self.scan_token()?;
+            }
+            got_token @ (Token::Mut | Token::Own) => {
+                Err(Box::new(crate::Error::UnexpectedQualifier { span: self.current_span(), got_token: got_token.clone() }))
+            }
+            _ => {
+                let segments = self.parse_path(None)?;
 
                 if let Some(allowed_ends) = allowed_ends {
                     self.expect_token(allowed_ends)?;
                 }
 
-                Ok(TypeNode::SelfType)
-            },
-            Token::Mut | Token::Own => {
-                Err(Box::new(crate::Error::UnexpectedQualifier { span: self.current_span(), got_token: self.get_token()?.clone() }))
-            },
-            got_token => {
-                Err(Box::new(crate::Error::ExpectedType { span: self.current_span(), got_token: got_token.clone() }))
+                Ok(TypeNode::Path {
+                    segments,
+                })
             }
         }
     }
@@ -391,7 +436,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.scan_token()?;
                 // Returning None would imply that the end of the file was reached, so recursively try to parse a statement instead
                 self.parse_statement(is_global, is_in_implement_block, allow_empty)
-            },
+            }
             Some(Token::Let) => {
                 self.scan_token()?;
                 if let Some(Token::Const) = self.current_token() {
@@ -439,7 +484,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         value,
                     })))
                 }
-            },
+            }
             Some(Token::Function) if is_global => {
                 self.scan_token()?;
                 let name = self.expect_identifier()?;
@@ -490,7 +535,10 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.parse_type(Some(&[Token::CurlyLeft, Token::Semicolon]))?
                 } else {
                     TypeNode::Path {
-                        names: vec!["void".into()],
+                        segments: vec![PathSegment::PrimitiveType(crate::sema::PrimitiveType {
+                            name: "void",
+                            handle: crate::sema::TypeHandle::VOID
+                        })],
                     }
                 };
                 let body = if let Some(Token::CurlyLeft) = self.current_token() {
@@ -507,7 +555,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     return_type,
                     body,
                 })))
-            },
+            }
             Some(Token::Struct) if is_global && !is_in_implement_block => {
                 self.scan_token()?;
                 let name = self.expect_identifier()?;
@@ -542,7 +590,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     name,
                     members,
                 })))
-            },
+            }
             Some(Token::Implement) if is_global && !is_in_implement_block => {
                 self.scan_token()?;
                 let self_type = self.parse_type(Some(&[Token::CurlyLeft]))?;
@@ -558,12 +606,12 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         Some(Token::CurlyRight) => {
                             self.scan_token()?;
                             break;
-                        },
+                        }
                         None => {
                             return Err(Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }));
-                        },
+                        }
                         _ => {
-                            let statement = self.parse_statement(is_global, true, false)?
+                            let statement = self.parse_statement(true, true, false)?
                                 .ok_or_else(|| Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }))?;
                             statements.push(statement);
                         }
@@ -574,15 +622,75 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self_type,
                     statements,
                 })))
-            },
+            }
+            Some(Token::Module) if is_global && !is_in_implement_block => {
+                self.scan_token()?;
+                let name = self.expect_identifier()?;
+                self.scan_token()?;
+                self.expect_token(&[Token::CurlyLeft])?;
+                self.scan_token()?;
+
+                let mut statements = Vec::new();
+                loop {
+                    while let Some(Token::Semicolon) = self.current_token() {
+                        self.scan_token()?;
+                    }
+
+                    match self.current_token() {
+                        Some(Token::CurlyRight) => {
+                            self.scan_token()?;
+                            break;
+                        }
+                        None => {
+                            return Err(Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }));
+                        }
+                        _ => {
+                            let statement = self.parse_statement(true, false, false)?
+                                .ok_or_else(|| Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }))?;
+                            statements.push(statement);
+                        }
+                    }
+                }
+                
+                Ok(Some(Box::new(Node::Module {
+                    name,
+                    statements,
+                })))
+            }
+            Some(Token::Import) if is_global && !is_in_implement_block => {
+                self.scan_token()?;
+                let segments = self.parse_path(None)?;
+                self.expect_token(&[Token::As, Token::Semicolon])?;
+                
+                let mut alias = None;
+                if let Some(Token::As) = self.current_token() {
+                    self.scan_token()?;
+                    alias = Some(self.expect_identifier()?);
+                    self.scan_token()?;
+                    self.expect_token(&[Token::Semicolon])?;
+                }
+                self.scan_token()?;
+                
+                Ok(Some(Box::new(Node::Import {
+                    segments,
+                    alias,
+                })))
+            }
             Some(got_token) if is_global => {
                 Err(Box::new(crate::Error::ExpectedTokenFromList {
                     span: self.current_span(),
                     got_token: got_token.clone(),
                     // Semicolon is technically allowed, but like... why would you do that
-                    allowed_tokens: vec![Token::Let, Token::Function, Token::Struct, Token::Implement],
+                    allowed_tokens: vec![
+                        Token::Let,
+                        Token::Function,
+                        Token::Struct,
+                        Token::Implement,
+                        Token::Module,
+                        Token::Import,
+                    ],
                 }))
-            },
+            }
             Some(Token::CurlyLeft) => {
                 self.scan_token()?;
                 let mut statements = Vec::new();
@@ -595,10 +703,10 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         Some(Token::CurlyRight) => {
                             self.scan_token()?;
                             break;
-                        },
+                        }
                         None => {
                             return Err(Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }));
-                        },
+                        }
                         _ => {
                             let statement = self.parse_statement(is_global, is_in_implement_block, false)?
                                 .ok_or_else(|| Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }))?;
@@ -610,7 +718,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 Ok(Some(Box::new(Node::Scope {
                     statements,
                 })))
-            },
+            }
             Some(Token::If) => {
                 self.scan_token()?;
                 self.expect_token(&[Token::ParenLeft])?;
@@ -636,10 +744,10 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     consequent,
                     alternative,
                 })))
-            },
+            }
             Some(Token::Else) => {
                 Err(Box::new(crate::Error::UnexpectedElse { span: self.current_span() }))
-            },
+            }
             Some(Token::While) => {
                 self.scan_token()?;
                 self.expect_token(&[Token::ParenLeft])?;
@@ -653,21 +761,21 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     condition,
                     body,
                 })))
-            },
+            }
             Some(Token::Break) => {
                 self.scan_token()?;
                 self.expect_token(&[Token::Semicolon])?;
                 self.scan_token()?;
 
                 Ok(Some(Box::new(Node::Break)))
-            },
+            }
             Some(Token::Continue) => {
                 self.scan_token()?;
                 self.expect_token(&[Token::Semicolon])?;
                 self.scan_token()?;
 
                 Ok(Some(Box::new(Node::Continue)))
-            },
+            }
             Some(Token::Return) => {
                 self.scan_token()?;
                 let value;
@@ -682,13 +790,13 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 Ok(Some(Box::new(Node::Return {
                     value,
                 })))
-            },
-            Some(_) => {
+            }
+            Some(..) => {
                 let expression = self.parse_expression(None, &[Token::Semicolon])?;
                 self.scan_token()?;
 
                 Ok(Some(expression))
-            },
+            }
             None => Ok(None),
         }
     }

@@ -126,7 +126,6 @@ impl UnaryOperation {
 pub enum BinaryOperation {
     Subscript,
     Access,
-    StaticAccess,
     Convert,
     Multiply,
     Divide,
@@ -162,7 +161,7 @@ pub enum BinaryOperation {
 impl BinaryOperation {
     pub fn precedence(&self) -> Precedence {
         match self {
-            Self::Subscript | Self::Access | Self::StaticAccess => Precedence::Postfix,
+            Self::Subscript | Self::Access => Precedence::Postfix,
             Self::Convert => Precedence::Conversion,
             Self::Multiply | Self::Divide | Self::Remainder => Precedence::Multiplicative,
             Self::Add | Self::Subtract => Precedence::Additive,
@@ -208,7 +207,6 @@ impl BinaryOperation {
             Token::Equal => Some(Self::Assign),
             Token::Equal2 => Some(Self::Equal),
             Token::Dot => Some(Self::Access),
-            Token::Colon2 => Some(Self::StaticAccess),
             Token::SquareLeft => Some(Self::Subscript),
             Token::AngleLeft => Some(Self::LessThan),
             Token::AngleLeftEqual => Some(Self::LessEqual),
@@ -227,7 +225,6 @@ impl BinaryOperation {
         match self {
             Self::Subscript => format!("{lhs}[{rhs}]"),
             Self::Access => format!("{lhs}.{rhs}"),
-            Self::StaticAccess => format!("{lhs}::{rhs}"),
             Self::Convert => format!("{lhs} as {rhs}"),
             Self::Multiply => format!("{lhs} * {rhs}"),
             Self::Divide => format!("{lhs} / {rhs}"),
@@ -263,9 +260,41 @@ impl BinaryOperation {
 }
 
 #[derive(Clone, Debug)]
+pub enum PathSegment {
+    Name(String),
+    RootModule,
+    SuperModule,
+    SelfModule,
+    SelfType,
+    PrimitiveType(crate::sema::PrimitiveType),
+    Type(Box<TypeNode>),
+}
+
+impl fmt::Display for PathSegment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Name(ref name) => write!(f, "{name}"),
+            Self::RootModule => write!(f, ""),
+            Self::SuperModule => write!(f, "super"),
+            Self::SelfModule => write!(f, "module"),
+            Self::SelfType => write!(f, "Self"),
+            Self::PrimitiveType(primitive_type) => write!(f, "{primitive_type}"),
+            Self::Type(ref type_node) => write!(f, "<{type_node}>"),
+        }
+    }
+}
+
+impl PathSegment {
+    pub fn path_to_string(segments: &[PathSegment]) -> String {
+        let segments: Vec<String> = segments.iter().map(PathSegment::to_string).collect();
+        segments.join("::")
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum TypeNode {
     Path {
-        names: Vec<String>,
+        segments: Vec<PathSegment>,
     },
     Pointer {
         pointee_type: Box<TypeNode>,
@@ -280,26 +309,25 @@ pub enum TypeNode {
         is_variadic: bool,
         return_type: Box<TypeNode>,
     },
-    SelfType,
 }
 
 impl fmt::Display for TypeNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Path { names } => {
-                write!(f, "{}", names.join("::"))
-            },
+            Self::Path { segments } => {
+                write!(f, "{}", PathSegment::path_to_string(segments))
+            }
             Self::Pointer { pointee_type, semantics } => match semantics {
                 PointerSemantics::Immutable => write!(f, "*{pointee_type}"),
                 PointerSemantics::Mutable => write!(f, "*mut {pointee_type}"),
                 PointerSemantics::Owned => write!(f, "*own {pointee_type}"),
-            },
+            }
             Self::Array { item_type, length: Some(length) } => {
                 write!(f, "[{item_type}; {length}]")
-            },
+            }
             Self::Array { item_type, length: _none } => {
                 write!(f, "[{item_type}]")
-            },
+            }
             Self::Function { parameter_types, is_variadic, return_type } => {
                 write!(f, "function(")?;
                 let mut parameter_types_iter = parameter_types.iter();
@@ -316,10 +344,7 @@ impl fmt::Display for TypeNode {
                     write!(f, "..")?;
                 }
                 write!(f, ") -> {return_type}")
-            },
-            Self::SelfType => {
-                write!(f, "Self")
-            },
+            }
         }
     }
 }
@@ -335,6 +360,9 @@ pub struct FunctionParameter {
 pub enum Node {
     Literal(Literal),
     Type(TypeNode),
+    Path {
+        segments: Vec<PathSegment>,
+    },
     Unary {
         operation: UnaryOperation,
         operand: Box<Node>,
@@ -352,7 +380,7 @@ pub enum Node {
         items: Vec<Box<Node>>,
     },
     StructureLiteral {
-        type_name: Box<Node>,
+        structure_type: Box<Node>,
         members: Vec<(String, Box<Node>)>,
     },
     Scope {
@@ -403,14 +431,15 @@ pub enum Node {
         statements: Vec<Box<Node>>,
     },
     Import {
-        names: Vec<String>,
-    }
+        segments: Vec<PathSegment>,
+        alias: Option<String>,
+    },
 }
 
 impl Node {
     pub fn as_array_length(&self) -> Option<usize> {
         // Must be an integer literal
-        if let Self::Literal(Literal::Integer(value)) = *self {
+        if let &Self::Literal(Literal::Integer(value)) = self {
             // Must be an acceptable usize value
             if value >= 0 && value <= usize::MAX as i128 {
                 return Some(value as usize);
@@ -428,6 +457,9 @@ impl fmt::Display for Node {
             }
             Self::Type(value_type) => {
                 write!(f, "{value_type}")
+            }
+            Self::Path { segments } => {
+                write!(f, "{}", PathSegment::path_to_string(segments))
             }
             Self::Unary { operation, operand } => {
                 write!(f, "({operation})", operation = operation.to_string_with_operand(operand.as_ref()))
@@ -457,8 +489,8 @@ impl fmt::Display for Node {
                 }
                 write!(f, "]")
             }
-            Self::StructureLiteral { type_name, members } => {
-                write!(f, "({type_name} {{")?;
+            Self::StructureLiteral { structure_type, members } => {
+                write!(f, "({structure_type} {{")?;
                 let mut members_iter = members.iter();
                 if let Some((member_name, member_value)) = members_iter.next() {
                     write!(f, " {member_name}: {member_value}")?;
@@ -518,7 +550,7 @@ impl fmt::Display for Node {
             Self::Constant { name, value_type, value } => {
                 write!(f, " let const {name}: {value_type} = {value};")
             }
-            Self::Function { name, parameters, is_variadic: is_varargs, return_type, body } => {
+            Self::Function { name, parameters, is_variadic, return_type, body } => {
                 write!(f, " function {name}(")?;
                 let mut parameters_iter = parameters.iter();
                 if let Some(FunctionParameter { name: parameter_name, type_node: parameter_type, is_mutable }) = parameters_iter.next() {
@@ -533,11 +565,11 @@ impl fmt::Display for Node {
                         }
                         write!(f, ", {parameter_name}: {parameter_type}")?;
                     }
-                    if *is_varargs {
+                    if *is_variadic {
                         write!(f, ", ..")?;
                     }
                 }
-                else if *is_varargs {
+                else if *is_variadic {
                     write!(f, "..")?;
                 }
                 if let Some(body) = body {
@@ -578,8 +610,14 @@ impl fmt::Display for Node {
                 }
                 write!(f, " }}")
             }
-            Self::Import { names } => {
-                write!(f, " import {};", names.join("::"))
+            Self::Import { segments, alias } => {
+                let path = PathSegment::path_to_string(segments);
+                if let Some(alias) = alias {
+                    write!(f, " import {path} as {alias};")
+                }
+                else {
+                    write!(f, " import {path};")
+                }
             }
         }
     }

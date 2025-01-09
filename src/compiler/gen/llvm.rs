@@ -182,10 +182,10 @@ impl<W: Write> Emitter<W> {
             for &StructureMember { member_type, .. } in members_iter {
                 emit!(self, ", {}", member_type.llvm_syntax(context))?;
             }
-            emit!(self, " }}\n")
+            emit!(self, " }}\n\n")
         }
         else {
-            emit!(self, "{{}}\n")
+            emit!(self, "{{}}\n\n")
         }
     }
 

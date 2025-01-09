@@ -4,21 +4,23 @@ use std::fmt;
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Literal {
-    Identifier(String),
+    Name(String),
     Integer(i128),
     Boolean(bool),
     NullPointer,
     String(crate::sema::StringValue),
+    PrimitiveType(crate::sema::PrimitiveType),
 }
 
 impl fmt::Display for Literal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Identifier(name) => write!(f, "{name}"),
+            Self::Name(name) => write!(f, "{name}"),
             Self::Integer(value) => write!(f, "{value}"),
             Self::Boolean(value) => write!(f, "{value}"),
             Self::NullPointer => write!(f, "null"),
             Self::String(value) => write!(f, "{value}"),
+            Self::PrimitiveType(primitive_type) => write!(f, "{primitive_type}"),
         }
     }
 }
@@ -92,6 +94,9 @@ pub enum Token {
     Function,
     Struct,
     Implement,
+    Module,
+    Import,
+    Super,
     SelfType,
     Literal(Literal),
 }
@@ -166,6 +171,9 @@ impl fmt::Display for Token {
             Self::Function => write!(f, "function"),
             Self::Struct => write!(f, "struct"),
             Self::Implement => write!(f, "implement"),
+            Self::Module => write!(f, "module"),
+            Self::Import => write!(f, "import"),
+            Self::Super => write!(f, "super"),
             Self::SelfType => write!(f, "Self"),
             Self::Literal(literal) => write!(f, "{literal}"),
         }
@@ -243,6 +251,9 @@ pub const KEYWORD_TOKENS: &[(&str, Token)] = &[
     ("function", Token::Function),
     ("struct", Token::Struct),
     ("implement", Token::Implement),
+    ("module", Token::Module),
+    ("import", Token::Import),
+    ("super", Token::Super),
     ("Self", Token::SelfType),
 ];
 

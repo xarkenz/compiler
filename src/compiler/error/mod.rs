@@ -260,11 +260,12 @@ pub enum Error {
     },
     UnsupportedConstantExpression {
     },
-    InvalidStaticAccess {
-    },
     SelfOutsideImplement {
     },
     ExpectedSelfParameter {
+    },
+    ImportAliasRequired {
+        path: String,
     },
 }
 
@@ -395,9 +396,9 @@ impl fmt::Display for Error {
             Self::MultipleFunctionDefinition { function_name } => write!(f, "multiple definitions exist for function '{function_name}'"),
             Self::MissingReturnStatement { function_name } => write!(f, "non-void function '{function_name}' could finish without returning a value"),
             Self::UnsupportedConstantExpression {} => write!(f, "unsupported feature in constant expression"),
-            Self::InvalidStaticAccess {} => write!(f, "invalid operands for '::'"),
             Self::SelfOutsideImplement {} => write!(f, "type 'Self' can only be used inside an 'implement' block"),
             Self::ExpectedSelfParameter {} => write!(f, "expected a first parameter of type 'Self', '*Self', or '*mut Self'"),
+            Self::ImportAliasRequired { path } => write!(f, "import '{path}' must be renamed using the syntax 'import _ as <name>'")
         }
     }
 }
