@@ -422,6 +422,7 @@ pub enum Node {
     },
     Function {
         name: String,
+        is_foreign: bool,
         parameters: Vec<FunctionParameterNode>,
         is_variadic: bool,
         return_type: TypeNode,
@@ -430,6 +431,7 @@ pub enum Node {
     },
     Structure {
         name: String,
+        is_foreign: bool,
         members: Option<Vec<StructureMemberNode>>,
         self_type: TypeHandle,
     },

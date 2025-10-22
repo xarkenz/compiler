@@ -214,7 +214,7 @@ impl<W: Write> Generator<W> {
                     self.generate_function_definition(name, parameters, body, global_register)
                 }
                 else {
-                    self.generate_foreign_function_definition(global_register)
+                    self.generate_function_declaration(global_register)
                 }
             }
             ast::Node::Structure { members, self_type, .. } => {
@@ -222,7 +222,7 @@ impl<W: Write> Generator<W> {
                     self.generate_structure_definition(*self_type)
                 }
                 else {
-                    self.generate_foreign_structure_definition(*self_type)
+                    self.generate_opaque_structure_definition(*self_type)
                 }
             }
             ast::Node::Implement { self_type, statements } => {
@@ -1454,7 +1454,7 @@ impl<W: Write> Generator<W> {
         Ok(Value::Void)
     }
 
-    fn generate_foreign_function_definition(&mut self, function_register: &Register) -> crate::Result<Value> {
+    fn generate_function_declaration(&mut self, function_register: &Register) -> crate::Result<Value> {
         // The fill phase has done basically all of the work for us already
         self.emitter.emit_function_declaration(&function_register, &self.context)?;
 
@@ -1468,7 +1468,7 @@ impl<W: Write> Generator<W> {
         Ok(Value::Void)
     }
 
-    fn generate_foreign_structure_definition(&mut self, self_type: TypeHandle) -> crate::Result<Value> {
+    fn generate_opaque_structure_definition(&mut self, self_type: TypeHandle) -> crate::Result<Value> {
         // The fill phase has done basically all of the work for us already
         self.emitter.emit_type_declaration(self_type, &self.context)?;
 

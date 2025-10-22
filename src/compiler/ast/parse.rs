@@ -442,6 +442,152 @@ impl<'a, T: BufRead> Parser<'a, T> {
         }
     }
 
+    fn parse_function_definition(
+        &mut self,
+        context: &mut GlobalContext,
+        is_in_implement_block: bool,
+        is_foreign: bool,
+    ) -> crate::Result<Option<Box<Node>>> {
+        let name = self.expect_identifier()?;
+        self.scan_token()?;
+        self.expect_token(&[Token::ParenLeft])?;
+        self.scan_token()?;
+
+        let mut parameters = Vec::new();
+        let mut is_variadic = false;
+        while !(matches!(self.current_token(), Some(Token::ParenRight))) {
+            if let Some(Token::Dot2) = self.current_token() {
+                is_variadic = true;
+                self.scan_token()?;
+                // The '..' for variadic arguments must be the end of the function signature
+                self.expect_token(&[Token::ParenRight])?;
+                break;
+            }
+
+            let is_mutable = if let Some(Token::Mut) = self.current_token() {
+                self.scan_token()?;
+                true
+            } else {
+                false
+            };
+
+            let parameter_name = self.expect_identifier()?;
+            self.scan_token()?;
+            self.expect_token(&[Token::Colon])?;
+            self.scan_token()?;
+            let parameter_type = self.parse_type(Some(&[Token::Comma, Token::ParenRight]))?;
+
+            parameters.push(FunctionParameterNode {
+                name: parameter_name,
+                type_node: parameter_type,
+                is_mutable,
+            });
+
+            if let Some(Token::Comma) = self.current_token() {
+                self.scan_token()?;
+            }
+        }
+
+        self.scan_token()?;
+        // The function body must be enclosed by a scope, so expect a '{' or ';' token following
+        // the return type (if present)
+        if is_foreign {
+            self.expect_token(&[Token::RightArrow, Token::CurlyLeft, Token::Semicolon])?;
+        }
+        else {
+            self.expect_token(&[Token::RightArrow, Token::CurlyLeft])?;
+        }
+        let return_type = if let Some(Token::RightArrow) = self.current_token() {
+            self.scan_token()?;
+            if is_foreign {
+                self.parse_type(Some(&[Token::CurlyLeft, Token::Semicolon]))?
+            }
+            else {
+                self.parse_type(Some(&[Token::CurlyLeft]))?
+            }
+        } else {
+            TypeNode::Path {
+                segments: vec![PathSegment::PrimitiveType(PrimitiveType {
+                    name: "void",
+                    handle: TypeHandle::VOID
+                })],
+            }
+        };
+
+        let body = if let Some(Token::CurlyLeft) = self.current_token() {
+            self.parse_statement(context, false, is_in_implement_block, false)?
+        } else {
+            self.scan_token()?;
+            None
+        };
+
+        Ok(Some(Box::new(Node::Function {
+            name,
+            is_foreign,
+            parameters,
+            is_variadic,
+            return_type,
+            body,
+            global_register: None,
+        })))
+    }
+
+    fn parse_structure_definition(
+        &mut self,
+        context: &mut GlobalContext,
+        is_foreign: bool,
+    ) -> crate::Result<Option<Box<Node>>> {
+        let name = self.expect_identifier()?;
+
+        let self_type = context.outline_structure_type(name.clone())?;
+        context.set_self_type(self_type);
+
+        self.scan_token()?;
+        if is_foreign {
+            self.expect_token(&[Token::CurlyLeft, Token::Semicolon])?;
+        }
+        else {
+            self.expect_token(&[Token::CurlyLeft])?;
+        }
+        let members = if let Some(Token::CurlyLeft) = self.current_token() {
+            self.scan_token()?;
+
+            let mut members = Vec::new();
+            while !(matches!(self.current_token(), Some(Token::CurlyRight))) {
+                let member_name = self.expect_identifier()?;
+                self.scan_token()?;
+                self.expect_token(&[Token::Colon])?;
+                self.scan_token()?;
+                let member_type = self.parse_type(Some(&[Token::Comma, Token::CurlyRight]))?;
+
+                members.push(StructureMemberNode {
+                    name: member_name,
+                    type_node: member_type,
+                });
+
+                if let Some(Token::Comma) = self.current_token() {
+                    self.scan_token()?;
+                }
+            }
+
+            self.scan_token()?;
+            Some(members)
+        }
+        else {
+            self.scan_token()?;
+            None
+        };
+
+        context.unset_self_type();
+
+        Ok(Some(Box::new(Node::Structure {
+            name,
+            is_foreign,
+            members,
+            self_type,
+        })))
+    }
+
     pub fn parse_statement(
         &mut self,
         context: &mut GlobalContext,
@@ -508,122 +654,11 @@ impl<'a, T: BufRead> Parser<'a, T> {
             }
             Some(Token::Function) if is_global => {
                 self.scan_token()?;
-                let name = self.expect_identifier()?;
-                self.scan_token()?;
-                self.expect_token(&[Token::ParenLeft])?;
-                self.scan_token()?;
-
-                let mut parameters = Vec::new();
-                let mut is_variadic = false;
-                while !(matches!(self.current_token(), Some(Token::ParenRight))) {
-                    if let Some(Token::Dot2) = self.current_token() {
-                        is_variadic = true;
-                        self.scan_token()?;
-                        // The '..' for variadic arguments must be the end of the function signature
-                        self.expect_token(&[Token::ParenRight])?;
-                        break;
-                    }
-
-                    let is_mutable = if let Some(Token::Mut) = self.current_token() {
-                        self.scan_token()?;
-                        true
-                    } else {
-                        false
-                    };
-
-                    let parameter_name = self.expect_identifier()?;
-                    self.scan_token()?;
-                    self.expect_token(&[Token::Colon])?;
-                    self.scan_token()?;
-                    let parameter_type = self.parse_type(Some(&[Token::Comma, Token::ParenRight]))?;
-
-                    parameters.push(FunctionParameterNode {
-                        name: parameter_name,
-                        type_node: parameter_type,
-                        is_mutable,
-                    });
-
-                    if let Some(Token::Comma) = self.current_token() {
-                        self.scan_token()?;
-                    }
-                }
-
-                self.scan_token()?;
-                // The function body must be enclosed by a scope, so expect a '{' or ';' token following the return type (if present)
-                self.expect_token(&[Token::RightArrow, Token::CurlyLeft, Token::Semicolon])?;
-                let return_type = if let Some(Token::RightArrow) = self.current_token() {
-                    self.scan_token()?;
-                    self.parse_type(Some(&[Token::CurlyLeft, Token::Semicolon]))?
-                } else {
-                    TypeNode::Path {
-                        segments: vec![PathSegment::PrimitiveType(PrimitiveType {
-                            name: "void",
-                            handle: TypeHandle::VOID
-                        })],
-                    }
-                };
-
-                let body = if let Some(Token::CurlyLeft) = self.current_token() {
-                    self.parse_statement(context, false, is_in_implement_block, false)?
-                } else {
-                    self.scan_token()?;
-                    None
-                };
-
-                Ok(Some(Box::new(Node::Function {
-                    name,
-                    parameters,
-                    is_variadic,
-                    return_type,
-                    body,
-                    global_register: None,
-                })))
+                self.parse_function_definition(context, is_in_implement_block, false)
             }
             Some(Token::Struct) if is_global && !is_in_implement_block => {
                 self.scan_token()?;
-                let name = self.expect_identifier()?;
-
-                let self_type = context.outline_struct(name.clone())?;
-                context.set_self_type(self_type);
-
-                self.scan_token()?;
-                self.expect_token(&[Token::CurlyLeft, Token::Semicolon])?;
-                let members = if let Some(Token::CurlyLeft) = self.current_token() {
-                    self.scan_token()?;
-
-                    let mut members = Vec::new();
-                    while !(matches!(self.current_token(), Some(Token::CurlyRight))) {
-                        let member_name = self.expect_identifier()?;
-                        self.scan_token()?;
-                        self.expect_token(&[Token::Colon])?;
-                        self.scan_token()?;
-                        let member_type = self.parse_type(Some(&[Token::Comma, Token::CurlyRight]))?;
-
-                        members.push(StructureMemberNode {
-                            name: member_name,
-                            type_node: member_type,
-                        });
-
-                        if let Some(Token::Comma) = self.current_token() {
-                            self.scan_token()?;
-                        }
-                    }
-
-                    self.scan_token()?;
-                    Some(members)
-                }
-                else {
-                    self.scan_token()?;
-                    None
-                };
-
-                context.unset_self_type();
-
-                Ok(Some(Box::new(Node::Structure {
-                    name,
-                    members,
-                    self_type,
-                })))
+                self.parse_structure_definition(context, false)
             }
             Some(Token::Implement) if is_global && !is_in_implement_block => {
                 self.scan_token()?;
@@ -727,6 +762,30 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     segments,
                     alias,
                 })))
+            }
+            Some(Token::Foreign) if is_global => {
+                self.scan_token()?;
+                match self.get_token()? {
+                    Token::Function => {
+                        self.scan_token()?;
+                        self.parse_function_definition(context, is_in_implement_block, true)
+                    }
+                    Token::Struct if !is_in_implement_block => {
+                        self.scan_token()?;
+                        self.parse_structure_definition(context, true)
+                    }
+                    got_token => {
+                        let mut allowed_tokens = vec![Token::Function];
+                        if !is_in_implement_block {
+                            allowed_tokens.push(Token::Struct);
+                        }
+                        Err(Box::new(crate::Error::ExpectedTokenFromList {
+                            span: self.current_span(),
+                            got_token: got_token.clone(),
+                            allowed_tokens,
+                        }))
+                    }
+                }
             }
             Some(got_token) if is_global => {
                 Err(Box::new(crate::Error::ExpectedTokenFromList {

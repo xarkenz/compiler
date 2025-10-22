@@ -1,17 +1,17 @@
-struct CFile;
+foreign struct CFile;
 
-function fopen(filename: *[u8], mode: *[u8]) -> *own CFile;
-function fclose(file: *own CFile) -> i32;
-function feof(file: *mut CFile) -> i32;
-function fgets(buffer: *mut [u8], limit: i32, file: *mut CFile) -> *mut [u8];
-function printf(format: *[u8], ..) -> u32;
+foreign function fopen(filename: *[u8], mode: *[u8]) -> *own CFile;
+foreign function fclose(file: *own CFile) -> i32;
+foreign function feof(file: *mut CFile) -> i32;
+foreign function fgets(buffer: *mut [u8], limit: i32, file: *mut CFile) -> *mut [u8];
+foreign function printf(format: *[u8], ..) -> u32;
 
-function malloc(size_bytes: u64) -> *own void;
-function free(alloc: *own void);
-function memcpy(dest: *mut void, src: *void, count: u64) -> *mut void;
+foreign function malloc(size_bytes: u64) -> *own void;
+foreign function free(alloc: *own void);
+foreign function memcpy(dest: *mut void, src: *void, count: u64) -> *mut void;
 
-function strlen(str: *[u8]) -> u64;
-function isdigit(char: i32) -> i32;
+foreign function strlen(str: *[u8]) -> u64;
+foreign function isdigit(char: i32) -> i32;
 
 implement u8 {
     function swap(self: *mut Self, other: *mut Self) {
@@ -248,7 +248,7 @@ implement i64 {
     }
 }
 
-function main() -> i32 {
+foreign function main() -> i32 {
     aoc_01_p1();
 
     student_stuff();

@@ -318,7 +318,7 @@ impl GlobalContext {
         self.get_path_type(&type_path)
     }
 
-    pub fn outline_struct(&mut self, name: String) -> crate::Result<TypeHandle> {
+    pub fn outline_structure_type(&mut self, name: String) -> crate::Result<TypeHandle> {
         let path = self.current_module_info().path().child(&name);
         let handle = self.create_type(path, TypeRepr::Unresolved);
 
@@ -547,7 +547,7 @@ impl GlobalContext {
                 let value_type = self.interpret_type_node(value_type)?;
                 *global_register = Some(self.define_global_value(name, value_type, false)?);
             }
-            Node::Function { ref name, ref parameters, is_variadic, ref return_type, ref mut global_register, .. } => {
+            Node::Function { ref name, ref parameters, is_variadic, ref return_type, ref mut global_register, is_foreign, .. } => {
                 let parameter_types = Result::from_iter(parameters
                     .iter()
                     .map(|parameter| {
@@ -557,8 +557,12 @@ impl GlobalContext {
                 let signature = FunctionSignature::new(return_type, parameter_types, is_variadic);
                 let function_type = self.get_function_type(&signature);
 
-                let path = self.current_module_info().path().child(name);
-                let register = Register::new_global(path.to_string(), function_type);
+                let identifier = if is_foreign {
+                    name.clone()
+                } else {
+                    self.current_module_info().path().child(name).to_string()
+                };
+                let register = Register::new_global(identifier, function_type);
 
                 self.current_namespace_info_mut().define(
                     name,
@@ -567,11 +571,18 @@ impl GlobalContext {
 
                 *global_register = Some(register);
             }
-            Node::Structure { ref name, ref members, self_type } => {
-                if let Some(members) = members {
+            Node::Structure { ref name, ref members, self_type, is_foreign } => {
+                if is_foreign {
+                    self.update_type_repr(self_type, TypeRepr::ForeignStructure {
+                        name: name.clone(),
+                    });
+                }
+                else {
                     self.set_self_type(self_type);
 
                     let members = crate::Result::from_iter(members
+                        .as_ref()
+                        .unwrap()
                         .iter()
                         .map(|member| Ok(StructureMember {
                             name: member.name.clone(),
@@ -583,11 +594,6 @@ impl GlobalContext {
                     });
 
                     self.unset_self_type();
-                }
-                else {
-                    self.update_type_repr(self_type, TypeRepr::ForeignStructure {
-                        name: name.clone(),
-                    });
                 }
             }
             Node::Implement { ref self_type, ref mut statements, .. } => {

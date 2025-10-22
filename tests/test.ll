@@ -3,25 +3,25 @@ source_filename = "tests/test.txt"
 
 %"type.::CFile" = type opaque
 
-declare %"type.::CFile"* @"::fopen"(i8*, i8*)
+declare %"type.::CFile"* @fopen(i8*, i8*)
 
-declare i32 @"::fclose"(%"type.::CFile"*)
+declare i32 @fclose(%"type.::CFile"*)
 
-declare i32 @"::feof"(%"type.::CFile"*)
+declare i32 @feof(%"type.::CFile"*)
 
-declare i8* @"::fgets"(i8*, i32, %"type.::CFile"*)
+declare i8* @fgets(i8*, i32, %"type.::CFile"*)
 
-declare i32 @"::printf"(i8*, ...)
+declare i32 @printf(i8*, ...)
 
-declare {}* @"::malloc"(i64)
+declare {}* @malloc(i64)
 
-declare void @"::free"({}*)
+declare void @free({}*)
 
-declare {}* @"::memcpy"({}*, {}*, i64)
+declare {}* @memcpy({}*, {}*, i64)
 
-declare i64 @"::strlen"(i8*)
+declare i64 @strlen(i8*)
 
-declare i32 @"::isdigit"(i32)
+declare i32 @isdigit(i32)
 
 define void @"::swap"(i8* %0, i8* %1) {
 .block.0:
@@ -84,7 +84,7 @@ define void @"::del"(%"type.::String" %0) {
 	%2 = getelementptr inbounds %"type.::OwnStr", %"type.::OwnStr"* %1, i32 0, i32 0
 	%3 = load i8*, i8** %2
 	%4 = bitcast i8* %3 to {}*
-	call void({}*) @"::free"({}* %4)
+	call void({}*) @free({}* %4)
 	ret void
 }
 
@@ -135,7 +135,7 @@ define void @"::grow_by"(%"type.::String"* %0, i64 %1) {
 	%ptr = alloca i8*
 	%13 = load i64, i64* %capacity
 	%14 = mul nuw i64 1, %13
-	%15 = call {}*(i64) @"::malloc"(i64 %14)
+	%15 = call {}*(i64) @malloc(i64 %14)
 	%16 = bitcast {}* %15 to i8*
 	store i8* %16, i8** %ptr
 	%17 = load i8*, i8** %ptr
@@ -149,13 +149,13 @@ define void @"::grow_by"(%"type.::String"* %0, i64 %1) {
 	%25 = getelementptr inbounds %"type.::String", %"type.::String"* %24, i32 0, i32 0
 	%26 = getelementptr inbounds %"type.::OwnStr", %"type.::OwnStr"* %25, i32 0, i32 1
 	%27 = load i64, i64* %26
-	%28 = call {}*({}*, {}*, i64) @"::memcpy"({}* %18, {}* %23, i64 %27)
+	%28 = call {}*({}*, {}*, i64) @memcpy({}* %18, {}* %23, i64 %27)
 	%29 = load %"type.::String"*, %"type.::String"** %self
 	%30 = getelementptr inbounds %"type.::String", %"type.::String"* %29, i32 0, i32 0
 	%31 = getelementptr inbounds %"type.::OwnStr", %"type.::OwnStr"* %30, i32 0, i32 0
 	%32 = load i8*, i8** %31
 	%33 = bitcast i8* %32 to {}*
-	call void({}*) @"::free"({}* %33)
+	call void({}*) @free({}* %33)
 	%34 = load %"type.::String"*, %"type.::String"** %self
 	%35 = getelementptr inbounds %"type.::String", %"type.::String"* %34, i32 0, i32 0
 	%36 = getelementptr inbounds %"type.::OwnStr", %"type.::OwnStr"* %35, i32 0, i32 0
@@ -332,13 +332,13 @@ define i32 @"::gcd"(i32 %0, i32 %1) {
 define void @"::aoc_01_p1"() {
 .block.0:
 	%input = alloca %"type.::CFile"*
-	%0 = call %"type.::CFile"*(i8*, i8*) @"::fopen"(i8* bitcast ([10 x i8]* @.const.0 to i8*), i8* bitcast ([2 x i8]* @.const.1 to i8*))
+	%0 = call %"type.::CFile"*(i8*, i8*) @fopen(i8* bitcast ([10 x i8]* @.const.0 to i8*), i8* bitcast ([2 x i8]* @.const.1 to i8*))
 	store %"type.::CFile"* %0, %"type.::CFile"** %input
 	%1 = load %"type.::CFile"*, %"type.::CFile"** %input
 	%2 = icmp eq %"type.::CFile"* %1, null
 	br i1 %2, label %.block.1, label %.block.2
 .block.1:
-	%3 = call i32(i8*, ...) @"::printf"(i8* bitcast ([27 x i8]* @.const.2 to i8*))
+	%3 = call i32(i8*, ...) @printf(i8* bitcast ([27 x i8]* @.const.2 to i8*))
 	ret void
 .block.2:
 	%calibration_sum = alloca i32
@@ -349,7 +349,7 @@ define void @"::aoc_01_p1"() {
 	%4 = bitcast [100 x i8]* %line to i8*
 	%5 = load %"type.::CFile"*, %"type.::CFile"** %input
 	%6 = bitcast %"type.::CFile"* %5 to %"type.::CFile"*
-	%7 = call i8*(i8*, i32, %"type.::CFile"*) @"::fgets"(i8* %4, i32 100, %"type.::CFile"* %6)
+	%7 = call i8*(i8*, i32, %"type.::CFile"*) @fgets(i8* %4, i32 100, %"type.::CFile"* %6)
 	%8 = icmp ne i8* %7, null
 	br i1 %8, label %.block.4, label %.block.5
 .block.4:
@@ -361,7 +361,7 @@ define void @"::aoc_01_p1"() {
 	%10 = getelementptr inbounds [100 x i8], [100 x i8]* %line, i32 0, i64 %9
 	%11 = load i8, i8* %10
 	%12 = zext i8 %11 to i32
-	%13 = call i32(i32) @"::isdigit"(i32 %12)
+	%13 = call i32(i32) @isdigit(i32 %12)
 	%14 = icmp eq i32 %13, 0
 	br i1 %14, label %.block.7, label %.block.8
 .block.7:
@@ -378,7 +378,7 @@ define void @"::aoc_01_p1"() {
 	%21 = zext i8 %20 to i32
 	store i32 %21, i32* %calibration_value
 	%22 = bitcast [100 x i8]* %line to i8*
-	%23 = call i64(i8*) @"::strlen"(i8* %22)
+	%23 = call i64(i8*) @strlen(i8* %22)
 	%24 = sub nuw i64 %23, 1
 	store i64 %24, i64* %index
 	br label %.block.9
@@ -387,7 +387,7 @@ define void @"::aoc_01_p1"() {
 	%26 = getelementptr inbounds [100 x i8], [100 x i8]* %line, i32 0, i64 %25
 	%27 = load i8, i8* %26
 	%28 = zext i8 %27 to i32
-	%29 = call i32(i32) @"::isdigit"(i32 %28)
+	%29 = call i32(i32) @isdigit(i32 %28)
 	%30 = icmp eq i32 %29, 0
 	br i1 %30, label %.block.10, label %.block.11
 .block.10:
@@ -413,9 +413,9 @@ define void @"::aoc_01_p1"() {
 	br label %.block.3
 .block.5:
 	%44 = load %"type.::CFile"*, %"type.::CFile"** %input
-	%45 = call i32(%"type.::CFile"*) @"::fclose"(%"type.::CFile"* %44)
+	%45 = call i32(%"type.::CFile"*) @fclose(%"type.::CFile"* %44)
 	%46 = load i32, i32* %calibration_sum
-	%47 = call i32(i8*, ...) @"::printf"(i8* bitcast ([38 x i8]* @.const.3 to i8*), i32 %46)
+	%47 = call i32(i8*, ...) @printf(i8* bitcast ([38 x i8]* @.const.3 to i8*), i32 %46)
 	ret void
 }
 
@@ -444,7 +444,7 @@ define void @"::omg_linked_list"(i8** %0, i64 %1) {
 	br i1 %4, label %.block.2, label %.block.3
 .block.2:
 	%node = alloca %"type.::Node"*
-	%5 = call {}*(i64) @"::malloc"(i64 16)
+	%5 = call {}*(i64) @malloc(i64 16)
 	%6 = bitcast {}* %5 to %"type.::Node"*
 	store %"type.::Node"* %6, %"type.::Node"** %node
 	%7 = load %"type.::Node"*, %"type.::Node"** %node
@@ -468,7 +468,7 @@ define void @"::omg_linked_list"(i8** %0, i64 %1) {
 	store i64 %19, i64* %index
 	br label %.block.1
 .block.3:
-	%20 = call i32(i8*, ...) @"::printf"(i8* bitcast ([11 x i8]* @.const.4 to i8*))
+	%20 = call i32(i8*, ...) @printf(i8* bitcast ([11 x i8]* @.const.4 to i8*))
 	br label %.block.4
 .block.4:
 	%21 = load %"type.::Node"*, %"type.::Node"** %head
@@ -481,14 +481,14 @@ define void @"::omg_linked_list"(i8** %0, i64 %1) {
 	%24 = load %"type.::Node"*, %"type.::Node"** %node-1
 	%25 = getelementptr inbounds %"type.::Node", %"type.::Node"* %24, i32 0, i32 0
 	%26 = load i8*, i8** %25
-	%27 = call i32(i8*, ...) @"::printf"(i8* bitcast ([4 x i8]* @.const.5 to i8*), i8* %26)
+	%27 = call i32(i8*, ...) @printf(i8* bitcast ([4 x i8]* @.const.5 to i8*), i8* %26)
 	%28 = load %"type.::Node"*, %"type.::Node"** %node-1
 	%29 = getelementptr inbounds %"type.::Node", %"type.::Node"* %28, i32 0, i32 1
 	%30 = load %"type.::Node"*, %"type.::Node"** %29
 	store %"type.::Node"* %30, %"type.::Node"** %head
 	%31 = load %"type.::Node"*, %"type.::Node"** %node-1
 	%32 = bitcast %"type.::Node"* %31 to {}*
-	call void({}*) @"::free"({}* %32)
+	call void({}*) @free({}* %32)
 	br label %.block.4
 .block.6:
 	ret void
@@ -524,10 +524,10 @@ define void @"::student_stuff"() {
 	store %"type.::Student" %9, %"type.::Student"* %joe
 	%10 = getelementptr inbounds %"type.::Student", %"type.::Student"* %joe, i32 0, i32 0
 	%11 = load i8*, i8** %10
-	%12 = call i32(i8*, ...) @"::printf"(i8* bitcast ([10 x i8]* @.const.7 to i8*), i8* %11)
+	%12 = call i32(i8*, ...) @printf(i8* bitcast ([10 x i8]* @.const.7 to i8*), i8* %11)
 	%13 = getelementptr inbounds %"type.::Student", %"type.::Student"* %joe, i32 0, i32 1
 	%14 = load i32, i32* %13
-	%15 = call i32(i8*, ...) @"::printf"(i8* bitcast ([9 x i8]* @.const.8 to i8*), i32 %14)
+	%15 = call i32(i8*, ...) @printf(i8* bitcast ([9 x i8]* @.const.8 to i8*), i32 %14)
 	%16 = getelementptr inbounds %"type.::Student", %"type.::Student"* %joe, i32 0, i32 2
 	%17 = getelementptr inbounds [4 x i32], [4 x i32]* %16, i32 0, i32 0
 	%18 = load i32, i32* %17
@@ -540,7 +540,7 @@ define void @"::student_stuff"() {
 	%25 = getelementptr inbounds %"type.::Student", %"type.::Student"* %joe, i32 0, i32 2
 	%26 = getelementptr inbounds [4 x i32], [4 x i32]* %25, i32 0, i32 3
 	%27 = load i32, i32* %26
-	%28 = call i32(i8*, ...) @"::printf"(i8* bitcast ([24 x i8]* @.const.9 to i8*), i32 %18, i32 %21, i32 %24, i32 %27)
+	%28 = call i32(i8*, ...) @printf(i8* bitcast ([24 x i8]* @.const.9 to i8*), i32 %18, i32 %21, i32 %24, i32 %27)
 	ret void
 }
 
@@ -603,7 +603,7 @@ define %"type.::String" @"::to_string"(i64 %0) {
 	ret %"type.::String" %18
 }
 
-define i32 @"::main"() {
+define i32 @main() {
 .block.0:
 	call void() @"::aoc_01_p1"()
 	call void() @"::student_stuff"()
@@ -633,7 +633,7 @@ define i32 @"::main"() {
 	store %"type.::Str" %3, %"type.::Str"* %str
 	%4 = getelementptr inbounds %"type.::Str", %"type.::Str"* %str, i32 0, i32 0
 	%5 = load i8*, i8** %4
-	%6 = call i32(i8*, ...) @"::printf"(i8* bitcast ([4 x i8]* @.const.14 to i8*), i8* %5)
+	%6 = call i32(i8*, ...) @printf(i8* bitcast ([4 x i8]* @.const.14 to i8*), i8* %5)
 	%7 = load %"type.::String", %"type.::String"* %string
 	call void(%"type.::String") @"::del"(%"type.::String" %7)
 	%number_string = alloca %"type.::String"
@@ -645,7 +645,7 @@ define i32 @"::main"() {
 	%11 = getelementptr inbounds %"type.::String", %"type.::String"* %number_string, i32 0, i32 0
 	%12 = getelementptr inbounds %"type.::OwnStr", %"type.::OwnStr"* %11, i32 0, i32 0
 	%13 = load i8*, i8** %12
-	%14 = call i32(i8*, ...) @"::printf"(i8* bitcast ([22 x i8]* @.const.15 to i8*), i8* %13)
+	%14 = call i32(i8*, ...) @printf(i8* bitcast ([22 x i8]* @.const.15 to i8*), i8* %13)
 	%15 = load %"type.::String", %"type.::String"* %number_string
 	call void(%"type.::String") @"::del"(%"type.::String" %15)
 	ret i32 0

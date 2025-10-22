@@ -96,6 +96,7 @@ pub enum Token {
     Implement,
     Module,
     Import,
+    Foreign,
     Super,
     SelfType,
     Literal(Literal),
@@ -173,6 +174,7 @@ impl fmt::Display for Token {
             Self::Implement => write!(f, "implement"),
             Self::Module => write!(f, "module"),
             Self::Import => write!(f, "import"),
+            Self::Foreign => write!(f, "foreign"),
             Self::Super => write!(f, "super"),
             Self::SelfType => write!(f, "Self"),
             Self::Literal(literal) => write!(f, "{literal}"),
@@ -253,6 +255,7 @@ pub const KEYWORD_TOKENS: &[(&str, Token)] = &[
     ("implement", Token::Implement),
     ("module", Token::Module),
     ("import", Token::Import),
+    ("foreign", Token::Foreign),
     ("super", Token::Super),
     ("Self", Token::SelfType),
 ];
