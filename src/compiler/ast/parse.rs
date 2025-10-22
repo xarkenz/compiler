@@ -1,16 +1,28 @@
 use super::*;
 
 use std::io::BufRead;
+use crate::sema::{GlobalContext, PrimitiveType, Symbol};
+use crate::token::scan::Scanner;
 
-#[derive(Debug)]
+pub fn parse_all<T: BufRead>(scanner: &mut Scanner<T>, context: &mut GlobalContext) -> crate::Result<Vec<Node>> {
+    let mut parser = Parser::new(scanner)?;
+
+    let mut top_level_statements = Vec::new();
+    while let Some(statement) = parser.parse_top_level_statement(context)? {
+        top_level_statements.push(*statement);
+    }
+
+    Ok(top_level_statements)
+}
+
 pub struct Parser<'a, T: BufRead> {
-    scanner: &'a mut scan::Scanner<T>,
+    scanner: &'a mut Scanner<T>,
     current_span: crate::Span,
     current_token: Option<Token>,
 }
 
 impl<'a, T: BufRead> Parser<'a, T> {
-    pub fn new(scanner: &'a mut scan::Scanner<T>) -> crate::Result<Self> {
+    pub fn new(scanner: &'a mut Scanner<T>) -> crate::Result<Self> {
         let current_span = scanner.create_span(scanner.next_index(), scanner.next_index());
         let mut new_instance = Self {
             scanner,
@@ -66,7 +78,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
             _ => Err(Box::new(crate::Error::ExpectedIdentifier { span: self.current_span() }))
         }
     }
-    
+
     pub fn parse_path(&mut self, first_segment: Option<PathSegment>) -> crate::Result<Vec<PathSegment>> {
         let mut segments = Vec::from_iter(first_segment);
 
@@ -108,7 +120,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
             };
             self.scan_token()?;
         }
-        
+
         Ok(segments)
     }
 
@@ -141,14 +153,14 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.scan_token()?;
                     let expression = self.parse_expression(None, &[Token::ParenRight])?;
                     self.scan_token()?;
-                    
+
                     expression
                 }
                 Token::Literal(literal) => {
                     let literal = literal.clone();
                     let literal_span = self.current_span();
                     self.scan_token()?;
-                    
+
                     if let Some(Token::Colon2) = self.current_token() {
                         let first_segment = match literal {
                             Literal::Name(name) => PathSegment::Name(name),
@@ -156,7 +168,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                             _ => return Err(Box::new(crate::Error::ExpectedIdentifier { span: literal_span }))
                         };
                         self.scan_token()?;
-                        
+
                         Box::new(Node::Path {
                             segments: self.parse_path(Some(first_segment))?,
                         })
@@ -359,7 +371,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 if let Some(allowed_ends) = allowed_ends {
                     self.expect_token(allowed_ends)?;
                 }
-                
+
                 Ok(TypeNode::Array {
                     item_type,
                     length,
@@ -430,12 +442,19 @@ impl<'a, T: BufRead> Parser<'a, T> {
         }
     }
 
-    pub fn parse_statement(&mut self, is_global: bool, is_in_implement_block: bool, allow_empty: bool) -> crate::Result<Option<Box<Node>>> {
+    pub fn parse_statement(
+        &mut self,
+        context: &mut GlobalContext,
+        is_global: bool,
+        is_in_implement_block: bool,
+        allow_empty: bool,
+    ) -> crate::Result<Option<Box<Node>>> {
+        // Most statement types can be detected simply by the first token
         match self.current_token() {
             Some(Token::Semicolon) if allow_empty => {
                 self.scan_token()?;
                 // Returning None would imply that the end of the file was reached, so recursively try to parse a statement instead
-                self.parse_statement(is_global, is_in_implement_block, allow_empty)
+                self.parse_statement(context, is_global, is_in_implement_block, allow_empty)
             }
             Some(Token::Let) => {
                 self.scan_token()?;
@@ -454,6 +473,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         name,
                         value_type,
                         value,
+                        global_register: None,
                     })))
                 }
                 else {
@@ -482,6 +502,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         value_type,
                         is_mutable,
                         value,
+                        global_register: None,
                     })))
                 }
             }
@@ -493,10 +514,10 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.scan_token()?;
 
                 let mut parameters = Vec::new();
-                let mut is_varargs = false;
+                let mut is_variadic = false;
                 while !(matches!(self.current_token(), Some(Token::ParenRight))) {
                     if let Some(Token::Dot2) = self.current_token() {
-                        is_varargs = true;
+                        is_variadic = true;
                         self.scan_token()?;
                         // The '..' for variadic arguments must be the end of the function signature
                         self.expect_token(&[Token::ParenRight])?;
@@ -516,7 +537,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.scan_token()?;
                     let parameter_type = self.parse_type(Some(&[Token::Comma, Token::ParenRight]))?;
 
-                    parameters.push(FunctionParameter {
+                    parameters.push(FunctionParameterNode {
                         name: parameter_name,
                         type_node: parameter_type,
                         is_mutable,
@@ -535,14 +556,15 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.parse_type(Some(&[Token::CurlyLeft, Token::Semicolon]))?
                 } else {
                     TypeNode::Path {
-                        segments: vec![PathSegment::PrimitiveType(crate::sema::PrimitiveType {
+                        segments: vec![PathSegment::PrimitiveType(PrimitiveType {
                             name: "void",
-                            handle: crate::sema::TypeHandle::VOID
+                            handle: TypeHandle::VOID
                         })],
                     }
                 };
+
                 let body = if let Some(Token::CurlyLeft) = self.current_token() {
-                    self.parse_statement(false, is_in_implement_block, false)?
+                    self.parse_statement(context, false, is_in_implement_block, false)?
                 } else {
                     self.scan_token()?;
                     None
@@ -551,14 +573,19 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 Ok(Some(Box::new(Node::Function {
                     name,
                     parameters,
-                    is_variadic: is_varargs,
+                    is_variadic,
                     return_type,
                     body,
+                    global_register: None,
                 })))
             }
             Some(Token::Struct) if is_global && !is_in_implement_block => {
                 self.scan_token()?;
                 let name = self.expect_identifier()?;
+
+                let self_type = context.outline_struct(name.clone())?;
+                context.set_self_type(self_type);
+
                 self.scan_token()?;
                 self.expect_token(&[Token::CurlyLeft, Token::Semicolon])?;
                 let members = if let Some(Token::CurlyLeft) = self.current_token() {
@@ -571,7 +598,11 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         self.expect_token(&[Token::Colon])?;
                         self.scan_token()?;
                         let member_type = self.parse_type(Some(&[Token::Comma, Token::CurlyRight]))?;
-                        members.push((member_name, member_type));
+
+                        members.push(StructureMemberNode {
+                            name: member_name,
+                            type_node: member_type,
+                        });
 
                         if let Some(Token::Comma) = self.current_token() {
                             self.scan_token()?;
@@ -586,9 +617,12 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     None
                 };
 
+                context.unset_self_type();
+
                 Ok(Some(Box::new(Node::Structure {
                     name,
                     members,
+                    self_type,
                 })))
             }
             Some(Token::Implement) if is_global && !is_in_implement_block => {
@@ -608,11 +642,17 @@ impl<'a, T: BufRead> Parser<'a, T> {
                             break;
                         }
                         None => {
-                            return Err(Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }));
+                            return Err(Box::new(crate::Error::ExpectedClosingBracket {
+                                span: self.current_span(),
+                                bracket: Token::CurlyRight,
+                            }));
                         }
                         _ => {
-                            let statement = self.parse_statement(true, true, false)?
-                                .ok_or_else(|| Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }))?;
+                            let statement = self.parse_statement(context, true, true, false)?
+                                .ok_or_else(|| Box::new(crate::Error::ExpectedClosingBracket {
+                                    span: self.current_span(),
+                                    bracket: Token::CurlyRight,
+                                }))?;
                             statements.push(statement);
                         }
                     }
@@ -630,6 +670,8 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.expect_token(&[Token::CurlyLeft])?;
                 self.scan_token()?;
 
+                let namespace = context.enter_module_outline(&name)?;
+
                 let mut statements = Vec::new();
                 loop {
                     while let Some(Token::Semicolon) = self.current_token() {
@@ -645,23 +687,26 @@ impl<'a, T: BufRead> Parser<'a, T> {
                             return Err(Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }));
                         }
                         _ => {
-                            let statement = self.parse_statement(true, false, false)?
+                            let statement = self.parse_statement(context, true, false, false)?
                                 .ok_or_else(|| Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }))?;
                             statements.push(statement);
                         }
                     }
                 }
-                
+
+                context.exit_module();
+
                 Ok(Some(Box::new(Node::Module {
                     name,
                     statements,
+                    namespace,
                 })))
             }
             Some(Token::Import) if is_global && !is_in_implement_block => {
                 self.scan_token()?;
                 let segments = self.parse_path(None)?;
                 self.expect_token(&[Token::As, Token::Semicolon])?;
-                
+
                 let mut alias = None;
                 if let Some(Token::As) = self.current_token() {
                     self.scan_token()?;
@@ -670,7 +715,14 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.expect_token(&[Token::Semicolon])?;
                 }
                 self.scan_token()?;
-                
+
+                let path = context.get_absolute_path(&segments)?;
+                // Establish an alias symbol in the current module corresponding to this import
+                context.current_module_info_mut().define(
+                    alias.as_deref().unwrap_or(path.tail_name().unwrap()),
+                    Symbol::Alias(path.clone()),
+                )?;
+
                 Ok(Some(Box::new(Node::Import {
                     segments,
                     alias,
@@ -705,11 +757,17 @@ impl<'a, T: BufRead> Parser<'a, T> {
                             break;
                         }
                         None => {
-                            return Err(Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }));
+                            return Err(Box::new(crate::Error::ExpectedClosingBracket {
+                                span: self.current_span(),
+                                bracket: Token::CurlyRight,
+                            }));
                         }
                         _ => {
-                            let statement = self.parse_statement(is_global, is_in_implement_block, false)?
-                                .ok_or_else(|| Box::new(crate::Error::ExpectedClosingBracket { span: self.current_span(), bracket: Token::CurlyRight }))?;
+                            let statement = self.parse_statement(context, is_global, is_in_implement_block, false)?
+                                .ok_or_else(|| Box::new(crate::Error::ExpectedClosingBracket {
+                                    span: self.current_span(),
+                                    bracket: Token::CurlyRight,
+                                }))?;
                             statements.push(statement);
                         }
                     }
@@ -725,14 +783,18 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.scan_token()?;
                 let condition = self.parse_expression(None, &[Token::ParenRight])?;
                 self.scan_token()?;
-                let consequent = self.parse_statement(is_global, is_in_implement_block, false)?
-                    .ok_or_else(|| Box::new(crate::Error::ExpectedStatement { span: self.current_span() }))?;
+                let consequent = self.parse_statement(context, is_global, is_in_implement_block, false)?
+                    .ok_or_else(|| Box::new(crate::Error::ExpectedStatement {
+                        span: self.current_span(),
+                    }))?;
                 let alternative;
                 if let Some(Token::Else) = self.current_token() {
                     self.scan_token()?;
-                    alternative = self.parse_statement(is_global, is_in_implement_block, false)?;
+                    alternative = self.parse_statement(context, is_global, is_in_implement_block, false)?;
                     if alternative.is_none() {
-                        return Err(Box::new(crate::Error::ExpectedStatement { span: self.current_span() }));
+                        return Err(Box::new(crate::Error::ExpectedStatement {
+                            span: self.current_span(),
+                        }));
                     }
                 }
                 else {
@@ -746,7 +808,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 })))
             }
             Some(Token::Else) => {
-                Err(Box::new(crate::Error::UnexpectedElse { span: self.current_span() }))
+                Err(Box::new(crate::Error::UnexpectedElse {
+                    span: self.current_span(),
+                }))
             }
             Some(Token::While) => {
                 self.scan_token()?;
@@ -754,8 +818,10 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.scan_token()?;
                 let condition = self.parse_expression(None, &[Token::ParenRight])?;
                 self.scan_token()?;
-                let body = self.parse_statement(is_global, is_in_implement_block, false)?
-                    .ok_or_else(|| Box::new(crate::Error::ExpectedStatement { span: self.current_span() }))?;
+                let body = self.parse_statement(context, is_global, is_in_implement_block, false)?
+                    .ok_or_else(|| Box::new(crate::Error::ExpectedStatement {
+                        span: self.current_span(),
+                    }))?;
 
                 Ok(Some(Box::new(Node::While {
                     condition,
@@ -801,7 +867,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
         }
     }
 
-    pub fn parse_top_level_statement(&mut self) -> crate::Result<Option<Box<Node>>> {
-        self.parse_statement(true, false, true)
+    pub fn parse_top_level_statement(&mut self, context: &mut GlobalContext) -> crate::Result<Option<Box<Node>>> {
+        self.parse_statement(context, true, false, true)
     }
 }

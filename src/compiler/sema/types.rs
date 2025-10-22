@@ -33,6 +33,7 @@ pub struct FunctionSignature {
 
 impl FunctionSignature {
     pub fn new(return_type: TypeHandle, parameter_types: Box<[TypeHandle]>, is_variadic: bool) -> Self {
+
         Self {
             return_type,
             parameter_types,
@@ -54,7 +55,8 @@ impl FunctionSignature {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum TypeInfo {
+pub enum TypeRepr {
+    Unresolved,
     Meta,
     Never,
     Void,
@@ -75,35 +77,32 @@ pub enum TypeInfo {
         name: String,
         members: Box<[StructureMember]>,
     },
-    Function {
-        signature: FunctionSignature,
-    },
-    Undefined {
+    ForeignStructure {
         name: String,
     },
-    Alias {
-        target: TypeHandle,
+    Function {
+        signature: FunctionSignature,
     },
 }
 
 /// Order of elements is important! If anything is changed here, `TypeHandle::*` may need to be
 /// changed as well.
-pub(super) const PRIMITIVE_TYPES: &[(&str, TypeInfo)] = &[
-    ("<meta>", TypeInfo::Meta),
-    ("never", TypeInfo::Never),
-    ("void", TypeInfo::Void),
-    ("bool", TypeInfo::Boolean),
-    ("i8", TypeInfo::Integer { size: 1, signed: true }),
-    ("u8", TypeInfo::Integer { size: 1, signed: false }),
-    ("i16", TypeInfo::Integer { size: 2, signed: true }),
-    ("u16", TypeInfo::Integer { size: 2, signed: false }),
-    ("i32", TypeInfo::Integer { size: 4, signed: true }),
-    ("u32", TypeInfo::Integer { size: 4, signed: false }),
-    ("i64", TypeInfo::Integer { size: 8, signed: true }),
-    ("u64", TypeInfo::Integer { size: 8, signed: false }),
+pub(super) const PRIMITIVE_TYPES: &[(&str, TypeRepr)] = &[
+    ("<meta>", TypeRepr::Meta),
+    ("never", TypeRepr::Never),
+    ("void", TypeRepr::Void),
+    ("bool", TypeRepr::Boolean),
+    ("i8", TypeRepr::Integer { size: 1, signed: true }),
+    ("u8", TypeRepr::Integer { size: 1, signed: false }),
+    ("i16", TypeRepr::Integer { size: 2, signed: true }),
+    ("u16", TypeRepr::Integer { size: 2, signed: false }),
+    ("i32", TypeRepr::Integer { size: 4, signed: true }),
+    ("u32", TypeRepr::Integer { size: 4, signed: false }),
+    ("i64", TypeRepr::Integer { size: 8, signed: true }),
+    ("u64", TypeRepr::Integer { size: 8, signed: false }),
 ];
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct PrimitiveType {
     pub handle: TypeHandle,
     pub name: &'static str,
@@ -132,7 +131,7 @@ impl TypeHandle {
     pub const U32: Self = Self::new(9);
     pub const I64: Self = Self::new(10);
     pub const U64: Self = Self::new(11);
-    
+
     pub fn primitive(type_name: &str) -> Option<PrimitiveType> {
         PRIMITIVE_TYPES.iter().enumerate().find_map(|(registry_index, &(name, _))| {
             (name == type_name).then_some(PrimitiveType {
@@ -141,21 +140,21 @@ impl TypeHandle {
             })
         })
     }
-    
+
     pub const fn new(registry_index: usize) -> Self {
         Self(unsafe { NonZeroUsize::new_unchecked(registry_index + 1) })
     }
-    
+
     pub const fn registry_index(self) -> usize {
         self.0.get() - 1
     }
-    
-    pub fn info(self, context: &GlobalContext) -> &TypeInfo {
-        context.type_info(self)
+
+    pub fn repr(self, context: &GlobalContext) -> &TypeRepr {
+        context.type_repr(self)
     }
 
-    pub fn identifier(self, context: &GlobalContext) -> &str {
-        context.type_identifier(self)
+    pub fn path(self, context: &GlobalContext) -> &AbsolutePath {
+        context.type_path(self)
     }
 
     pub fn llvm_syntax(self, context: &GlobalContext) -> &str {

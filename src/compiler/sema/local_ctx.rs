@@ -25,54 +25,54 @@ impl LocalContext {
             next_basic_block_id: 0,
         }
     }
-    
+
     pub fn function_identifier(&self) -> &str {
         &self.function_identifier
     }
-    
+
     pub fn return_type(&self) -> TypeHandle {
         self.return_type
     }
-    
+
     pub fn break_label(&self) -> Option<&Label> {
         self.break_stack.last()
     }
-    
+
     pub fn continue_label(&self) -> Option<&Label> {
         self.continue_stack.last()
     }
-    
+
     pub fn push_break_label(&mut self, label: Label) {
         self.break_stack.push(label);
     }
-    
+
     pub fn pop_break_label(&mut self) {
         self.break_stack.pop().expect("attempted to pop from empty break stack");
     }
-    
+
     pub fn push_continue_label(&mut self, label: Label) {
         self.continue_stack.push(label);
     }
-    
+
     pub fn pop_continue_label(&mut self) {
         self.continue_stack.pop().expect("attempted to pop from empty continue stack");
     }
-    
+
     pub fn enter_scope(&mut self) {
         self.scope_stack.push(HashMap::new());
     }
-    
+
     pub fn exit_scope(&mut self) {
         self.scope_stack.pop();
         self.scope_stack.last().expect("attempted to exit the root local scope");
     }
-    
+
     pub fn find_symbol(&self, name: &str) -> Option<&Value> {
         self.scope_stack.iter()
             .rev()
             .find_map(|scope| scope.get(name))
     }
-    
+
     pub fn define_indirect_symbol(&mut self, name: String, pointer_type: TypeHandle, pointee_type: TypeHandle) -> Register {
         let version = *self.symbol_versions.entry(name.clone())
             .and_modify(|version| *version += 1)
@@ -86,9 +86,9 @@ impl LocalContext {
             pointer: Box::new(Value::Register(register.clone())),
             pointee_type,
         };
-        
+
         self.define_symbol(name, value);
-        
+
         register
     }
 
@@ -110,7 +110,7 @@ impl LocalContext {
 
         register
     }
-    
+
     pub fn define_symbol(&mut self, name: String, value: Value) {
         self.scope_stack.last_mut().unwrap().insert(name, value);
     }

@@ -1,6 +1,5 @@
 use crate::sema::*;
 
-use std::collections::{BTreeSet, BTreeMap};
 use std::io::Write;
 
 macro_rules! emit {
@@ -13,10 +12,6 @@ pub struct Emitter<W: Write> {
     filename: String,
     writer: W,
     is_global: bool,
-    defined_functions: BTreeSet<Register>,
-    queued_function_declarations: BTreeMap<Register, String>,
-    defined_types: BTreeSet<String>,
-    declared_types: BTreeSet<String>,
     queued_global_declarations: Vec<String>,
 }
 
@@ -34,10 +29,6 @@ impl<W: Write> Emitter<W> {
             filename,
             writer,
             is_global: true,
-            defined_functions: BTreeSet::new(),
-            queued_function_declarations: BTreeMap::new(),
-            defined_types: BTreeSet::new(),
-            declared_types: BTreeSet::new(),
             queued_global_declarations: Vec::new(),
         }
     }
@@ -55,61 +46,36 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_postamble(&mut self) -> crate::Result<()> {
-        // Write all queued type declarations
-        for type_syntax in &self.declared_types {
-            emit!(self, "{type_syntax} = type opaque\n\n")?;
-        }
-        // Write all queued function declarations
-        for declaration in self.queued_function_declarations.values() {
-            emit!(self, "{declaration}\n\n")?;
-        }
-        // Dequeue all declarations which were just written
-        self.declared_types.clear();
-        self.queued_function_declarations.clear();
-
+        // TODO: metadata
         Ok(())
     }
 
-    pub fn queue_function_declaration(&mut self, function: &Register, context: &GlobalContext) {
-        if !self.defined_functions.contains(function) && !self.queued_function_declarations.contains_key(function) {
-            let TypeInfo::Function { signature } = function.get_type().info(context) else {
-                panic!("{} is not a valid function", function.llvm_syntax());
-            };
-            
-            let mut declaration = format!(
-                "declare {} {}(",
-                signature.return_type().llvm_syntax(context),
-                function.llvm_syntax(),
-            );
+    pub fn emit_function_declaration(&mut self, function: &Register, context: &GlobalContext) -> crate::Result<()> {
+        let TypeRepr::Function { signature } = function.get_type().repr(context) else {
+            panic!("{} is not a valid function", function.llvm_syntax());
+        };
 
-            let mut parameters_iter = signature.parameter_types().iter();
-            if let Some(&parameter_type) = parameters_iter.next() {
-                declaration.push_str(parameter_type.llvm_syntax(context));
-                for &parameter_type in parameters_iter {
-                    declaration.push_str(", ");
-                    declaration.push_str(parameter_type.llvm_syntax(context));
-                }
-                if signature.is_variadic() {
-                    declaration.push_str(", ...");
-                }
-            }
-            else if signature.is_variadic() {
-                declaration.push_str("...");
-            }
-            
-            declaration.push(')');
+        emit!(self, "declare {} {}(", signature.return_type().llvm_syntax(context), function.llvm_syntax())?;
 
-            // Enqueue the declaration which was just generated, which will be written before the module postamble
-            // --that is, unless the function is defined later in the file
-            self.queued_function_declarations.insert(function.clone(), declaration);
+        let mut parameters_iter = signature.parameter_types().iter().copied();
+        if let Some(parameter_type) = parameters_iter.next() {
+            emit!(self, "{}", parameter_type.llvm_syntax(context))?;
+            for parameter_type in parameters_iter {
+                emit!(self, ", {}", parameter_type.llvm_syntax(context))?;
+            }
+            if signature.is_variadic() {
+                emit!(self, ", ...")?;
+            }
         }
+        else if signature.is_variadic() {
+            emit!(self, "...")?;
+        }
+
+        emit!(self, ")\n\n")
     }
 
     pub fn emit_function_enter(&mut self, function: &Register, parameters: &[Register], context: &GlobalContext) -> crate::Result<()> {
-        // Remove any forward declarations of this function from the declaration queue
-        self.queued_function_declarations.remove(function);
-
-        let TypeInfo::Function { signature } = function.get_type().info(context) else {
+        let TypeRepr::Function { signature } = function.get_type().repr(context) else {
             panic!("{} is not a valid function", function.llvm_syntax());
         };
 
@@ -133,7 +99,7 @@ impl<W: Write> Emitter<W> {
             panic!("entering a function while already within a function");
         }
         self.is_global = false;
-        
+
         emit!(self, ") {{\n")
     }
 
@@ -141,7 +107,7 @@ impl<W: Write> Emitter<W> {
         emit!(self, "}}\n\n")?;
 
         self.is_global = true;
-        
+
         // Write all constant declarations queued for writing
         for constant in &self.queued_global_declarations {
             emit!(self, "{constant}\n")?;
@@ -155,26 +121,19 @@ impl<W: Write> Emitter<W> {
         Ok(())
     }
 
-    pub fn queue_type_declaration(&mut self, type_handle: TypeHandle, context: &GlobalContext) {
+    pub fn emit_type_declaration(&mut self, type_handle: TypeHandle, context: &GlobalContext) -> crate::Result<()> {
         let syntax = type_handle.llvm_syntax(context);
 
-        if !self.defined_types.contains(syntax) && !self.declared_types.contains(syntax) {
-            // Enqueue the declaration, which will be written before the module postamble
-            // --that is, unless the type is defined later in the file
-            self.declared_types.insert(syntax.into());
-        }
+        emit!(self, "{syntax} = type opaque\n\n")
     }
 
     pub fn emit_type_definition(&mut self, type_handle: TypeHandle, context: &GlobalContext) -> crate::Result<()> {
         let syntax = type_handle.llvm_syntax(context);
 
-        // Remove any forward declarations of this type from the declaration queue
-        self.declared_types.remove(syntax);
-
-        let TypeInfo::Structure { members, .. } = type_handle.info(context) else {
-            panic!("{} is not a structure type", type_handle.identifier(context));
+        let TypeRepr::Structure { members, .. } = type_handle.repr(context) else {
+            panic!("{} is not a structure type", type_handle.path(context));
         };
-        
+
         emit!(self, "{syntax} = type ")?;
         let mut members_iter = members.iter();
         if let Some(&StructureMember { member_type, .. }) = members_iter.next() {
@@ -245,10 +204,10 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_local_allocation(&mut self, pointer: &Register, context: &GlobalContext) -> crate::Result<()> {
-        let &TypeInfo::Pointer { pointee_type, .. } = pointer.get_type().info(context) else {
+        let &TypeRepr::Pointer { pointee_type, .. } = pointer.get_type().repr(context) else {
             panic!("{} is not a pointer", pointer.llvm_syntax());
         };
-        
+
         emit!(self, "\t{} = alloca {}\n", pointer.llvm_syntax(), pointee_type.llvm_syntax(context))
     }
 
@@ -275,10 +234,10 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_get_element_pointer(&mut self, result: &Register, pointer: &Value, indices: &[Value], context: &GlobalContext) -> crate::Result<()> {
-        let &TypeInfo::Pointer { pointee_type, .. } = pointer.get_type().info(context) else {
+        let &TypeRepr::Pointer { pointee_type, .. } = pointer.get_type().repr(context) else {
             panic!("{} is not a pointer", pointer.llvm_syntax(context));
         };
-        
+
         emit!(
             self,
             "\t{} = getelementptr inbounds {}, {} {}",
@@ -389,15 +348,15 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_extension(&mut self, result: &Register, value: &Value, context: &GlobalContext) -> crate::Result<()> {
-        match value.get_type().info(context) {
-            TypeInfo::Integer { signed: true, .. } => self.emit_sign_extension(result, value, context),
+        match value.get_type().repr(context) {
+            TypeRepr::Integer { signed: true, .. } => self.emit_sign_extension(result, value, context),
             _ => self.emit_zero_extension(result, value, context)
         }
     }
 
     pub fn emit_negation(&mut self, result: &Register, operand: &Value, context: &GlobalContext) -> crate::Result<()> {
-        match operand.get_type().info(context) {
-            TypeInfo::Integer { signed: true, .. } => emit!(
+        match operand.get_type().repr(context) {
+            TypeRepr::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = sub nsw {} 0, {}\n",
                 result.llvm_syntax(),
@@ -415,8 +374,8 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_addition(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
-        match lhs.get_type().info(context) {
-            TypeInfo::Integer { signed: true, .. } => emit!(
+        match lhs.get_type().repr(context) {
+            TypeRepr::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = add nsw {} {}, {}\n",
                 result.llvm_syntax(),
@@ -436,8 +395,8 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_subtraction(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
-        match lhs.get_type().info(context) {
-            TypeInfo::Integer { signed: true, .. } => emit!(
+        match lhs.get_type().repr(context) {
+            TypeRepr::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = sub nsw {} {}, {}\n",
                 result.llvm_syntax(),
@@ -457,8 +416,8 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_multiplication(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
-        match lhs.get_type().info(context) {
-            TypeInfo::Integer { signed: true, .. } => emit!(
+        match lhs.get_type().repr(context) {
+            TypeRepr::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = mul nsw {} {}, {}\n",
                 result.llvm_syntax(),
@@ -478,8 +437,8 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_division(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
-        match lhs.get_type().info(context) {
-            TypeInfo::Integer { signed: true, .. } => emit!(
+        match lhs.get_type().repr(context) {
+            TypeRepr::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = sdiv {} {}, {}\n",
                 result.llvm_syntax(),
@@ -499,8 +458,8 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_remainder(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
-        match lhs.get_type().info(context) {
-            TypeInfo::Integer { signed: true, .. } => emit!(
+        match lhs.get_type().repr(context) {
+            TypeRepr::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = srem {} {}, {}\n",
                 result.llvm_syntax(),
@@ -531,8 +490,8 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_shift_right(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
-        match lhs.get_type().info(context) {
-            TypeInfo::Integer { signed: true, .. } => emit!(
+        match lhs.get_type().repr(context) {
+            TypeRepr::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = ashr {} {}, {}\n",
                 result.llvm_syntax(),
@@ -585,8 +544,8 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_inversion(&mut self, result: &Register, operand: &Value, context: &GlobalContext) -> crate::Result<()> {
-        match operand.get_type().info(context) {
-            TypeInfo::Boolean => emit!(
+        match operand.get_type().repr(context) {
+            TypeRepr::Boolean => emit!(
                 self,
                 "\t{} = xor {} {}, true\n",
                 result.llvm_syntax(),
@@ -626,8 +585,8 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_cmp_less_than(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
-        match lhs.get_type().info(context) {
-            TypeInfo::Integer { signed: true, .. } => emit!(
+        match lhs.get_type().repr(context) {
+            TypeRepr::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = icmp slt {} {}, {}\n",
                 result.llvm_syntax(),
@@ -647,8 +606,8 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_cmp_less_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
-        match lhs.get_type().info(context) {
-            TypeInfo::Integer { signed: true, .. } => emit!(
+        match lhs.get_type().repr(context) {
+            TypeRepr::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = icmp sle {} {}, {}\n",
                 result.llvm_syntax(),
@@ -668,8 +627,8 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_cmp_greater_than(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
-        match lhs.get_type().info(context) {
-            TypeInfo::Integer { signed: true, .. } => emit!(
+        match lhs.get_type().repr(context) {
+            TypeRepr::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = icmp sgt {} {}, {}\n",
                 result.llvm_syntax(),
@@ -689,8 +648,8 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_cmp_greater_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
-        match lhs.get_type().info(context) {
-            TypeInfo::Integer { signed: true, .. } => emit!(
+        match lhs.get_type().repr(context) {
+            TypeRepr::Integer { signed: true, .. } => emit!(
                 self,
                 "\t{} = icmp sge {} {}, {}\n",
                 result.llvm_syntax(),
@@ -710,7 +669,7 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_function_call(&mut self, result: Option<&Register>, callee: &Value, arguments: &[Value], context: &GlobalContext) -> crate::Result<()> {
-        let TypeInfo::Function { signature } = callee.get_type().info(context) else {
+        let TypeRepr::Function { signature } = callee.get_type().repr(context) else {
             panic!("{} is not a function", callee.llvm_syntax(context));
         };
 
@@ -719,7 +678,7 @@ impl<W: Write> Emitter<W> {
             emit!(self, "{} = ", result.llvm_syntax())?;
         }
         emit!(self, "call {}(", signature.return_type().llvm_syntax(context))?;
-        
+
         let mut parameters_iter = signature.parameter_types().iter();
         if let Some(&parameter_type) = parameters_iter.next() {
             emit!(self, "{}", parameter_type.llvm_syntax(context))?;
@@ -733,7 +692,7 @@ impl<W: Write> Emitter<W> {
         else if signature.is_variadic() {
             emit!(self, "...")?;
         }
-        
+
         emit!(self, ") {}(", callee.llvm_syntax(context))?;
 
         let mut arguments_iter = arguments.iter();

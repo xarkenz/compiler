@@ -1,0 +1,23 @@
+implement [util::AlsoInt; 2] {
+    function x(self: *Self) -> util::Int {
+        return self[0];
+    }
+}
+
+import <[i32; 2]>::x;
+
+import <[util::Int; 2]>::x as get_x;
+
+import <[util::AlsoInt; 2]>::y as get_y;
+
+implement [util::Int; 2] {
+    function y(self: *Self) -> util::AlsoInt {
+        return self[1];
+    }
+}
+
+module util {
+    import Int as AlsoInt;
+
+    import i32 as Int;
+}

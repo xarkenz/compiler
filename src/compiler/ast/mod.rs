@@ -1,6 +1,6 @@
 pub mod parse;
 
-use crate::sema::PointerSemantics;
+use crate::sema::{NamespaceHandle, PointerSemantics, Register, TypeHandle};
 use crate::token::*;
 
 use std::fmt;
@@ -259,6 +259,7 @@ impl BinaryOperation {
     }
 }
 
+// TODO: star import
 #[derive(Clone, Debug)]
 pub enum PathSegment {
     Name(String),
@@ -350,10 +351,16 @@ impl fmt::Display for TypeNode {
 }
 
 #[derive(Clone, Debug)]
-pub struct FunctionParameter {
+pub struct FunctionParameterNode {
     pub name: String,
     pub type_node: TypeNode,
     pub is_mutable: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct StructureMemberNode {
+    pub name: String,
+    pub type_node: TypeNode,
 }
 
 #[derive(Clone, Debug)]
@@ -405,22 +412,26 @@ pub enum Node {
         value_type: TypeNode,
         is_mutable: bool,
         value: Option<Box<Node>>,
+        global_register: Option<Register>,
     },
     Constant {
         name: String,
         value_type: TypeNode,
         value: Box<Node>,
+        global_register: Option<Register>,
     },
     Function {
         name: String,
-        parameters: Vec<FunctionParameter>,
+        parameters: Vec<FunctionParameterNode>,
         is_variadic: bool,
         return_type: TypeNode,
         body: Option<Box<Node>>,
+        global_register: Option<Register>,
     },
     Structure {
         name: String,
-        members: Option<Vec<(String, TypeNode)>>,
+        members: Option<Vec<StructureMemberNode>>,
+        self_type: TypeHandle,
     },
     Implement {
         self_type: TypeNode,
@@ -429,6 +440,7 @@ pub enum Node {
     Module {
         name: String,
         statements: Vec<Box<Node>>,
+        namespace: NamespaceHandle,
     },
     Import {
         segments: Vec<PathSegment>,
@@ -533,7 +545,7 @@ impl fmt::Display for Node {
                     write!(f, " return;")
                 }
             }
-            Self::Let { name, value_type, is_mutable, value } => {
+            Self::Let { name, value_type, is_mutable, value, .. } => {
                 if *is_mutable {
                     write!(f, " let mut {name}: {value_type}")?;
                 }
@@ -547,18 +559,18 @@ impl fmt::Display for Node {
                     write!(f, ";")
                 }
             }
-            Self::Constant { name, value_type, value } => {
+            Self::Constant { name, value_type, value, .. } => {
                 write!(f, " let const {name}: {value_type} = {value};")
             }
-            Self::Function { name, parameters, is_variadic, return_type, body } => {
+            Self::Function { name, parameters, is_variadic, return_type, body, .. } => {
                 write!(f, " function {name}(")?;
                 let mut parameters_iter = parameters.iter();
-                if let Some(FunctionParameter { name: parameter_name, type_node: parameter_type, is_mutable }) = parameters_iter.next() {
+                if let Some(FunctionParameterNode { name: parameter_name, type_node: parameter_type, is_mutable }) = parameters_iter.next() {
                     if *is_mutable {
                         write!(f, "mut ")?;
                     }
                     write!(f, "{parameter_name}: {parameter_type}")?;
-                    for FunctionParameter { name: parameter_name, type_node: parameter_type, is_mutable } in parameters_iter {
+                    for FunctionParameterNode { name: parameter_name, type_node: parameter_type, is_mutable } in parameters_iter {
                         write!(f, ", ")?;
                         if *is_mutable {
                             write!(f, "mut ")?;
@@ -579,13 +591,13 @@ impl fmt::Display for Node {
                     write!(f, ") -> {return_type};")
                 }
             }
-            Self::Structure { name, members } => {
+            Self::Structure { name, members, .. } => {
                 if let Some(members) = members {
                     write!(f, " struct {name} {{")?;
                     let mut members_iter = members.iter();
-                    if let Some((member_name, member_type)) = members_iter.next() {
+                    if let Some(StructureMemberNode { name: member_name, type_node: member_type, .. }) = members_iter.next() {
                         write!(f, " {member_name}: {member_type}")?;
-                        for (member_name, member_type) in members_iter {
+                        for StructureMemberNode { name: member_name, type_node: member_type, .. } in members_iter {
                             write!(f, ", {member_name}: {member_type}")?;
                         }
                         write!(f, " ")?;
@@ -603,7 +615,7 @@ impl fmt::Display for Node {
                 }
                 write!(f, " }}")
             }
-            Self::Module { name, statements } => {
+            Self::Module { name, statements, .. } => {
                 write!(f, " module {name} {{")?;
                 for statement in statements {
                     write!(f, "{statement}")?;

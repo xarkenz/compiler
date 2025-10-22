@@ -1,54 +1,157 @@
-function malloc(size_bytes: u64) -> *own void;
-function free(alloc: *own void);
-function printf(format: *[u8], ..) -> u32;
+foreign function printf(format: *[u8], ..) -> u32;
+// namespace ::module {printf: value(function(*[u8], ..) -> u32)}
+
+function main() -> i32 {
+    // namespace ::module {printf: _, main: value(function() -> i32)}
+
+    let vector: [i32; 2] = [4, 8];
+    printf("(%d, %d)\n", vector.x(), vector.y());
+    // namespace <[i32; 2]> {x: undef, y: undef}
+
+    return 0;
+}
 
 implement [i32; 2] {
     function x(self: *Self) -> i32 {
+        // namespace <[i32; 2]> {x: value(function(*[i32; 2]) -> i32), y: _}
+
         return self[0];
     }
 
     function y(self: *Self) -> i32 {
+        // namespace <[i32; 2]> {x: _, y: value(function(*[i32; 2]) -> i32)}
+
         return self[1];
     }
 }
 
-function main() -> i32 {
-    let vector: [i32; 2] = [4, 8];
-    printf("(%d, %d)\n", vector.x(), vector.y());
-    return 0;
-}
+struct First {}
+// type $0: struct First {}
+// namespace ::module {printf: _, main: _, First: type($0)}
 
 module thing {
-    // import super::*;
+    // namespace ::module {printf: _, main: _, First: _, thing: module}
+
+    import super::*;
+    // namespace ::module {printf: _, main: _, First: _, thing: _} -> ::thing
+    // namespace ::thing {printf: weak(::printf), main: weak(::main), First: weak(::First), thing: weak(::thing)}
 
     struct Thing {
-        // x: *own Test,
+        x: *Test,
+        // type $1: undef
+        // namespace ::thing {printf: _, main: _, First: _, thing: _, Test: undeftype($1)}
+
+        y: *First,
+        // type $2: alias $0
+        // namespace ::thing {printf: _, main: _, First: weaktype(::First, $2), thing: _, Test: _}
+
+        z: *Self,
+        // type $3: undef
+        // namespace ::thing {printf: _, main: _, First: _, thing: _, Test: _, Thing: undeftype($3)}
     }
+    // type $3: struct Thing {x: *$1, y: *$2, z: *$3}
+    // namespace ::thing {printf: _, main: _, First: _, thing: _, Test: _, Thing: type($3)}
 }
 
 struct Test {
-    // a: *own test::Test,
-    // b: *own test::test::Test,
-    c: *own thing::Thing,
+    a: *test::Test,
+    // namespace ::module {printf: _, main: _, First: _, thing: _, test: undef} -> ::thing
+    // namespace ::thing {printf: _, main: _, First: _, thing: _, Test: _, Thing: _, test: weak(::test)}
+    // type $4: undef
+    // namespace ::test {Test: undeftype($4)}
+
+    b: *test::test::Test,
+    // namespace ::test {Test: _, test: undef}
+    // type $5: undef
+    // namespace ::test::test {Test: undeftype($5)}
+
+    c: *thing::Thing,
 }
+// type $6: struct Test {a: *$4, b: *$5, c: *$3}
+// namespace ::module {printf: _, main: _, First: _, thing: _, test: _, Test: type($6)} -> ::thing
+// type $1: alias $6
+// namespace ::thing {printf: _, main: _, First: _, thing: _, Test: weaktype(::Test, $1), Thing: _, test: _}
 
 module test {
+    // namespace ::module {printf: _, main: _, First: _, thing: _, test: module, Test: _} -> ::thing
+
     import super::thing::Thing;
+    // namespace ::test {Test: _, test: _, Thing: alias(::thing::Thing)}
 
     struct Test {
-        a: *own super::Test,
-        // b: *own test::Test,
-        c: *own Thing,
+        a: *super::Test,
+        b: *test::Test,
+        c: *Thing,
+        // type $7: alias $3
+        // namespace ::test {Test: _, test: _, Thing: aliastype(::thing::Thing, $7)}
     }
+    // type $4: struct Test {a: *$6, b: *$5, c: *$7}
+    // namespace ::test {Test: type($4), test: _, Thing: _}
 
     module test {
+        // namespace ::test {Test: _, test: module, Thing: _}
+
         import super::Thing;
+        // namespace ::test::test {Test: _, Thing: alias(::test::Thing)}
+
         import super::Test as SuperTest;
+        // namespace ::test::test {Test: _, Thing: _, SuperTest: alias(::test::Test)}
+
+        implement Test {
+            function do_thing(self: *Self, x: i32) -> i32 {
+                // namespace ::test::test::Test {do_thing: value(function(*$5, i32) -> i32)}
+
+                return x * x;
+            }
+        }
 
         struct Test {
-            a: *own super::super::Test,
-            b: *own SuperTest,
-            c: *own Thing,
+            a: *super::super::Test,
+            b: *SuperTest,
+            // type $8: alias $4
+            // namespace ::test::test {Test: _, Thing: _, SuperTest: aliastype(::test::Test, $8)}
+
+            c: *Thing,
+            // type $9: alias $7
+            // namespace ::test::test {Test: _, Thing: aliastype(::test::Thing, $9), SuperTest: _}
         }
+        // type $5: struct Test {a: *$6, b: *$8, c: *$9}
+        // namespace ::test::test {Test: type($5), Thing: _, SuperTest: _}
     }
 }
+
+// TYPES
+// $0 (::First) => struct First {}
+// $1 (::thing::Test) => alias $6
+// $2 (::thing::First) => alias $0
+// $3 (::thing::Thing) => struct Thing {x: *$1, y: *$2, z: *$3}
+// $4 (::test::Test) => struct Test {a: *$6, b: *$5, c: *$7}
+// $5 (::test::test::Test) => struct Test {a: *$6, b: *$8, c: *$9}
+// $6 (::Test) => struct Test {a: *$4, b: *$5, c: *$3}
+// $7 (::test::Thing) => alias $3
+// $8 (::test::test::SuperTest) => alias $4
+// $9 (::test::test::Thing) => alias $7
+
+// SYMBOLS
+// ::First => type($0)
+// ::main => value(function() -> i32)
+// ::printf => value(function(*[u8], ..) -> u32)
+// ::Test => type($6)
+// ::test => module
+// ::test::Test => type($4)
+// ::test::Thing => aliastype(::thing::Thing, $7)
+// ::test::test => module
+// ::test::test::SuperTest => aliastype(::test::Test, $8)
+// ::test::test::Test => type($5)
+// ::test::test::Test::do_thing => value(function(*$5, i32) -> i32)
+// ::test::test::Thing => aliastype(::test::Thing, $9)
+// ::thing => module
+// ::thing::First => weaktype(::First, $2)
+// ::thing::main => weak(::main)
+// ::thing::printf => weak(::printf)
+// ::thing::Test => weaktype(::Test, $1)
+// ::thing::Thing => type($3)
+// ::thing::test => weak(::test)
+// ::thing::thing => weak(::thing)
+// <[i32; 2]>::x => value(function(*[i32; 2]) -> i32)
+// <[i32; 2]>::y => value(function(*[i32; 2]) -> i32)

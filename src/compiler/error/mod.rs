@@ -1,6 +1,5 @@
 use super::*;
 
-use std::fmt;
 use std::io::{BufRead, BufReader};
 use std::fs::File;
 
@@ -144,9 +143,6 @@ pub enum Error {
     UnexpectedElse {
         span: Span,
     },
-    UnknownTypeSize {
-        type_name: String,
-    },
     CannotMutateValue {
         type_name: String,
     },
@@ -155,13 +151,27 @@ pub enum Error {
     UndefinedSymbol {
         name: String,
     },
-    UndefinedModule {
+    UndefinedGlobalSymbol {
+        namespace: String,
         name: String,
     },
-    PartialType {
+    GlobalSymbolConflict {
+        namespace: String,
+        name: String,
+    },
+    NonTypeSymbol {
+        name: String,
+    },
+    InvalidSuper {
+        namespace: String,
+    },
+    ExpectedNamespace {
+        name: String,
+    },
+    RecursiveTypeDefinition {
         type_name: String,
     },
-    UnknownType {
+    UnknownTypeSize {
         type_name: String,
     },
     NonConstantArrayLength {
@@ -241,26 +251,12 @@ pub enum Error {
         expected_count: usize,
         got_count: usize,
     },
-    GlobalSymbolConflict {
-        name: String,
-    },
-    TypeSymbolConflict {
-        name: String,
-    },
-    FunctionSignatureConflict {
-        function_name: String,
-        old_type: String,
-        new_type: String,
-    },
-    MultipleFunctionDefinition {
-        function_name: String,
-    },
     MissingReturnStatement {
         function_name: String,
     },
     UnsupportedConstantExpression {
     },
-    SelfOutsideImplement {
+    NoSelfType {
     },
     ExpectedSelfParameter {
     },
@@ -311,8 +307,8 @@ impl Error {
     }
 }
 
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::SourceFileOpen { cause, .. } => write!(f, "unable to open file: {cause}"),
             Self::SourceFileRead { cause, .. } => write!(f, "error while reading file: {cause}"),
@@ -341,13 +337,16 @@ impl fmt::Display for Error {
             Self::ExpectedClosingBracket { bracket, .. } => write!(f, "expected closing '{bracket}'"),
             Self::ExpectedStatement { .. } => write!(f, "expected a statement"),
             Self::UnexpectedElse { .. } => write!(f, "unexpected 'else' without previous 'if'"),
-            Self::UnknownTypeSize { type_name } => write!(f, "cannot use type '{type_name}' here, as it does not have a known size at this time (did you mean to use a pointer?)"),
             Self::CannotMutateValue { type_name } => write!(f, "cannot mutate value of type '{type_name}' as it is not 'mut'"),
             Self::ExpectedLValue {} => write!(f, "expected an lvalue"),
-            Self::UndefinedSymbol { name } => write!(f, "undefined symbol '{name}'"),
-            Self::UndefinedModule { name } => write!(f, "undefined module '{name}'"),
-            Self::PartialType { type_name } => write!(f, "type '{type_name}' is declared but not defined"),
-            Self::UnknownType { type_name } => write!(f, "unrecognized type name '{type_name}'"),
+            Self::UndefinedSymbol { name } => write!(f, "symbol '{name}' is not defined"),
+            Self::UndefinedGlobalSymbol { namespace, name } => write!(f, "symbol '{name}' is not defined in namespace '{namespace}'"),
+            Self::GlobalSymbolConflict { namespace, name } => write!(f, "symbol '{name}' is defined multiple times in namespace '{namespace}'"),
+            Self::NonTypeSymbol { name } => write!(f, "'{name}' does not represent a type"),
+            Self::InvalidSuper { namespace } => write!(f, "namespace '{namespace}' has no 'super'"),
+            Self::ExpectedNamespace { name } => write!(f, "expected a module or type, got '{name}'"),
+            Self::RecursiveTypeDefinition { type_name } => write!(f, "recursive type definition for {type_name} (did you mean to use a pointer?)"),
+            Self::UnknownTypeSize { type_name } => write!(f, "cannot use type '{type_name}' here, as its size is not constant (did you mean to use a pointer?)"),
             Self::NonConstantArrayLength {} => write!(f, "array length must be constant"),
             Self::IncompatibleTypes { expected_type, got_type } => write!(f, "expected a value of type '{expected_type}', got '{got_type}' instead"),
             Self::InconvertibleTypes { original_type, target_type } => write!(f, "cannot convert from '{original_type}' to '{target_type}'"),
@@ -386,19 +385,17 @@ impl fmt::Display for Error {
             Self::ExpectedFunction { type_name } => write!(f, "expected a function, got value of type '{type_name}'"),
             Self::MissingFunctionArguments { expected_count, got_count } => write!(f, "too few arguments (expected {expected_count}, got {got_count})"),
             Self::ExtraFunctionArguments { expected_count, got_count } => write!(f, "too many arguments (expected {expected_count}, got {got_count})"),
-            Self::GlobalSymbolConflict { name } => write!(f, "global name '{name}' is already in use"),
-            Self::TypeSymbolConflict { name } => write!(f, "module or type name '{name}' is already in use"),
-            Self::FunctionSignatureConflict { function_name, old_type, new_type } => {
-                writeln!(f, "conflicting signatures for function '{function_name}':")?;
-                writeln!(f, "old: {old_type}")?;
-                write!(f, "new: {new_type}")
-            },
-            Self::MultipleFunctionDefinition { function_name } => write!(f, "multiple definitions exist for function '{function_name}'"),
             Self::MissingReturnStatement { function_name } => write!(f, "non-void function '{function_name}' could finish without returning a value"),
             Self::UnsupportedConstantExpression {} => write!(f, "unsupported feature in constant expression"),
-            Self::SelfOutsideImplement {} => write!(f, "type 'Self' can only be used inside an 'implement' block"),
+            Self::NoSelfType {} => write!(f, "keyword 'Self' can only be used inside 'implement' blocks and 'struct' definitions"),
             Self::ExpectedSelfParameter {} => write!(f, "expected a first parameter of type 'Self', '*Self', or '*mut Self'"),
             Self::ImportAliasRequired { path } => write!(f, "import '{path}' must be renamed using the syntax 'import _ as <name>'")
         }
+    }
+}
+
+impl std::fmt::Debug for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Error({self})")
     }
 }

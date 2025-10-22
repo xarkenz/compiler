@@ -151,7 +151,7 @@ function aoc_01_p1() {
             index += 1;
         }
         let calibration_value: u32 = (line[index] - '0') as u32;
-        
+
         // Go to the end of the line
         index = strlen(&line) - 1;
 
@@ -172,7 +172,7 @@ function aoc_01_p1() {
 
 struct Node {
     value: *[u8],
-    next: *own Node,
+    next: *own Self,
 }
 
 function omg_linked_list(values: *[*[u8]], value_count: u64) {

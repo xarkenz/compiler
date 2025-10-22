@@ -1,94 +1,283 @@
 use super::*;
 
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct SimplePath {
+    segments: Vec<String>,
+}
+
+impl SimplePath {
+    pub fn new(segments: Vec<String>) -> Self {
+        Self {
+            segments,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self::new(Vec::new())
+    }
+
+    pub fn segments(&self) -> &[String] {
+        &self.segments
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.segments.is_empty()
+    }
+
+    pub fn parent(&self) -> Option<Self> {
+        self.segments().split_last().map(|(_, segments)| {
+            Self::new(segments.to_vec())
+        })
+    }
+
+    pub fn child(&self, name: impl Into<String>) -> Self {
+        let mut segments = self.segments.clone();
+        segments.push(name.into());
+        Self::new(segments)
+    }
+
+    pub fn into_child(mut self, name: impl Into<String>) -> Self {
+        self.segments.push(name.into());
+        self
+    }
+
+    pub fn tail_name(&self) -> Option<&str> {
+        self.segments().last().map(String::as_str)
+    }
+}
+
+impl Default for SimplePath {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl std::fmt::Display for SimplePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.segments().join("::"))
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum PathBaseType {
+    Primitive(PrimitiveType),
+    Pointer {
+        pointee_type: AbsolutePath,
+        semantics: PointerSemantics,
+    },
+    Array {
+        item_type: AbsolutePath,
+        length: Option<usize>,
+    },
+    Function {
+        parameter_types: Vec<AbsolutePath>,
+        is_variadic: bool,
+        return_type: AbsolutePath,
+    },
+}
+
+impl std::fmt::Display for PathBaseType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Primitive(primitive) => {
+                write!(f, "{primitive}")
+            }
+            Self::Pointer { pointee_type, semantics } => match semantics {
+                PointerSemantics::Immutable => write!(f, "*{pointee_type}"),
+                PointerSemantics::Mutable => write!(f, "*mut {pointee_type}"),
+                PointerSemantics::Owned => write!(f, "*own {pointee_type}"),
+            }
+            Self::Array { item_type, length: Some(length) } => {
+                write!(f, "[{item_type}; {length}]")
+            }
+            Self::Array { item_type, length: _none } => {
+                write!(f, "[{item_type}]")
+            }
+            Self::Function { parameter_types, is_variadic, return_type } => {
+                write!(f, "function(")?;
+                let mut parameter_types_iter = parameter_types.iter();
+                if let Some(parameter_type) = parameter_types_iter.next() {
+                    write!(f, "{parameter_type}")?;
+                    for parameter_type in parameter_types_iter {
+                        write!(f, ", {parameter_type}")?;
+                    }
+                    if *is_variadic {
+                        write!(f, ", ..")?;
+                    }
+                }
+                else if *is_variadic {
+                    write!(f, "..")?;
+                }
+                write!(f, ") -> {return_type}")
+            }
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct AbsolutePath {
+    base_type: Option<Box<PathBaseType>>,
+    simple: SimplePath,
+}
+
+impl AbsolutePath {
+    pub fn new(base_type: Option<Box<PathBaseType>>, simple: SimplePath) -> Self {
+        Self {
+            base_type,
+            simple,
+        }
+    }
+
+    pub fn from_root(simple: SimplePath) -> Self {
+        Self::new(None, simple)
+    }
+
+    pub fn from_base_type(base_type: Box<PathBaseType>, simple: SimplePath) -> Self {
+        Self::new(Some(base_type), simple)
+    }
+
+    pub fn at_root() -> Self {
+        Self::from_root(SimplePath::empty())
+    }
+
+    pub fn at_base_type(base_type: Box<PathBaseType>) -> Self {
+        Self::from_base_type(base_type, SimplePath::empty())
+    }
+
+    pub fn base_type(&self) -> Option<&PathBaseType> {
+        self.base_type.as_deref()
+    }
+
+    pub fn simple(&self) -> &SimplePath {
+        &self.simple
+    }
+
+    pub fn parent(&self) -> Option<Self> {
+        self.simple().parent().map(|simple| {
+            Self::new(
+                self.base_type().map(|base_type| Box::new(base_type.clone())),
+                simple,
+            )
+        })
+    }
+
+    pub fn child(&self, name: impl Into<String>) -> Self {
+        Self::new(
+            self.base_type().map(|base_type| Box::new(base_type.clone())),
+            self.simple().child(name),
+        )
+    }
+
+    pub fn into_child(mut self, name: impl Into<String>) -> Self {
+        self.simple = self.simple.into_child(name);
+        self
+    }
+
+    pub fn tail_name(&self) -> Option<&str> {
+        self.simple().tail_name()
+    }
+}
+
+impl std::fmt::Display for AbsolutePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if let Some(base_type) = self.base_type() {
+            if self.simple().is_empty() {
+                write!(f, "{base_type}")
+            }
+            else {
+                write!(f, "<{base_type}>::{}", self.simple())
+            }
+        }
+        else {
+            if self.simple().is_empty() {
+                write!(f, "::module")
+            }
+            else {
+                write!(f, "::{}", self.simple())
+            }
+        }
+    }
+}
+
+#[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub enum ContainerHandle {
-    Type(TypeHandle),
-    Module(ModuleHandle),
-}
+pub struct NamespaceHandle(NonZeroUsize);
 
-impl ContainerHandle {
-    pub fn as_type(self) -> Option<TypeHandle> {
-        match self {
-            Self::Type(handle) => Some(handle),
-            _ => None
-        }
+impl NamespaceHandle {
+    pub const ROOT: Self = Self::new(0);
+
+    pub const fn new(registry_index: usize) -> Self {
+        Self(unsafe { NonZeroUsize::new_unchecked(registry_index + 1) })
     }
 
-    pub fn as_module(self) -> Option<ModuleHandle> {
-        match self {
-            Self::Module(handle) => Some(handle),
-            _ => None
-        }
+    pub const fn registry_index(self) -> usize {
+        self.0.get() - 1
     }
-}
 
-impl From<TypeHandle> for ContainerHandle {
-    fn from(handle: TypeHandle) -> Self {
-        Self::Type(handle)
+    pub fn info(self, context: &GlobalContext) -> &NamespaceInfo {
+        context.namespace_info(self)
     }
-}
 
-impl From<ModuleHandle> for ContainerHandle {
-    fn from(handle: ModuleHandle) -> Self {
-        Self::Module(handle)
+    pub fn info_mut(self, context: &mut GlobalContext) -> &mut NamespaceInfo {
+        context.namespace_info_mut(self)
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct SymbolTable {
-    symbols: HashMap<String, Value>,
-    unresolved_names: HashSet<String>,
+pub struct NamespaceInfo {
+    path: AbsolutePath,
+    symbols: HashMap<String, Symbol>,
+    star_imports: Vec<AbsolutePath>,
 }
 
-impl SymbolTable {
-    pub fn new() -> Self {
+impl NamespaceInfo {
+    pub fn new(path: AbsolutePath) -> Self {
         Self {
+            path,
             symbols: HashMap::new(),
-            unresolved_names: HashSet::new(),
+            star_imports: Vec::new(),
         }
     }
-    
-    pub fn has_symbol(&self, name: &str) -> bool {
-        self.symbols.contains_key(name)
+
+    pub fn path(&self) -> &AbsolutePath {
+        &self.path
     }
-    
-    pub fn is_unresolved(&self, name: &str) -> bool {
-        self.unresolved_names.contains(name)
+
+    pub fn star_imports(&self) -> &[AbsolutePath] {
+        &self.star_imports
     }
-    
-    pub fn find(&self, name: &str) -> Option<&Value> {
+
+    pub fn find(&self, name: &str) -> Option<&Symbol> {
         self.symbols.get(name)
     }
-    
-    pub fn find_container(&self, name: &str) -> Option<ContainerHandle> {
-        self.find(name).and_then(Value::as_container)
+
+    pub fn find_mut(&mut self, name: &str) -> Option<&mut Symbol> {
+        self.symbols.get_mut(name)
     }
 
-    pub fn find_type(&self, name: &str) -> Option<TypeHandle> {
-        self.find_container(name).and_then(ContainerHandle::as_type)
-    }
-    
-    pub fn find_module(&self, name: &str) -> Option<ModuleHandle> {
-        self.find_container(name).and_then(ContainerHandle::as_module)
-    }
-    
-    /// No collision checking.
-    pub fn define(&mut self, name: String, value: Value) {
-        self.unresolved_names.remove(&name);
-        self.symbols.insert(name, value);
-    }
-    
-    /// No collision checking.
-    pub fn declare(&mut self, name: String, value: Value) {
-        if !self.has_symbol(&name) {
-            self.unresolved_names.insert(name.clone());
-            self.symbols.insert(name, value);
+    pub fn define(&mut self, name: &str, symbol: Symbol) -> crate::Result<()> {
+        match self.symbols.insert(name.into(), symbol) {
+            Some(..) => Err(Box::new(crate::Error::GlobalSymbolConflict {
+                namespace: self.path().to_string(),
+                name: name.to_owned(),
+            })),
+            None => Ok(()),
         }
     }
 }
 
-impl Default for SymbolTable {
-    fn default() -> Self {
-        Self::new()
-    }
+#[derive(Clone, Debug)]
+pub enum Symbol {
+    /// The symbol is defined by a direct import (e.g. `path::to::symbol`). The path to the source
+    /// symbol is given.
+    Alias(AbsolutePath),
+    /// The symbol is defined by a module declaration. The namespace handle for the module is
+    /// given.
+    Module(NamespaceHandle),
+    /// The symbol is defined by a structure type declaration. The type handle corresponding to
+    /// the declared structure type is given.
+    Type(TypeHandle),
+    /// The symbol is defined by a `let` statement or `function` declaration. The declared function
+    /// or value is given.
+    Value(Value),
 }

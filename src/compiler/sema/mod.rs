@@ -1,63 +1,82 @@
-use std::collections::{HashMap, HashSet};
-use std::num::NonZeroUsize;
 use crate::ast::{Node, PathSegment, TypeNode};
+use crate::token::Literal;
+use std::collections::HashMap;
+use std::num::NonZeroUsize;
 
-mod values;
-mod types;
-mod modules;
 mod local_ctx;
 mod symbols;
+mod types;
+mod values;
 
-pub use values::*;
-pub use types::*;
-pub use modules::*;
 pub use local_ctx::*;
 pub use symbols::*;
-use crate::token::Literal;
+pub use types::*;
+pub use values::*;
+
+struct TypeEntry {
+    path: AbsolutePath,
+    repr: TypeRepr,
+    namespace: NamespaceHandle,
+    alignment: Option<Option<usize>>,
+    size: Option<Option<usize>>,
+    llvm_syntax: Option<String>,
+}
 
 pub struct GlobalContext {
     /// The size of a pointer in bytes.
     pointer_size: usize,
-    /// Table of all modules in existence.
-    module_registry: Vec<ModuleInfo>,
-    /// The module currently being analyzed.
-    current_module: ModuleHandle,
+    /// Table of all namespaces in existence.
+    namespace_registry: Vec<NamespaceInfo>,
+    /// The hierarchy of modules currently being analyzed.
+    module_stack: Vec<NamespaceHandle>,
     /// Table of all types in existence.
     type_registry: Vec<TypeEntry>,
-    /// The type `Self` currently represents, or `None` if not in an `implement` block.
+    /// The type `Self` currently represents, or `None` if not in an `implement` block or `struct`
+    /// definition.
     current_self_type: Option<TypeHandle>,
+    /// Find a type by absolute path.
+    path_base_types: HashMap<PathBaseType, TypeHandle>,
     /// Find `*T`, `*mut T`, or `*own T`.
     pointer_types: HashMap<(TypeHandle, PointerSemantics), TypeHandle>,
     /// Find `[T; N]` or `[T]`.
     array_types: HashMap<(TypeHandle, Option<usize>), TypeHandle>,
     /// Find a function type by signature.
     function_types: HashMap<FunctionSignature, TypeHandle>,
+    /// Flag for whether the fill phase has been completed. If so, all type properties are known.
+    fill_phase_complete: bool,
 }
 
-struct TypeEntry {
-    identifier: String,
-    info: TypeInfo,
-    alignment: Option<usize>,
-    size: Option<usize>,
-    llvm_syntax: String,
-    symbol_table: SymbolTable,
+impl Default for GlobalContext {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GlobalContext {
     pub fn new() -> Self {
         let mut context = Self {
-            pointer_size: size_of::<*const ()>(),
-            module_registry: vec![ModuleInfo::new(String::new(), None)],
-            current_module: ModuleHandle::ROOT,
+            pointer_size: size_of::<&()>(),
+            namespace_registry: vec![NamespaceInfo::new(AbsolutePath::at_root())],
+            module_stack: vec![NamespaceHandle::ROOT],
             type_registry: Vec::with_capacity(PRIMITIVE_TYPES.len()),
             current_self_type: None,
+            path_base_types: HashMap::new(),
             pointer_types: HashMap::new(),
             array_types: HashMap::new(),
             function_types: HashMap::new(),
+            fill_phase_complete: false,
         };
 
-        for &(name, ref info) in PRIMITIVE_TYPES {
-            context.create_type(info.clone(), name.into());
+        for (registry_index, &(name, ref repr)) in PRIMITIVE_TYPES.iter().enumerate() {
+            let base_type = PathBaseType::Primitive(PrimitiveType {
+                handle: TypeHandle::new(registry_index),
+                name,
+            });
+            let handle = context.create_type(
+                AbsolutePath::at_base_type(Box::new(base_type.clone())),
+                repr.clone(),
+            );
+            context.path_base_types.insert(base_type, handle);
         }
 
         context
@@ -67,30 +86,22 @@ impl GlobalContext {
         self.pointer_size
     }
 
-    pub fn current_module(&self) -> ModuleHandle {
-        self.current_module
+    pub fn current_module(&self) -> NamespaceHandle {
+        *self.module_stack.last().unwrap()
     }
 
-    pub fn module_info(&self, handle: ModuleHandle) -> &ModuleInfo {
-        &self.module_registry[handle.registry_index()]
-    }
-
-    pub fn module_info_mut(&mut self, handle: ModuleHandle) -> &mut ModuleInfo {
-        &mut self.module_registry[handle.registry_index()]
-    }
-
-    pub fn current_module_info(&self) -> &ModuleInfo {
-        self.module_info(self.current_module())
-    }
-
-    pub fn current_module_info_mut(&mut self) -> &mut ModuleInfo {
-        self.module_info_mut(self.current_module())
-    }
-    
     pub fn current_self_type(&self) -> Option<TypeHandle> {
         self.current_self_type
     }
-    
+
+    pub fn namespace_info(&self, handle: NamespaceHandle) -> &NamespaceInfo {
+        &self.namespace_registry[handle.registry_index()]
+    }
+
+    pub fn namespace_info_mut(&mut self, handle: NamespaceHandle) -> &mut NamespaceInfo {
+        &mut self.namespace_registry[handle.registry_index()]
+    }
+
     fn type_entry(&self, handle: TypeHandle) -> &TypeEntry {
         &self.type_registry[handle.registry_index()]
     }
@@ -98,492 +109,722 @@ impl GlobalContext {
     fn type_entry_mut(&mut self, handle: TypeHandle) -> &mut TypeEntry {
         &mut self.type_registry[handle.registry_index()]
     }
-    
-    pub fn type_identifier(&self, handle: TypeHandle) -> &str {
-        &self.type_entry(handle).identifier
+
+    pub fn type_path(&self, handle: TypeHandle) -> &AbsolutePath {
+        &self.type_entry(handle).path
     }
 
-    pub fn type_info(&self, handle: TypeHandle) -> &TypeInfo {
-        &self.type_entry(handle).info
-    }
-    
-    pub fn type_symbol_table(&self, handle: TypeHandle) -> &SymbolTable {
-        &self.type_entry(handle).symbol_table
+    pub fn type_repr(&self, handle: TypeHandle) -> &TypeRepr {
+        &self.type_entry(handle).repr
     }
 
-    pub fn type_symbol_table_mut(&mut self, handle: TypeHandle) -> &mut SymbolTable {
-        &mut self.type_entry_mut(handle).symbol_table
+    pub fn type_namespace(&self, handle: TypeHandle) -> NamespaceHandle {
+        self.type_entry(handle).namespace
     }
 
     pub fn type_alignment(&self, handle: TypeHandle) -> Option<usize> {
         self.type_entry(handle).alignment
+            .expect("type alignment cannot be known before fill phase is completed")
     }
 
     pub fn type_size(&self, handle: TypeHandle) -> Option<usize> {
         self.type_entry(handle).size
+            .expect("type size cannot be known before fill phase is completed")
     }
-    
+
     pub fn type_llvm_syntax(&self, handle: TypeHandle) -> &str {
-        &self.type_entry(handle).llvm_syntax
-    }
-    
-    pub fn get_canonical_type(&self, mut handle: TypeHandle) -> TypeHandle {
-        while let &TypeInfo::Alias { target } = self.type_info(handle) {
-            handle = target;
-        }
-        
-        handle
+        self.type_entry(handle).llvm_syntax.as_ref()
+            .expect("type syntax cannot be known before fill phase is completed")
     }
 
-    pub fn symbol_table(&self, container: ContainerHandle) -> &SymbolTable {
-        match container {
-            ContainerHandle::Type(handle) => self.type_symbol_table(handle),
-            ContainerHandle::Module(handle) => self.module_info(handle).symbol_table(),
-        }
+    pub fn current_module_info(&self) -> &NamespaceInfo {
+        self.namespace_info(self.current_module())
     }
 
-    pub fn symbol_table_mut(&mut self, container: ContainerHandle) -> &mut SymbolTable {
-        match container {
-            ContainerHandle::Type(handle) => self.type_symbol_table_mut(handle),
-            ContainerHandle::Module(handle) => self.module_info_mut(handle).symbol_table_mut(),
-        }
+    pub fn current_module_info_mut(&mut self) -> &mut NamespaceInfo {
+        self.namespace_info_mut(self.current_module())
     }
-    
-    pub fn container_identifier(&self, container: ContainerHandle) -> &str {
-        match container {
-            ContainerHandle::Type(handle) => self.type_identifier(handle),
-            ContainerHandle::Module(handle) => self.module_info(handle).identifier(),
-        }
-    }
-    
-    pub fn current_container(&self) -> ContainerHandle {
+
+    pub fn current_namespace(&self) -> NamespaceHandle {
         if let Some(self_type) = self.current_self_type() {
-            self_type.into()
+            self.type_namespace(self_type)
         }
         else {
-            self.current_module().into()
-        }
-    }
-    
-    pub fn current_symbol_table(&self) -> &SymbolTable {
-        if let Some(self_type) = self.current_self_type() {
-            self.type_symbol_table(self_type)
-        }
-        else {
-            self.current_module_info().symbol_table()
-        }
-    }
-    
-    pub fn current_symbol_table_mut(&mut self) -> &mut SymbolTable {
-        if let Some(self_type) = self.current_self_type() {
-            self.type_symbol_table_mut(self_type)
-        }
-        else {
-            self.current_module_info_mut().symbol_table_mut()
+            self.current_module()
         }
     }
 
-    pub fn enter_module(&mut self, name: String) -> crate::Result<()> {
-        let new_module_info = ModuleInfo::new(
-            self.current_module_info().create_member_identifier(&name),
-            Some(self.current_module()),
-        );
-        let new_module = ModuleHandle::new(self.module_registry.len());
-        self.module_registry.push(new_module_info);
-
-        self.define_symbol(name, new_module.into())?;
-        self.current_module = new_module;
-
-        Ok(())
+    pub fn current_namespace_info(&self) -> &NamespaceInfo {
+        self.namespace_info(self.current_namespace())
     }
 
-    pub fn exit_module(&mut self) -> crate::Result<()> {
-        self.current_module = self.current_module_info().super_module()
-            .expect("attempted to leave root module");
-
-        Ok(())
+    pub fn current_namespace_info_mut(&mut self) -> &mut NamespaceInfo {
+        self.namespace_info_mut(self.current_namespace())
     }
 
-    pub fn enter_implement_block(&mut self, self_type: TypeHandle) {
+    pub fn enter_module_outline(&mut self, name: &str) -> crate::Result<NamespaceHandle> {
+        let current_namespace = self.current_namespace();
+        let module_path = self.namespace_info(current_namespace).path().child(name);
+        let module_namespace = self.create_namespace(module_path);
+
+        self.namespace_info_mut(current_namespace).define(name, Symbol::Module(module_namespace))?;
+
+        self.module_stack.push(module_namespace);
+
+        Ok(module_namespace)
+    }
+
+    pub fn enter_module(&mut self, namespace: NamespaceHandle) {
+        self.module_stack.push(namespace);
+    }
+
+    pub fn exit_module(&mut self) {
+        self.module_stack.pop();
+
+        if self.module_stack.is_empty() {
+            panic!("exited root module");
+        }
+    }
+
+    pub fn set_self_type(&mut self, self_type: TypeHandle) {
         if self.current_self_type().is_some() {
-            panic!("attempted to enter nested implement block");
+            panic!("Self type is already set");
         }
+
         self.current_self_type = Some(self_type);
     }
 
-    pub fn exit_implement_block(&mut self) {
-        if self.current_self_type().is_none() {
-            panic!("attempted to leave inactive implement block");
-        }
-        self.current_self_type = None;
+    pub fn unset_self_type(&mut self) -> TypeHandle {
+        self.current_self_type.take().expect("Self type is not set")
     }
 
-    pub fn define_symbol(&mut self, name: String, value: Value) -> crate::Result<()> {
-        if let Some(existing_value) = self.current_symbol_table().find(&name) {
-            if !self.current_symbol_table().is_unresolved(&name)
-                || !self.types_are_equivalent(existing_value.get_type(), value.get_type())
-            {
-                return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.clone() }));
-            }
-        }
+    pub fn get_super_namespace(&mut self, namespace: NamespaceHandle) -> crate::Result<NamespaceHandle> {
+        let Some(super_path) = self.namespace_info(namespace).path().parent() else {
+            return Err(Box::new(crate::Error::InvalidSuper {
+                namespace: self.namespace_info(namespace).path().to_string(),
+            }));
+        };
 
-        self.current_symbol_table_mut().define(name, value);
-
-        Ok(())
-    }
-
-    pub fn declare_symbol(&mut self, name: String, value: Value) -> crate::Result<()> {
-        if let Some(existing_value) = self.current_symbol_table().find(&name) {
-            if !self.types_are_equivalent(existing_value.get_type(), value.get_type()) {
-                return Err(Box::new(crate::Error::GlobalSymbolConflict { name: name.clone() }));
-            }
-        }
-        else {
-            self.current_symbol_table_mut().declare(name, value);
-        }
-
-        Ok(())
-    }
-
-    pub fn create_member_identifier(&self, container: ContainerHandle, member_name: &str) -> String {
-        match container {
-            ContainerHandle::Type(handle) => {
-                format!("{}::{member_name}", self.type_identifier(handle))
-            }
-            ContainerHandle::Module(handle) => {
-                self.module_info(handle).create_member_identifier(member_name)
-            }
-        }
-    }
-    
-    fn get_super_module(&self, container: ContainerHandle) -> crate::Result<ModuleHandle> {
-        container.as_module()
-            .and_then(|module| self.module_info(module).super_module())
-            .ok_or_else(|| Box::new(crate::Error::UndefinedModule {
-                name: self.create_member_identifier(container, "super"),
+        self.get_path_value(&super_path)?
+            .as_namespace(self)
+            .ok_or_else(|| Box::new(crate::Error::ExpectedNamespace {
+                name: super_path.to_string(),
             }))
     }
-    
-    pub fn interpret_path(&mut self, segments: &[PathSegment], allow_impl_items: bool) -> crate::Result<(Option<String>, Value)> {
-        let (final_segment, leading_segments) = segments.split_last().expect("path is empty");
-        
-        let mut current_container = ContainerHandle::Module(self.current_module());
-        for segment in leading_segments {
+
+    pub fn get_absolute_path(&self, segments: &[PathSegment]) -> crate::Result<AbsolutePath> {
+        let mut path = self.namespace_info(self.current_module()).path().clone();
+
+        for segment in segments {
             match segment {
                 PathSegment::Name(name) => {
-                    let Some(container) = self.symbol_table(current_container).find_container(name) else {
-                        return Err(Box::new(crate::Error::UndefinedModule {
-                            name: self.create_member_identifier(current_container, name),
-                        }))
-                    };
-                    current_container = container;
+                    path = path.into_child(name);
                 }
                 PathSegment::RootModule => {
-                    current_container = ModuleHandle::ROOT.into()
+                    path = AbsolutePath::from_root(SimplePath::empty());
                 }
                 PathSegment::SuperModule => {
-                    current_container = self.get_super_module(current_container)?.into();
-                }
-                PathSegment::SelfModule => {
-                    let ContainerHandle::Module(..) = current_container else {
-                        return Err(Box::new(crate::Error::UndefinedModule {
-                            name: self.create_member_identifier(current_container, "module"),
+                    let Some(parent) = path.parent() else {
+                        return Err(Box::new(crate::Error::InvalidSuper {
+                            namespace: path.to_string(),
                         }));
                     };
+                    path = parent;
+                }
+                PathSegment::SelfModule => {
+                    // TODO: error for non-module?
                 }
                 PathSegment::SelfType => {
                     let Some(self_type) = self.current_self_type() else {
-                        return Err(Box::new(crate::Error::SelfOutsideImplement {}));
+                        return Err(Box::new(crate::Error::NoSelfType {}));
                     };
-                    current_container = self_type.into();
+                    path = self.type_path(self_type).clone();
                 }
                 PathSegment::PrimitiveType(primitive_type) => {
-                    current_container = primitive_type.handle.into();
+                    path = AbsolutePath::from_base_type(Box::new(PathBaseType::Primitive(*primitive_type)), SimplePath::empty());
                 }
                 PathSegment::Type(type_node) => {
-                    current_container = self.interpret_type_node(type_node)?.into();
+                    path = self.type_path_for_type_node(type_node)?;
                 }
             }
-            
-            if !allow_impl_items && matches!(current_container, ContainerHandle::Type(..)) {
-                return Err(Box::new(crate::Error::UndefinedModule {
-                    name: self.container_identifier(current_container).to_owned(),
-                }))
-            }
         }
-        
-        match final_segment {
-            PathSegment::Name(name) => {
-                self.symbol_table(current_container).find(name)
-                    .map(|value| (Some(name.clone()), value.clone()))
-                    .ok_or_else(|| Box::new(crate::Error::UndefinedSymbol {
-                        name: self.create_member_identifier(current_container, name),
-                    }))
+
+        Ok(path)
+    }
+
+    pub fn type_path_for_type_node(&self, type_node: &TypeNode) -> crate::Result<AbsolutePath> {
+        match type_node {
+            TypeNode::Path { segments } => {
+                Ok(self.get_absolute_path(segments)?)
             }
-            PathSegment::RootModule => {
-                Ok((None, ModuleHandle::ROOT.into()))
-            }
-            PathSegment::SuperModule => {
-                let super_module = self.get_super_module(current_container)?;
-                let super_name = self.module_info(super_module).identifier().to_owned();
-                Ok((Some(super_name), super_module.into()))
-            }
-            PathSegment::SelfModule => {
-                let Some(module) = current_container.as_module() else {
-                    return Err(Box::new(crate::Error::UndefinedModule {
-                        name: self.create_member_identifier(current_container, "module"),
-                    }));
+            TypeNode::Pointer { pointee_type, semantics } => {
+                let base_type = PathBaseType::Pointer {
+                    pointee_type: self.type_path_for_type_node(pointee_type)?,
+                    semantics: *semantics,
                 };
-                let module_name = self.module_info(module).identifier().to_owned();
-                Ok((Some(module_name), current_container.into()))
+                Ok(AbsolutePath::from_base_type(Box::new(base_type), SimplePath::empty()))
             }
-            PathSegment::SelfType => {
-                self.current_self_type()
-                    .map(|self_type| (None, self_type.into()))
-                    .ok_or_else(|| Box::new(crate::Error::SelfOutsideImplement {}))
+            TypeNode::Array { item_type, length } => {
+                let base_type = PathBaseType::Array {
+                    item_type: self.type_path_for_type_node(item_type)?,
+                    length: match length {
+                        Some(node) => Some(node.as_array_length()
+                            .ok_or_else(|| Box::new(crate::Error::NonConstantArrayLength {}))?),
+                        None => None,
+                    },
+                };
+                Ok(AbsolutePath::from_base_type(Box::new(base_type), SimplePath::empty()))
             }
-            PathSegment::PrimitiveType(primitive_type) => {
-                Ok((None, primitive_type.handle.into()))
-            }
-            PathSegment::Type(type_node) => {
-                Ok((None, self.interpret_type_node(type_node)?.into()))
+            TypeNode::Function { parameter_types, is_variadic, return_type } => {
+                let base_type = PathBaseType::Function {
+                    parameter_types: Result::from_iter(parameter_types.iter()
+                        .map(|type_node| self.type_path_for_type_node(type_node)))?,
+                    is_variadic: *is_variadic,
+                    return_type: self.type_path_for_type_node(return_type)?,
+                };
+                Ok(AbsolutePath::from_base_type(Box::new(base_type), SimplePath::empty()))
             }
         }
     }
 
-    pub fn interpret_type_node(&mut self, type_node: &TypeNode) -> crate::Result<TypeHandle> {
-        match type_node {
-            TypeNode::Path { segments } => {
-                self.interpret_path(segments, true)?.1.as_type()
-                    .ok_or_else(|| Box::new(crate::Error::UnknownType {
-                        type_name: PathSegment::path_to_string(&segments),
-                    }))
-            }
-            TypeNode::Pointer { pointee_type, semantics } => {
-                let pointee_type = self.interpret_type_node(pointee_type)?;
-                Ok(self.get_pointer_type(pointee_type, *semantics))
-            }
-            TypeNode::Array { item_type, length } => {
-                let item_type = self.interpret_type_node(item_type)?;
-                let length = match length {
-                    Some(node) => Some(node.as_array_length()
-                        .ok_or_else(|| Box::new(crate::Error::NonConstantArrayLength {}))?),
-                    None => None,
-                };
-                Ok(self.get_array_type(item_type, length))
-            }
-            TypeNode::Function { parameter_types, is_variadic, return_type } => {
-                let parameter_types: Box<[_]> = Result::from_iter(parameter_types.iter()
-                    .map(|type_node| self.interpret_type_node(type_node)))?;
-                let return_type = self.interpret_type_node(return_type)?;
-                let signature = FunctionSignature::new(return_type, parameter_types, *is_variadic);
-                Ok(self.get_function_type(&signature))
-            }
-        }
-    }
-    
-    pub fn interpret_node_as_type(&mut self, node: &Node) -> crate::Result<TypeHandle> {
+    pub fn type_path_for_node(&self, node: &Node) -> crate::Result<AbsolutePath> {
         match node {
             Node::Type(type_node) => {
-                self.interpret_type_node(type_node)
+                self.type_path_for_type_node(type_node)
             }
-            Node::Path { segments } => {
-                self.interpret_path(segments, true)?.1.as_type()
-                    .ok_or_else(|| Box::new(crate::Error::UnknownType {
-                        type_name: PathSegment::path_to_string(&segments),
-                    }))
+            Node::Path { segments, .. } => {
+                self.get_absolute_path(segments)
             }
             Node::Literal(Literal::Name(name)) => {
-                self.get_named_type(self.current_module().into(), name)
+                Ok(self.current_module_info().path().child(name))
             }
             Node::Literal(Literal::PrimitiveType(primitive_type)) => {
-                Ok(primitive_type.handle)
+                let base_type = PathBaseType::Primitive(*primitive_type);
+                Ok(AbsolutePath::from_base_type(Box::new(base_type), SimplePath::empty()))
             }
             _ => {
                 Err(Box::new(crate::Error::UnexpectedExpression {}))
             }
         }
     }
-    
-    pub fn get_named_type(&mut self, container: ContainerHandle, name: &str) -> crate::Result<TypeHandle> {
-        if let Some(handle) = self.symbol_table(container).find_type(name) {
-            Ok(handle)
-        }
-        else if self.symbol_table(container).has_symbol(name) {
-            Err(Box::new(crate::Error::TypeSymbolConflict {
-                name: self.create_member_identifier(container, name),
-            }))
-        }
-        else {
-            let info = TypeInfo::Undefined {
-                name: name.into(),
-            };
-            let identifier = self.create_member_identifier(container, name);
 
-            let handle = self.create_type(info, identifier);
-            self.symbol_table_mut(container).declare(name.into(), handle.into());
-            
-            Ok(handle)
+    pub fn interpret_type_node(&mut self, type_node: &TypeNode) -> crate::Result<TypeHandle> {
+        let type_path = self.type_path_for_type_node(type_node)?;
+        self.get_path_type(&type_path)
+    }
+
+    pub fn interpret_node_as_type(&mut self, node: &Node) -> crate::Result<TypeHandle> {
+        let type_path = self.type_path_for_node(node)?;
+        self.get_path_type(&type_path)
+    }
+
+    pub fn outline_struct(&mut self, name: String) -> crate::Result<TypeHandle> {
+        let path = self.current_module_info().path().child(&name);
+        let handle = self.create_type(path, TypeRepr::Unresolved);
+
+        self.current_module_info_mut().define(&name, Symbol::Type(handle))?;
+
+        Ok(handle)
+    }
+
+    pub fn get_symbol_value(&mut self, namespace: NamespaceHandle, name: &str) -> crate::Result<Value> {
+        // FIXME: does not detect recursive import
+        match self.namespace_info(namespace).find(name) {
+            Some(Symbol::Alias(target_path)) => {
+                let target_path = target_path.clone();
+                self.get_path_value(&target_path)
+            }
+            Some(Symbol::Module(namespace)) => {
+                Ok(Value::Module(*namespace))
+            }
+            Some(Symbol::Type(handle)) => {
+                Ok(Value::Type(*handle))
+            }
+            Some(Symbol::Value(value)) => {
+                Ok(value.clone())
+            }
+            None => {
+                Err(Box::new(crate::Error::UndefinedGlobalSymbol {
+                    namespace: self.namespace_info(namespace).path().to_string(),
+                    name: name.to_owned(),
+                }))
+            }
         }
     }
-    
-    pub fn define_named_type(&mut self, container: ContainerHandle, name: &str, new_info: TypeInfo) -> crate::Result<TypeHandle> {
-        if let Some(handle) = self.symbol_table(container).find_type(name) {
-            if !self.symbol_table(container).is_unresolved(name) {
-                return Err(Box::new(crate::Error::TypeSymbolConflict {
-                    name: self.type_identifier(handle).into(),
+
+    pub fn get_path_value(&mut self, path: &AbsolutePath) -> crate::Result<Value> {
+        let mut value = match path.base_type() {
+            Some(base_type) => {
+                Value::Type(self.get_path_base_type(base_type)?)
+            }
+            None => {
+                Value::Module(NamespaceHandle::ROOT)
+            }
+        };
+
+        for segment in path.simple().segments() {
+            let Some(namespace) = value.as_namespace(self) else {
+                return Err(Box::new(crate::Error::ExpectedNamespace {
+                    name: segment.clone(),
                 }));
             };
-            
-            let new_identifier = self.create_member_identifier(container, name);
-            let new_alignment = self.calculate_alignment(&new_info);
-            let new_size = self.calculate_size(&new_info);
-            let new_llvm_syntax = self.generate_type_llvm_syntax(&new_identifier, &new_info);
-            
-            let entry = self.type_entry_mut(handle);
-            entry.identifier = new_identifier;
-            entry.info = new_info;
-            entry.alignment = new_alignment;
-            entry.size = new_size;
-            entry.llvm_syntax = new_llvm_syntax;
-            
-            Ok(handle)
+            value = self.get_symbol_value(namespace, segment)?;
+        }
+
+        Ok(value)
+    }
+
+    pub fn get_path_type(&mut self, path: &AbsolutePath) -> crate::Result<TypeHandle> {
+        self.get_path_value(path)?.as_type().ok_or_else(|| Box::new(crate::Error::NonTypeSymbol {
+            name: path.to_string(),
+        }))
+    }
+
+    pub fn get_path_base_type(&mut self, base_type: &PathBaseType) -> crate::Result<TypeHandle> {
+        if let Some(handle) = self.path_base_types.get(base_type) {
+            Ok(*handle)
         }
         else {
-            let identifier = self.create_member_identifier(container, name);
-            
-            let handle = self.create_type(new_info, identifier);
-            self.symbol_table_mut(container).define(name.into(), handle.into());
-            
+            let handle = match base_type {
+                PathBaseType::Primitive(primitive) => {
+                    // This should not occur since all valid primitive types were added to
+                    // self.path_base_types during initialization.
+                    panic!("invalid primitive type '{primitive}'")
+                }
+                PathBaseType::Pointer { pointee_type, semantics } => {
+                    let pointee_type = self.get_path_type(&pointee_type)?;
+                    self.get_pointer_type(pointee_type, *semantics)
+                }
+                PathBaseType::Array { item_type, length } => {
+                    let item_type = self.get_path_type(&item_type)?;
+                    self.get_array_type(item_type, *length)
+                }
+                PathBaseType::Function { parameter_types, is_variadic, return_type } => {
+                    let parameter_types = Result::from_iter(parameter_types
+                        .iter()
+                        .map(|parameter_type| self.get_path_type(parameter_type)))?;
+                    let return_type = self.get_path_type(&return_type)?;
+                    let signature = FunctionSignature::new(return_type, parameter_types, *is_variadic);
+                    self.get_function_type(&signature)
+                }
+            };
+            self.path_base_types.insert(base_type.clone(), handle);
             Ok(handle)
         }
     }
-    
+
     pub fn get_pointer_type(&mut self, pointee_type: TypeHandle, semantics: PointerSemantics) -> TypeHandle {
         if let Some(handle) = self.pointer_types.get(&(pointee_type, semantics)) {
             *handle
         }
         else {
-            let pointee_identifier = self.type_identifier(pointee_type);
-            let identifier = match semantics {
-                PointerSemantics::Immutable => format!("*{pointee_identifier}"),
-                PointerSemantics::Mutable => format!("*mut {pointee_identifier}"),
-                PointerSemantics::Owned => format!("*own {pointee_identifier}"),
-            };
-            let info = TypeInfo::Pointer {
+            let info = TypeRepr::Pointer {
                 pointee_type,
                 semantics,
             };
+            let path = AbsolutePath::at_base_type(Box::new(PathBaseType::Pointer {
+                pointee_type: self.type_path(pointee_type).clone(),
+                semantics,
+            }));
 
-            let handle = self.create_type(info, identifier);
+            let handle = self.create_type(path, info);
             self.pointer_types.insert((pointee_type, semantics), handle);
             handle
         }
     }
-    
+
     pub fn get_array_type(&mut self, item_type: TypeHandle, length: Option<usize>) -> TypeHandle {
         if let Some(handle) = self.array_types.get(&(item_type, length)) {
             *handle
         }
         else {
-            let item_identifier = self.type_identifier(item_type);
-            let identifier = match length {
-                Some(length) => format!("[{item_identifier}; {length}]"),
-                None => format!("[{item_identifier}]"),
-            };
-            let info = TypeInfo::Array {
+            let info = TypeRepr::Array {
                 item_type,
                 length,
             };
+            let path = AbsolutePath::at_base_type(Box::new(PathBaseType::Array {
+                item_type: self.type_path(item_type).clone(),
+                length,
+            }));
 
-            let handle = self.create_type(info, identifier);
+            let handle = self.create_type(path, info);
             self.array_types.insert((item_type, length), handle);
             handle
         }
     }
-    
+
     pub fn get_function_type(&mut self, signature: &FunctionSignature) -> TypeHandle {
         if let Some(handle) = self.function_types.get(signature) {
             *handle
         }
         else {
-            let mut identifier = String::from("function(");
-            let mut parameter_types_iter = signature.parameter_types().iter();
-            if let Some(&parameter_type) = parameter_types_iter.next() {
-                identifier.push_str(self.type_identifier(parameter_type));
-                for &parameter_type in parameter_types_iter {
-                    identifier.push_str(", ");
-                    identifier.push_str(self.type_identifier(parameter_type));
-                }
-                if signature.is_variadic() {
-                    identifier.push_str(", ..");
-                }
-            }
-            else if signature.is_variadic() {
-                identifier.push_str("..");
-            }
-            identifier.push_str(") -> ");
-            identifier.push_str(self.type_identifier(signature.return_type()));
-            let info = TypeInfo::Function {
+            let info = TypeRepr::Function {
                 signature: signature.clone(),
             };
-            let handle = self.create_type(info, identifier);
+            let path = AbsolutePath::at_base_type(Box::new(PathBaseType::Function {
+                parameter_types: signature.parameter_types()
+                    .iter()
+                    .map(|&handle| self.type_path(handle).clone())
+                    .collect(),
+                is_variadic: signature.is_variadic(),
+                return_type: self.type_path(signature.return_type()).clone(),
+            }));
+
+            let handle = self.create_type(path, info);
             self.function_types.insert(signature.clone(), handle);
             handle
         }
     }
 
-    fn create_type(&mut self, info: TypeInfo, identifier: String) -> TypeHandle {
-        let alignment = self.calculate_alignment(&info);
-        let size = self.calculate_size(&info);
-        let llvm_syntax = self.generate_type_llvm_syntax(&identifier, &info);
-        let entry = TypeEntry {
-            identifier,
-            info,
+    pub fn types_are_equivalent(&self, lhs_type: TypeHandle, rhs_type: TypeHandle) -> bool {
+        lhs_type == rhs_type
+    }
+
+    pub fn can_coerce_type(&self, from_type: TypeHandle, to_type: TypeHandle, from_mutable: bool) -> bool {
+        from_type == to_type || match (self.type_repr(from_type), self.type_repr(to_type)) {
+            (
+                &TypeRepr::Pointer { pointee_type: from_pointee, semantics: from_semantics },
+                &TypeRepr::Pointer { pointee_type: to_pointee, semantics: to_semantics },
+            ) => {
+                // Not sure if this is right... needs testing
+                // FIXME: it's not. and owned pointers are also unnecessary
+                use PointerSemantics::*;
+                match (from_semantics, to_semantics) {
+                    (Immutable, Immutable) => self.can_coerce_type(from_pointee, to_pointee, false),
+                    (Immutable, _) => false,
+                    (Mutable, Immutable) => self.can_coerce_type(from_pointee, to_pointee, true),
+                    (Mutable, Mutable) => self.can_coerce_type(from_pointee, to_pointee, true),
+                    (Mutable, _) => false,
+                    (Owned, Immutable) => self.can_coerce_type(from_pointee, to_pointee, from_mutable),
+                    (Owned, Mutable) => from_mutable && self.can_coerce_type(from_pointee, to_pointee, from_mutable),
+                    (Owned, Owned) => self.can_coerce_type(from_pointee, to_pointee, from_mutable),
+                }
+            }
+            (
+                &TypeRepr::Array { item_type: from_item, length: Some(from_length) },
+                &TypeRepr::Array { item_type: to_item, length: Some(to_length) },
+            ) => {
+                from_length == to_length && self.can_coerce_type(from_item, to_item, from_mutable)
+            }
+            (
+                &TypeRepr::Array { item_type: from_item, length: _ },
+                &TypeRepr::Array { item_type: to_item, length: None },
+            ) => {
+                self.can_coerce_type(from_item, to_item, from_mutable)
+            }
+            (
+                TypeRepr::Function { signature: from_signature },
+                TypeRepr::Function { signature: to_signature },
+            ) => {
+                from_signature.is_variadic() == to_signature.is_variadic()
+                    && self.can_coerce_type(from_signature.return_type(), to_signature.return_type(), false)
+                    && from_signature.parameter_types().len() == to_signature.parameter_types().len()
+                    && std::iter::zip(from_signature.parameter_types(), to_signature.parameter_types())
+                        .all(|(&from_param, &to_param)| {
+                            self.can_coerce_type(from_param, to_param, false)
+                        })
+            }
+            (TypeRepr::Void, _) | (_, TypeRepr::Void) => true,
+            _ => false
+        }
+    }
+
+    pub fn process_global_statements<'a>(&mut self, top_level_statements: impl IntoIterator<Item = &'a mut Node>) -> crate::Result<()> {
+        for top_level_statement in top_level_statements {
+            self.process_global_statement(top_level_statement)?;
+        }
+
+        self.complete_fill_phase()
+    }
+
+    pub fn process_global_statement(&mut self, node: &mut Node) -> crate::Result<()> {
+        match *node {
+            Node::Let { ref name, ref value_type, is_mutable, ref mut global_register, .. } => {
+                let value_type = self.interpret_type_node(value_type)?;
+                *global_register = Some(self.define_global_value(name, value_type, is_mutable)?);
+            }
+            Node::Constant { ref name, ref value_type, ref mut global_register, .. } => {
+                let value_type = self.interpret_type_node(value_type)?;
+                *global_register = Some(self.define_global_value(name, value_type, false)?);
+            }
+            Node::Function { ref name, ref parameters, is_variadic, ref return_type, ref mut global_register, .. } => {
+                let parameter_types = Result::from_iter(parameters
+                    .iter()
+                    .map(|parameter| {
+                        self.interpret_type_node(&parameter.type_node)
+                    }))?;
+                let return_type = self.interpret_type_node(return_type)?;
+                let signature = FunctionSignature::new(return_type, parameter_types, is_variadic);
+                let function_type = self.get_function_type(&signature);
+
+                let path = self.current_module_info().path().child(name);
+                let register = Register::new_global(path.to_string(), function_type);
+
+                self.current_namespace_info_mut().define(
+                    name,
+                    Symbol::Value(Value::Constant(Constant::Register(register.clone()))),
+                )?;
+
+                *global_register = Some(register);
+            }
+            Node::Structure { ref name, ref members, self_type } => {
+                if let Some(members) = members {
+                    self.set_self_type(self_type);
+
+                    let members = crate::Result::from_iter(members
+                        .iter()
+                        .map(|member| Ok(StructureMember {
+                            name: member.name.clone(),
+                            member_type: self.interpret_type_node(&member.type_node)?,
+                        })))?;
+                    self.update_type_repr(self_type, TypeRepr::Structure {
+                        name: name.clone(),
+                        members,
+                    });
+
+                    self.unset_self_type();
+                }
+                else {
+                    self.update_type_repr(self_type, TypeRepr::ForeignStructure {
+                        name: name.clone(),
+                    });
+                }
+            }
+            Node::Implement { ref self_type, ref mut statements, .. } => {
+                let self_type = self.interpret_type_node(self_type)?;
+                self.set_self_type(self_type);
+
+                for statement in statements {
+                    self.process_global_statement(statement)?;
+                }
+
+                self.unset_self_type();
+            }
+            Node::Module { ref mut statements, namespace, .. } => {
+                self.enter_module(namespace);
+
+                for statement in statements {
+                    self.process_global_statement(statement)?;
+                }
+
+                self.exit_module();
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    fn define_global_value(&mut self, name: &str, value_type: TypeHandle, is_mutable: bool) -> crate::Result<Register> {
+        let path = self.current_module_info().path().child(name);
+        let pointer_type = self.get_pointer_type(value_type, PointerSemantics::simple(is_mutable));
+        let register = Register::new_global(path.to_string(), pointer_type);
+
+        self.current_namespace_info_mut().define(
+            name,
+            Symbol::Value(Value::Constant(Constant::Indirect {
+                pointee_type: value_type,
+                pointer: Box::new(Constant::Register(register.clone())),
+            })),
+        )?;
+
+        Ok(register)
+    }
+
+    pub fn complete_fill_phase(&mut self) -> crate::Result<()> {
+        let mut dependency_stack = Vec::new();
+        for registry_index in 0 .. self.type_registry.len() {
+            self.calculate_type_properties(
+                TypeHandle::new(registry_index),
+                true,
+                true,
+                true,
+                &mut dependency_stack,
+            )?;
+            if !dependency_stack.is_empty() {
+                panic!("dependencies were handled incorrectly while calculating properties for type {registry_index}");
+            }
+        }
+
+        self.fill_phase_complete = true;
+        Ok(())
+    }
+
+    fn calculate_type_properties(
+        &mut self,
+        handle: TypeHandle,
+        get_alignment: bool,
+        get_size: bool,
+        get_llvm_syntax: bool,
+        dependency_stack: &mut Vec<TypeHandle>,
+    ) -> crate::Result<()> {
+        let entry = self.type_entry(handle);
+        let get_alignment = get_alignment && entry.alignment.is_none();
+        let get_size = get_size && entry.size.is_none();
+        let get_llvm_syntax = get_llvm_syntax && entry.llvm_syntax.is_none();
+
+        if !get_alignment && !get_size && !get_llvm_syntax {
+            return Ok(());
+        }
+
+        if dependency_stack.contains(&handle) {
+            return Err(Box::new(crate::Error::RecursiveTypeDefinition {
+                type_name: self.type_path(handle).to_string(),
+            }));
+        }
+        dependency_stack.push(handle);
+
+        let repr = self.type_repr(handle).clone();
+        match repr {
+            TypeRepr::Unresolved => {
+                panic!("{handle:?} is still unresolved at the end of the fill phase");
+            }
+            TypeRepr::Pointer { pointee_type, .. } => {
+                self.calculate_type_properties(
+                    pointee_type,
+                    false,
+                    false,
+                    get_llvm_syntax,
+                    dependency_stack,
+                )?;
+            }
+            TypeRepr::Array { item_type, length } => {
+                self.calculate_type_properties(
+                    item_type,
+                    get_alignment,
+                    get_size && length.is_some(),
+                    get_llvm_syntax,
+                    dependency_stack,
+                )?;
+            }
+            TypeRepr::Structure { ref members, .. } => {
+                for member in members {
+                    self.calculate_type_properties(
+                        member.member_type,
+                        get_alignment || get_size,
+                        get_size,
+                        false,
+                        dependency_stack,
+                    )?;
+                }
+            }
+            TypeRepr::Function { ref signature } if get_llvm_syntax => {
+                for &parameter_type in signature.parameter_types() {
+                    self.calculate_type_properties(
+                        parameter_type,
+                        false,
+                        false,
+                        get_llvm_syntax,
+                        dependency_stack,
+                    )?;
+                }
+                self.calculate_type_properties(
+                    signature.return_type(),
+                    false,
+                    false,
+                    get_llvm_syntax,
+                    dependency_stack,
+                )?;
+            }
+            _ => {}
+        }
+
+        dependency_stack.pop();
+
+        if get_alignment {
+            let alignment = self.calculate_alignment(&repr);
+            self.type_entry_mut(handle).alignment = Some(alignment);
+        }
+        if get_size {
+            let size = self.calculate_size(&repr);
+            self.type_entry_mut(handle).size = Some(size);
+        }
+        if get_llvm_syntax {
+            let identifier = self.type_path(handle).to_string();
+            let llvm_syntax = self.generate_type_llvm_syntax(&identifier, &repr);
+            self.type_entry_mut(handle).llvm_syntax = Some(llvm_syntax);
+        }
+
+        Ok(())
+    }
+
+    fn create_namespace(&mut self, path: AbsolutePath) -> NamespaceHandle {
+        let handle = NamespaceHandle::new(self.namespace_registry.len());
+
+        self.namespace_registry.push(NamespaceInfo::new(path));
+
+        handle
+    }
+
+    fn create_type(&mut self, path: AbsolutePath, repr: TypeRepr) -> TypeHandle {
+        let handle = TypeHandle::new(self.type_registry.len());
+
+        let namespace = self.create_namespace(path.clone());
+        let alignment = self.fill_phase_complete.then(|| self.calculate_alignment(&repr));
+        let size = self.fill_phase_complete.then(|| self.calculate_size(&repr));
+        let llvm_syntax = self.fill_phase_complete.then(|| self.generate_type_llvm_syntax(&path.to_string(), &repr));
+
+        self.type_registry.push(TypeEntry {
+            path,
+            repr,
+            namespace,
             alignment,
             size,
             llvm_syntax,
-            symbol_table: SymbolTable::new(),
-        };
+        });
 
-        let registry_index = self.type_registry.len();
-        self.type_registry.push(entry);
-        TypeHandle::new(registry_index)
+        handle
     }
 
-    fn calculate_alignment(&self, info: &TypeInfo) -> Option<usize> {
-        match *info {
-            TypeInfo::Meta => None,
-            TypeInfo::Never => None,
-            TypeInfo::Void => None,
-            TypeInfo::Boolean => Some(1),
-            TypeInfo::Integer { size, .. } => Some(size),
-            TypeInfo::Pointer { .. } => Some(self.pointer_size),
-            TypeInfo::Function { .. } => Some(self.pointer_size),
-            TypeInfo::Array { item_type, .. } => self.type_alignment(item_type),
-            TypeInfo::Structure { ref members, .. } => members.iter()
+    fn update_type_repr(&mut self, handle: TypeHandle, repr: TypeRepr) {
+        let alignment = self.fill_phase_complete.then(|| self.calculate_alignment(&repr));
+        let size = self.fill_phase_complete.then(|| self.calculate_size(&repr));
+        let llvm_syntax = self.fill_phase_complete.then(|| {
+            let identifier = self.type_path(handle).to_string();
+            self.generate_type_llvm_syntax(&identifier, &repr)
+        });
+
+        let entry = self.type_entry_mut(handle);
+        entry.repr = repr;
+        entry.alignment = alignment;
+        entry.size = size;
+        entry.llvm_syntax = llvm_syntax;
+    }
+
+    fn calculate_alignment(&self, repr: &TypeRepr) -> Option<usize> {
+        match *repr {
+            TypeRepr::Unresolved => None,
+            TypeRepr::Meta => None,
+            TypeRepr::Never => None,
+            TypeRepr::Void => None,
+            TypeRepr::Boolean => Some(1),
+            TypeRepr::Integer { size, .. } => Some(size),
+            TypeRepr::Pointer { .. } => Some(self.pointer_size),
+            TypeRepr::Function { .. } => Some(self.pointer_size),
+            TypeRepr::Array { item_type, .. } => self.type_alignment(item_type),
+            TypeRepr::Structure { ref members, .. } => members.iter()
                 .map(|member| self.type_alignment(member.member_type))
                 .max().unwrap_or(Some(1)),
-            TypeInfo::Undefined { .. } => None,
-            TypeInfo::Alias { target } => self.type_alignment(target),
+            TypeRepr::ForeignStructure { .. } => None,
         }
     }
-    
-    fn calculate_size(&self, info: &TypeInfo) -> Option<usize> {
-        match *info {
-            TypeInfo::Meta => None,
-            TypeInfo::Never => Some(0),
-            TypeInfo::Void => Some(0),
-            TypeInfo::Boolean => Some(1),
-            TypeInfo::Integer { size, .. } => Some(size),
-            TypeInfo::Pointer { .. } => Some(self.pointer_size),
-            TypeInfo::Function { .. } => Some(self.pointer_size),
-            TypeInfo::Array { item_type, length } => {
+
+    fn calculate_size(&self, repr: &TypeRepr) -> Option<usize> {
+        match *repr {
+            TypeRepr::Unresolved => None,
+            TypeRepr::Meta => None,
+            TypeRepr::Never => Some(0),
+            TypeRepr::Void => Some(0),
+            TypeRepr::Boolean => Some(1),
+            TypeRepr::Integer { size, .. } => Some(size),
+            TypeRepr::Pointer { .. } => Some(self.pointer_size),
+            TypeRepr::Function { .. } => Some(self.pointer_size),
+            TypeRepr::Array { item_type, length } => {
                 let length = length?;
                 let item_size = self.type_size(item_type)?;
                 Some(length * item_size)
             }
-            TypeInfo::Structure { ref members, .. } => {
+            TypeRepr::Structure { ref members, .. } => {
                 let mut current_size = 0;
                 let mut max_alignment = 1;
 
@@ -603,32 +844,32 @@ impl GlobalContext {
 
                 Some(padded_size)
             }
-            TypeInfo::Undefined { .. } => None,
-            TypeInfo::Alias { target } => self.type_size(target),
+            TypeRepr::ForeignStructure { .. } => None,
         }
     }
-    
-    fn generate_type_llvm_syntax(&self, identifier: &str, info: &TypeInfo) -> String {
-        match *info {
-            TypeInfo::Meta => "<ERROR meta type>".to_owned(),
-            TypeInfo::Never => "void".to_owned(),
-            TypeInfo::Void => "void".to_owned(),
-            TypeInfo::Boolean => "i1".to_owned(),
-            TypeInfo::Integer { size, .. } => format!("i{}", size * 8),
-            TypeInfo::Pointer { pointee_type, .. } => {
+
+    fn generate_type_llvm_syntax(&self, identifier: &str, repr: &TypeRepr) -> String {
+        match *repr {
+            TypeRepr::Unresolved => "<ERROR unresolved type>".to_owned(),
+            TypeRepr::Meta => "<ERROR meta type>".to_owned(),
+            TypeRepr::Never => "void".to_owned(),
+            TypeRepr::Void => "void".to_owned(),
+            TypeRepr::Boolean => "i1".to_owned(),
+            TypeRepr::Integer { size, .. } => format!("i{}", size * 8),
+            TypeRepr::Pointer { pointee_type, .. } => {
                 match self.type_llvm_syntax(pointee_type) {
                     "void" => "{}*".to_owned(),
                     pointee_syntax => format!("{pointee_syntax}*")
                 }
             }
-            TypeInfo::Array { item_type, length } => match length {
+            TypeRepr::Array { item_type, length } => match length {
                 Some(length) => format!("[{} x {}]", length, self.type_llvm_syntax(item_type)),
                 None => self.type_llvm_syntax(item_type).to_owned(),
             }
-            TypeInfo::Structure { .. } | TypeInfo::Undefined { .. } => {
+            TypeRepr::Structure { .. } | TypeRepr::ForeignStructure { .. } => {
                 format!("%\"type.{identifier}\"")
-            },
-            TypeInfo::Function { ref signature, .. } => {
+            }
+            TypeRepr::Function { ref signature } => {
                 let mut syntax = format!("{}(", self.type_llvm_syntax(signature.return_type()));
                 let mut parameters_iter = signature.parameter_types().iter();
                 if let Some(&parameter) = parameters_iter.next() {
@@ -647,67 +888,6 @@ impl GlobalContext {
                 syntax.push_str(")*");
                 syntax
             }
-            TypeInfo::Alias { target } => self.type_llvm_syntax(target).to_owned(),
         }
-    }
-
-    pub fn types_are_equivalent(&self, lhs_type: TypeHandle, rhs_type: TypeHandle) -> bool {
-        self.get_canonical_type(lhs_type) == self.get_canonical_type(rhs_type)
-    }
-
-    pub fn can_coerce_type(&self, from_type: TypeHandle, to_type: TypeHandle, from_mutable: bool) -> bool {
-        let from_type = self.get_canonical_type(from_type);
-        let to_type = self.get_canonical_type(to_type);
-        from_type == to_type || match (self.type_info(from_type), self.type_info(to_type)) {
-            (
-                &TypeInfo::Pointer { pointee_type: from_pointee, semantics: from_semantics },
-                &TypeInfo::Pointer { pointee_type: to_pointee, semantics: to_semantics },
-            ) => {
-                // Not sure if this is right... needs testing
-                use PointerSemantics::*;
-                match (from_semantics, to_semantics) {
-                    (Immutable, Immutable) => self.can_coerce_type(from_pointee, to_pointee, false),
-                    (Immutable, _) => false,
-                    (Mutable, Immutable) => self.can_coerce_type(from_pointee, to_pointee, true),
-                    (Mutable, Mutable) => self.can_coerce_type(from_pointee, to_pointee, true),
-                    (Mutable, _) => false,
-                    (Owned, Immutable) => self.can_coerce_type(from_pointee, to_pointee, from_mutable),
-                    (Owned, Mutable) => from_mutable && self.can_coerce_type(from_pointee, to_pointee, from_mutable),
-                    (Owned, Owned) => self.can_coerce_type(from_pointee, to_pointee, from_mutable),
-                }
-            },
-            (
-                &TypeInfo::Array { item_type: from_item, length: Some(from_length) },
-                &TypeInfo::Array { item_type: to_item, length: Some(to_length) },
-            ) => {
-                from_length == to_length && self.can_coerce_type(from_item, to_item, from_mutable)
-            },
-            (
-                &TypeInfo::Array { item_type: from_item, length: _ },
-                &TypeInfo::Array { item_type: to_item, length: None },
-            ) => {
-                self.can_coerce_type(from_item, to_item, from_mutable)
-            },
-            (
-                TypeInfo::Function { signature: from_signature },
-                TypeInfo::Function { signature: to_signature },
-            ) => {
-                from_signature.is_variadic() == to_signature.is_variadic()
-                    && self.can_coerce_type(from_signature.return_type(), to_signature.return_type(), false)
-                    && from_signature.parameter_types().len() == to_signature.parameter_types().len()
-                    && std::iter::zip(from_signature.parameter_types(), to_signature.parameter_types())
-                        .all(|(&from_param, &to_param)| {
-                            self.can_coerce_type(from_param, to_param, false)
-                        })
-            },
-            (TypeInfo::Void, _) | (_, TypeInfo::Void) => true,
-            _ => false
-        }
-    }
-}
-
-impl Default for GlobalContext {
-    fn default() -> Self {
-        Self::new()
     }
 }
