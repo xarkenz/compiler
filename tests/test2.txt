@@ -1,7 +1,7 @@
 foreign function printf(format: *[u8], ..) -> u32;
 // namespace ::module {printf: value(function(*[u8], ..) -> u32)}
 
-function main() -> i32 {
+foreign function main() -> i32 {
     // namespace ::module {printf: _, main: value(function() -> i32)}
 
     let vector: [i32; 2] = [4, 8];

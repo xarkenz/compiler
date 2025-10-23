@@ -344,10 +344,37 @@ impl GlobalContext {
                 Ok(value.clone())
             }
             None => {
-                Err(Box::new(crate::Error::UndefinedGlobalSymbol {
-                    namespace: self.namespace_info(namespace).path().to_string(),
-                    name: name.to_owned(),
-                }))
+                let glob_imports = self.namespace_info(namespace).glob_imports().to_vec();
+
+                let search_results: Vec<(AbsolutePath, Value)> = glob_imports
+                    .into_iter()
+                    .filter_map(|glob_import_path| {
+                        let test_path = glob_import_path.into_child(name);
+                        self.get_path_value(&test_path)
+                            .ok()
+                            .map(|value| (test_path, value))
+                    })
+                    .collect();
+
+                if search_results.is_empty() {
+                    Err(Box::new(crate::Error::UndefinedGlobalSymbol {
+                        namespace: self.namespace_info(namespace).path().to_string(),
+                        name: name.to_string(),
+                    }))
+                }
+                else if search_results.len() > 1 {
+                    Err(Box::new(crate::Error::AmbiguousSymbol {
+                        name: name.to_string(),
+                        possible_paths: search_results
+                            .into_iter()
+                            .map(|(path, _)| path.to_string())
+                            .collect(),
+                    }))
+                }
+                else {
+                    let (_, value) = search_results.into_iter().next().unwrap();
+                    Ok(value)
+                }
             }
         }
     }
@@ -560,7 +587,7 @@ impl GlobalContext {
                 let identifier = if is_foreign {
                     name.clone()
                 } else {
-                    self.current_module_info().path().child(name).to_string()
+                    self.current_namespace_info().path().child(name).to_string()
                 };
                 let register = Register::new_global(identifier, function_type);
 

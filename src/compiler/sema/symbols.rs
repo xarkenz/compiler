@@ -227,7 +227,7 @@ impl NamespaceHandle {
 pub struct NamespaceInfo {
     path: AbsolutePath,
     symbols: HashMap<String, Symbol>,
-    star_imports: Vec<AbsolutePath>,
+    glob_imports: Vec<AbsolutePath>,
 }
 
 impl NamespaceInfo {
@@ -235,7 +235,7 @@ impl NamespaceInfo {
         Self {
             path,
             symbols: HashMap::new(),
-            star_imports: Vec::new(),
+            glob_imports: Vec::new(),
         }
     }
 
@@ -243,8 +243,8 @@ impl NamespaceInfo {
         &self.path
     }
 
-    pub fn star_imports(&self) -> &[AbsolutePath] {
-        &self.star_imports
+    pub fn glob_imports(&self) -> &[AbsolutePath] {
+        &self.glob_imports
     }
 
     pub fn find(&self, name: &str) -> Option<&Symbol> {
@@ -263,6 +263,10 @@ impl NamespaceInfo {
             })),
             None => Ok(()),
         }
+    }
+
+    pub fn add_glob_import(&mut self, path: impl Into<AbsolutePath>) {
+        self.glob_imports.push(path.into());
     }
 }
 

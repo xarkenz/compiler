@@ -231,7 +231,7 @@ impl<W: Write> Generator<W> {
             ast::Node::Module { statements, namespace, .. } => {
                 self.generate_module_block(statements, *namespace)
             }
-            ast::Node::Import { .. } => {
+            ast::Node::Import { .. } | ast::Node::GlobImport { .. } => {
                 // The fill phase has done all of the work for us already
                 Ok(Value::Void)
             }
@@ -428,20 +428,16 @@ impl<W: Write> Generator<W> {
                 if let Some(value) = local_context.find_symbol(name) {
                     value.clone()
                 }
-                else if let Some(symbol) = self.context.current_module_info().find(name) {
-                    if let Symbol::Value(value) = symbol {
-                        value.clone()
-                    }
-                    else {
-                        return Err(Box::new(crate::Error::NonValueSymbol {
-                            name: name.clone(),
-                        }));
-                    }
-                }
                 else {
-                    return Err(Box::new(crate::Error::UndefinedSymbol {
-                        name: name.clone(),
-                    }));
+                    self.context.get_symbol_value(self.context.current_module(), name)
+                        .map_err(|mut error| {
+                            if let crate::Error::UndefinedGlobalSymbol { .. } = error.as_ref() {
+                                *error = crate::Error::UndefinedSymbol {
+                                    name: name.clone(),
+                                };
+                            }
+                            error
+                        })?
                 }
             }
             token::Literal::Integer(value) => {
@@ -1530,26 +1526,22 @@ impl<W: Write> Generator<W> {
                 match *literal {
                     token::Literal::Name(ref name) => {
                         let value = if let Some(value) = local_context.and_then(|ctx| ctx.find_symbol(name)) {
-                            value
-                        }
-                        else if let Some(symbol) = self.context.current_module_info().find(name) {
-                            if let Symbol::Value(value) = symbol {
-                                value
-                            }
-                            else {
-                                return Err(Box::new(crate::Error::NonValueSymbol {
-                                    name: name.clone(),
-                                }));
-                            }
+                            value.clone()
                         }
                         else {
-                            return Err(Box::new(crate::Error::UndefinedSymbol {
-                                name: name.clone(),
-                            }));
+                            self.context.get_symbol_value(self.context.current_module(), name)
+                                .map_err(|mut error| {
+                                    if let crate::Error::UndefinedGlobalSymbol { .. } = error.as_ref() {
+                                        *error = crate::Error::UndefinedSymbol {
+                                            name: name.clone(),
+                                        };
+                                    }
+                                    error
+                                })?
                         };
 
                         if let Value::Constant(constant) = value {
-                            constant.clone()
+                            constant
                         }
                         else {
                             return Err(Box::new(crate::Error::NonConstantSymbol {

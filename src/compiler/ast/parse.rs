@@ -79,8 +79,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
         }
     }
 
-    pub fn parse_path(&mut self, first_segment: Option<PathSegment>) -> crate::Result<Vec<PathSegment>> {
+    pub fn parse_path(&mut self, first_segment: Option<PathSegment>, allow_glob: bool) -> crate::Result<(Vec<PathSegment>, bool)> {
         let mut segments = Vec::from_iter(first_segment);
+        let mut is_glob = false;
 
         loop {
             match self.get_token()? {
@@ -108,6 +109,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     let type_node = self.parse_type(Some(&[Token::AngleRight]))?;
                     segments.push(PathSegment::Type(Box::new(type_node)));
                 }
+                Token::Star if allow_glob => {
+                    is_glob = true;
+                }
                 got_token => return Err(Box::new(crate::Error::ExpectedType {
                     span: self.current_span(),
                     got_token: got_token.clone(),
@@ -118,10 +122,15 @@ impl<'a, T: BufRead> Parser<'a, T> {
             let Some(Token::Colon2) = self.current_token() else {
                 break;
             };
+            if is_glob {
+                return Err(Box::new(crate::Error::InvalidGlobPath {
+                    span: self.current_span(),
+                }))
+            }
             self.scan_token()?;
         }
 
-        Ok(segments)
+        Ok((segments, is_glob))
     }
 
     pub fn parse_operand(&mut self, allowed_ends: &[Token]) -> crate::Result<Box<Node>> {
@@ -170,7 +179,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         self.scan_token()?;
 
                         Box::new(Node::Path {
-                            segments: self.parse_path(Some(first_segment))?,
+                            segments: self.parse_path(Some(first_segment), false)?.0,
                         })
                     }
                     else {
@@ -196,7 +205,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 }
                 Token::Colon2 | Token::Super | Token::Module | Token::SelfType | Token::AngleLeft => {
                     Box::new(Node::Path {
-                        segments: self.parse_path(None)?,
+                        segments: self.parse_path(None, false)?.0,
                     })
                 }
                 _ => {
@@ -429,7 +438,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 Err(Box::new(crate::Error::UnexpectedQualifier { span: self.current_span(), got_token: got_token.clone() }))
             }
             _ => {
-                let segments = self.parse_path(None)?;
+                let segments = self.parse_path(None, false)?.0;
 
                 if let Some(allowed_ends) = allowed_ends {
                     self.expect_token(allowed_ends)?;
@@ -739,29 +748,43 @@ impl<'a, T: BufRead> Parser<'a, T> {
             }
             Some(Token::Import) if is_global && !is_in_implement_block => {
                 self.scan_token()?;
-                let segments = self.parse_path(None)?;
-                self.expect_token(&[Token::As, Token::Semicolon])?;
+                let (segments, is_glob_path) = self.parse_path(None, true)?;
 
-                let mut alias = None;
-                if let Some(Token::As) = self.current_token() {
-                    self.scan_token()?;
-                    alias = Some(self.expect_identifier()?);
-                    self.scan_token()?;
+                if is_glob_path {
                     self.expect_token(&[Token::Semicolon])?;
+                    self.scan_token()?;
+
+                    let path = context.get_absolute_path(&segments)?;
+                    context.current_module_info_mut().add_glob_import(path);
+
+                    Ok(Some(Box::new(Node::GlobImport {
+                        segments,
+                    })))
                 }
-                self.scan_token()?;
+                else {
+                    self.expect_token(&[Token::As, Token::Semicolon])?;
 
-                let path = context.get_absolute_path(&segments)?;
-                // Establish an alias symbol in the current module corresponding to this import
-                context.current_module_info_mut().define(
-                    alias.as_deref().unwrap_or(path.tail_name().unwrap()),
-                    Symbol::Alias(path.clone()),
-                )?;
+                    let mut alias = None;
+                    if let Some(Token::As) = self.current_token() {
+                        self.scan_token()?;
+                        alias = Some(self.expect_identifier()?);
+                        self.scan_token()?;
+                        self.expect_token(&[Token::Semicolon])?;
+                    }
+                    self.scan_token()?;
 
-                Ok(Some(Box::new(Node::Import {
-                    segments,
-                    alias,
-                })))
+                    let path = context.get_absolute_path(&segments)?;
+                    // Establish an alias symbol in the current module corresponding to this import
+                    context.current_module_info_mut().define(
+                        alias.as_deref().unwrap_or(path.tail_name().unwrap()),
+                        Symbol::Alias(path.clone()),
+                    )?;
+
+                    Ok(Some(Box::new(Node::Import {
+                        segments,
+                        alias,
+                    })))
+                }
             }
             Some(Token::Foreign) if is_global => {
                 self.scan_token()?;

@@ -143,6 +143,9 @@ pub enum Error {
     UnexpectedElse {
         span: Span,
     },
+    InvalidGlobPath {
+        span: Span,
+    },
     CannotMutateValue {
         type_name: String,
     },
@@ -263,6 +266,10 @@ pub enum Error {
     ImportAliasRequired {
         path: String,
     },
+    AmbiguousSymbol {
+        name: String,
+        possible_paths: Vec<String>,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Box<Error>>;
@@ -287,6 +294,7 @@ impl Error {
             Self::ExpectedClosingBracket { span, .. } => Some(span),
             Self::ExpectedStatement { span } => Some(span),
             Self::UnexpectedElse { span } => Some(span),
+            Self::InvalidGlobPath { span } => Some(span),
             _ => None
         }
     }
@@ -328,7 +336,7 @@ impl std::fmt::Display for Error {
                     write!(f, ", '{token}'")?;
                 }
                 write!(f, "; got '{got_token}'")
-            },
+            }
             Self::ExpectedIdentifier { .. } => write!(f, "expected an identifier"),
             Self::ExpectedOperand { got_token, .. } => write!(f, "expected an operand, got '{got_token}'"),
             Self::ExpectedOperation { got_token, .. } => write!(f, "expected an operation, got '{got_token}'"),
@@ -337,6 +345,7 @@ impl std::fmt::Display for Error {
             Self::ExpectedClosingBracket { bracket, .. } => write!(f, "expected closing '{bracket}'"),
             Self::ExpectedStatement { .. } => write!(f, "expected a statement"),
             Self::UnexpectedElse { .. } => write!(f, "unexpected 'else' without previous 'if'"),
+            Self::InvalidGlobPath { .. } => write!(f, "the '*' for a glob path must be located at the end of the path"),
             Self::CannotMutateValue { type_name } => write!(f, "cannot mutate value of type '{type_name}' as it is not 'mut'"),
             Self::ExpectedLValue {} => write!(f, "expected an lvalue"),
             Self::UndefinedSymbol { name } => write!(f, "symbol '{name}' is not defined"),
@@ -369,14 +378,14 @@ impl std::fmt::Display for Error {
                     write!(f, ", {member_name}")?;
                 }
                 Ok(())
-            },
+            }
             Self::ExtraStructMembers { member_names, type_name } => {
                 write!(f, "extraneous members in initializer of struct '{type_name}': {}", &member_names[0])?;
                 for member_name in &member_names[1..] {
                     write!(f, ", {member_name}")?;
                 }
                 Ok(())
-            },
+            }
             Self::UndefinedStructMember { member_name, type_name } => write!(f, "member '{member_name}' does not exist in struct '{type_name}'"),
             Self::ExpectedPointer { type_name } => write!(f, "expected a pointer, got value of type '{type_name}'"),
             Self::ExpectedInteger { type_name } => write!(f, "expected an integer, got value of type '{type_name}'"),
@@ -389,7 +398,14 @@ impl std::fmt::Display for Error {
             Self::UnsupportedConstantExpression {} => write!(f, "unsupported feature in constant expression"),
             Self::NoSelfType {} => write!(f, "keyword 'Self' can only be used inside 'implement' blocks and 'struct' definitions"),
             Self::ExpectedSelfParameter {} => write!(f, "expected a first parameter of type 'Self', '*Self', or '*mut Self'"),
-            Self::ImportAliasRequired { path } => write!(f, "import '{path}' must be renamed using the syntax 'import _ as <name>'")
+            Self::ImportAliasRequired { path } => write!(f, "import '{path}' must be renamed using the syntax 'import _ as <name>'"),
+            Self::AmbiguousSymbol { name, possible_paths } => {
+                write!(f, "'{name}' could refer to multiple imported items ({}", &possible_paths[0])?;
+                for possible_path in &possible_paths[1..] {
+                    write!(f, ", {possible_path}")?;
+                }
+                write!(f, "); try importing one of these paths directly")
+            }
         }
     }
 }

@@ -448,6 +448,9 @@ pub enum Node {
         segments: Vec<PathSegment>,
         alias: Option<String>,
     },
+    GlobImport {
+        segments: Vec<PathSegment>,
+    }
 }
 
 impl Node {
@@ -564,7 +567,10 @@ impl fmt::Display for Node {
             Self::Constant { name, value_type, value, .. } => {
                 write!(f, " let const {name}: {value_type} = {value};")
             }
-            Self::Function { name, parameters, is_variadic, return_type, body, .. } => {
+            Self::Function { name, parameters, is_variadic, return_type, body, is_foreign, .. } => {
+                if *is_foreign {
+                    write!(f, " foreign")?;
+                }
                 write!(f, " function {name}(")?;
                 let mut parameters_iter = parameters.iter();
                 if let Some(FunctionParameterNode { name: parameter_name, type_node: parameter_type, is_mutable }) = parameters_iter.next() {
@@ -593,7 +599,10 @@ impl fmt::Display for Node {
                     write!(f, ") -> {return_type};")
                 }
             }
-            Self::Structure { name, members, .. } => {
+            Self::Structure { name, members, is_foreign, .. } => {
+                if *is_foreign {
+                    write!(f, " foreign")?;
+                }
                 if let Some(members) = members {
                     write!(f, " struct {name} {{")?;
                     let mut members_iter = members.iter();
@@ -632,6 +641,9 @@ impl fmt::Display for Node {
                 else {
                     write!(f, " import {path};")
                 }
+            }
+            Self::GlobImport { segments } => {
+                write!(f, " import {}::*;", PathSegment::path_to_string(segments))
             }
         }
     }
