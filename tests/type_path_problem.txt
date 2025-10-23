@@ -21,3 +21,11 @@ module util {
 
     import i32 as Int;
 }
+
+foreign function main() -> i32 {
+    let arr: [util::Int; 2] = [5, 7];
+    printf("(%d, %d)", get_x(&arr), get_y(&arr));
+    return 0;
+}
+
+foreign function printf(format: *[u8], ..) -> i32;

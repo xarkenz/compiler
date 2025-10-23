@@ -8,8 +8,8 @@ fn general_test() {
 
     let args = CompilerArgs::parse_from([
         "compiler",
-        "-s", "tests/test2.txt",
-        "-o", "tests/test2.ll",
+        "-s", "tests/collections.txt",
+        "-o", "tests/collections.ll",
     ]);
     match compiler::cli::invoke(&args) {
         Err(error) => println!("\x1b[31mError: {}\x1b[0m", error.to_string_with_context(args.source_paths())),

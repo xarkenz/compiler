@@ -1,6 +1,6 @@
-function malloc(size_bytes: u64) -> *own void;
-function free(alloc: *own void);
-function printf(format: *[u8], ..) -> u32;
+foreign function malloc(size_bytes: u64) -> *mut void;
+foreign function free(alloc: *mut void);
+foreign function printf(format: *[u8], ..) -> u32;
 
 implement i32 {
     function max(self: Self, other: Self) -> Self {
@@ -31,16 +31,16 @@ implement i32 {
 
 struct LinkedListNode {
     value: *void,
-    next: *own LinkedListNode,
+    next: *mut Self,
 }
 
 struct LinkedList {
-    head: *own LinkedListNode,
+    head: *mut LinkedListNode,
 }
 
 implement LinkedList {
     function new() -> Self {
-        return LinkedList {
+        return Self {
             head: null,
         };
     }
@@ -54,8 +54,8 @@ implement LinkedList {
         }
     }
 
-    function push_front(self: *mut Self, value: *void) {
-        let mut new_node: *own LinkedListNode = malloc(sizeof(LinkedListNode));
+    function push_front(mut self: *mut Self, value: *void) {
+        let mut new_node: *mut LinkedListNode = malloc(sizeof(LinkedListNode));
         *new_node = LinkedListNode {
             value: value,
             next: self.head,
@@ -63,12 +63,12 @@ implement LinkedList {
         self.head = new_node;
     }
 
-    function pop_front(self: *mut Self) -> *void {
+    function pop_front(mut self: *mut Self) -> *void {
         if (self.head == null) {
             return null;
         }
         else {
-            let front: *own LinkedListNode = self.head;
+            let front: *mut LinkedListNode = self.head;
             let value: *void = front.value;
             self.head = front.next;
             free(front);
@@ -79,15 +79,15 @@ implement LinkedList {
 
 struct AVLTreeNode {
     key: *void,
-    left: *own AVLTreeNode,
-    right: *own AVLTreeNode,
+    left: *mut Self,
+    right: *mut Self,
     height: i32,
 }
 
 implement AVLTreeNode {
-    function alloc(key: *void) -> *own Self {
-        let mut alloc: *own Self = malloc(sizeof(Self));
-        *alloc = AVLTreeNode {
+    function alloc(key: *void) -> *mut Self {
+        let mut alloc: *mut Self = malloc(sizeof(Self));
+        *alloc = Self {
             key: key,
             left: null,
             right: null,
@@ -106,15 +106,15 @@ implement AVLTreeNode {
         }
     }
 
-    function recompute_height(self: *mut Self) {
+    function recompute_height(mut self: *mut Self) {
         self.height = 1 + i32::max(
             self.left.get_height(),
             self.right.get_height(),
         );
     }
 
-    function rotate_right(mut self: *own Self) -> *own Self {
-        let mut new_root: *own Self = self.left;
+    function rotate_right(mut self: *mut Self) -> *mut Self {
+        let mut new_root: *mut Self = self.left;
         self.left = new_root.right;
         new_root.right = self;
         self.recompute_height();
@@ -122,8 +122,8 @@ implement AVLTreeNode {
         return new_root;
     }
 
-    function rotate_left(mut self: *own Self) -> *own Self {
-        let mut new_root: *own Self = self.right;
+    function rotate_left(mut self: *mut Self) -> *mut Self {
+        let mut new_root: *mut Self = self.right;
         self.right = new_root.left;
         new_root.left = self;
         self.recompute_height();
@@ -131,22 +131,22 @@ implement AVLTreeNode {
         return new_root;
     }
 
-    function balance(mut self: *own Self) -> *own Self {
+    function balance(mut self: *mut Self) -> *mut Self {
         if (self == null) {
             return null;
         }
         let imbalance: i32 = self.left.get_height() - self.right.get_height();
         if (imbalance > 1) {
             if (self.left.right.get_height() > self.left.left.get_height()) {
-                self.left = (self.left as *own Self).rotate_left() as *own Self;
+                self.left = self.left.rotate_left();
             }
-            self = (self as *own Self).rotate_right() as *own Self;
+            self = self.rotate_right();
         }
         else if (imbalance < -1) {
             if (self.right.left.get_height() > self.right.right.get_height()) {
-                self.right = (self.right as *own Self).rotate_right() as *own Self;
+                self.right = self.right.rotate_right();
             }
-            self = (self as *own Self).rotate_left() as *own Self;
+            self = self.rotate_left();
         }
         else {
             self.recompute_height();
@@ -155,13 +155,12 @@ implement AVLTreeNode {
     }
 
     function print(self: *Self, printer: function(*void)) {
-        if (self == null) {
-            printf("_");
-        }
-        else {
+        if (self != null) {
             printf("(");
             self.left.print(printer);
-            printf(", ");
+            printf(" ");
+            printer(self.key);
+            printf(" ");
             self.right.print(printer);
             printf(")");
         }
@@ -169,13 +168,13 @@ implement AVLTreeNode {
 }
 
 struct AVLTree {
-    root: *own AVLTreeNode,
+    root: *mut AVLTreeNode,
     comparator: function(*void, *void) -> i32,
 }
 
 implement AVLTree {
     function new(comparator: function(*void, *void) -> i32) -> Self {
-        return AVLTree {
+        return Self {
             root: null,
             comparator: comparator,
         };
@@ -198,7 +197,7 @@ implement AVLTree {
         return null;
     }
 
-    function insert_subtree(self: *mut Self, node_ref: *mut *own AVLTreeNode, key: *void) -> *void {
+    function insert_subtree(mut self: *mut Self, mut node_ref: *mut *mut AVLTreeNode, key: *void) -> *void {
         if (*node_ref == null) {
             *node_ref = AVLTreeNode::alloc(key);
             return null;
@@ -215,11 +214,11 @@ implement AVLTree {
             (*node_ref).key = key;
             return replaced_key;
         }
-        *node_ref = (*node_ref as *own AVLTreeNode).balance() as *own AVLTreeNode;
+        *node_ref = (*node_ref).balance();
         return null;
     }
 
-    function insert(self: *mut Self, key: *void) -> *void {
+    function insert(mut self: *mut Self, key: *void) -> *void {
         return self.insert_subtree(&self.root, key);
     }
 
@@ -229,31 +228,29 @@ implement AVLTree {
     }
 }
 
-struct BTreeNode;
-
 struct BTreeNodeKey {
     boundary: *void,
-    left: *own BTreeNode,
+    left: *mut BTreeNode,
 }
 
 struct BTreeNode {
     is_leaf: bool,
     degree: u64,
-    keys: *own [BTreeNodeKey],
-    right: *own BTreeNode,
+    keys: *mut [BTreeNodeKey],
+    right: *mut Self,
 }
 
 struct BTreeLeaf {
     is_leaf: bool,
     degree: u64,
-    elements: *own [*void],
+    elements: *mut [*void],
 }
 
 implement BTreeLeaf {
-    function alloc(l_order: u64, first_element: *void) -> *own Self {
-        let mut elements: *own [*void] = malloc(sizeof(*void) * l_order);
+    function alloc(l_order: u64, first_element: *void) -> *mut Self {
+        let mut elements: *mut [*void] = malloc(sizeof(*void) * l_order);
         elements[0] = first_element;
-        let mut alloc: *own Self = malloc(sizeof(Self));
+        let mut alloc: *mut Self = malloc(sizeof(Self));
         *alloc = Self {
             is_leaf: true,
             degree: 1,
@@ -267,12 +264,12 @@ struct BTree {
     m_order: u64,
     l_order: u64,
     comparator: function(*void, *void) -> i32,
-    root: *own BTreeNode,
+    root: *mut BTreeNode,
 }
 
 implement BTree {
     function new(m_order: u64, l_order: u64, comparator: function(*void, *void) -> i32) -> Self {
-        return BTree {
+        return Self {
             m_order: m_order,
             l_order: l_order,
             comparator: comparator,
@@ -280,16 +277,16 @@ implement BTree {
         };
     }
 
-    function insert(self: *mut Self, key: *void) -> *void {
+    function insert(mut self: *mut Self, key: *void) -> *void {
         if (self.root == null) {
-            self.root = BTreeLeaf::alloc(self.l_order, key) as *own BTreeNode;
+            self.root = BTreeLeaf::alloc(self.l_order, key) as *mut BTreeNode;
             return null;
         }
         return null;
     }
 }
 
-function max_percolate_down(array: *mut [*void], length: u64, comparator: function(*void, *void) -> i32, mut index: u64) {
+function max_percolate_dmut(mut array: *mut [*void], length: u64, comparator: function(*void, *void) -> i32, mut index: u64) {
     let target: *void = array[index];
     while (true) {
         let left: u64 = (index + 1) * 2 - 1;
@@ -318,13 +315,13 @@ function max_percolate_down(array: *mut [*void], length: u64, comparator: functi
     array[index] = target;
 }
 
-function heap_sort(array: *mut [*void], length: u64, comparator: function(*void, *void) -> i32) {
+function heap_sort(mut array: *mut [*void], length: u64, comparator: function(*void, *void) -> i32) {
     // Build max heap
     let mut index: u64 = length / 2;
     while (index > 0) {
         index -= 1;
-        // Percolate down
-        max_percolate_down(array, length, comparator, index);
+        // Percolate dmut
+        max_percolate_dmut(array, length, comparator, index);
     }
     // Build sorted array
     index = length;
@@ -334,8 +331,8 @@ function heap_sort(array: *mut [*void], length: u64, comparator: function(*void,
         let max_value: *void = array[0];
         array[0] = array[index];
         array[index] = max_value;
-        // Percolate the root down within the unsorted range
-        max_percolate_down(array, index, comparator, 0);
+        // Percolate the root dmut within the unsorted range
+        max_percolate_dmut(array, index, comparator, 0);
     }
 }
 
@@ -353,7 +350,7 @@ function print_i32_ptr_array(array: *[*i32], length: u64) {
     printf("]");
 }
 
-function main() -> i32 {
+foreign function main() -> i32 {
     let keys: [i32; 15] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
     let mut list: LinkedList = LinkedList::new();
@@ -367,7 +364,7 @@ function main() -> i32 {
     while ((value = list.pop_front()) != null) {
         printf("pop: %d\n", *value);
     }
-    
+
     let mut tree: AVLTree = AVLTree::new(i32::cmp);
     let mut i: u64 = 0;
     while (i < 7) {

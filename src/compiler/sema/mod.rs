@@ -513,18 +513,12 @@ impl GlobalContext {
                 &TypeRepr::Pointer { pointee_type: from_pointee, semantics: from_semantics },
                 &TypeRepr::Pointer { pointee_type: to_pointee, semantics: to_semantics },
             ) => {
-                // Not sure if this is right... needs testing
-                // FIXME: it's not. and owned pointers are also unnecessary
                 use PointerSemantics::*;
                 match (from_semantics, to_semantics) {
                     (Immutable, Immutable) => self.can_coerce_type(from_pointee, to_pointee, false),
-                    (Immutable, _) => false,
+                    (Immutable, Mutable) => false,
                     (Mutable, Immutable) => self.can_coerce_type(from_pointee, to_pointee, true),
-                    (Mutable, Mutable) => self.can_coerce_type(from_pointee, to_pointee, true),
-                    (Mutable, _) => false,
-                    (Owned, Immutable) => self.can_coerce_type(from_pointee, to_pointee, from_mutable),
-                    (Owned, Mutable) => from_mutable && self.can_coerce_type(from_pointee, to_pointee, from_mutable),
-                    (Owned, Owned) => self.can_coerce_type(from_pointee, to_pointee, from_mutable),
+                    (Mutable, Mutable) => from_mutable && self.can_coerce_type(from_pointee, to_pointee, true),
                 }
             }
             (
@@ -650,7 +644,7 @@ impl GlobalContext {
 
     fn define_global_value(&mut self, name: &str, value_type: TypeHandle, is_mutable: bool) -> crate::Result<Register> {
         let path = self.current_module_info().path().child(name);
-        let pointer_type = self.get_pointer_type(value_type, PointerSemantics::simple(is_mutable));
+        let pointer_type = self.get_pointer_type(value_type, PointerSemantics::from_flag(is_mutable));
         let register = Register::new_global(path.to_string(), pointer_type);
 
         self.current_namespace_info_mut().define(

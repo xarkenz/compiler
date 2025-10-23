@@ -1,13 +1,13 @@
 foreign struct CFile;
 
-foreign function fopen(filename: *[u8], mode: *[u8]) -> *own CFile;
-foreign function fclose(file: *own CFile) -> i32;
+foreign function fopen(filename: *[u8], mode: *[u8]) -> *mut CFile;
+foreign function fclose(file: *mut CFile) -> i32;
 foreign function feof(file: *mut CFile) -> i32;
 foreign function fgets(buffer: *mut [u8], limit: i32, file: *mut CFile) -> *mut [u8];
 foreign function printf(format: *[u8], ..) -> u32;
 
-foreign function malloc(size_bytes: u64) -> *own void;
-foreign function free(alloc: *own void);
+foreign function malloc(size_bytes: u64) -> *mut void;
+foreign function free(alloc: *mut void);
 foreign function memcpy(dest: *mut void, src: *void, count: u64) -> *mut void;
 
 foreign function strlen(str: *[u8]) -> u64;
@@ -41,20 +41,15 @@ struct MutStr {
     length: u64,
 }
 
-struct OwnStr {
-    ptr: *own [u8],
-    length: u64,
-}
-
 struct String {
-    str: OwnStr,
+    str: MutStr,
     capacity: u64,
 }
 
 implement String {
     function new() -> Self {
         return String {
-            str: OwnStr {
+            str: MutStr {
                 ptr: null,
                 length: 0,
             },
@@ -76,7 +71,7 @@ implement String {
     function grow_by(self: *mut Self, additional: u64) {
         let required_capacity: u64 = self.capacity + additional;
         let capacity: u64 = u64::max(self.capacity * 2, required_capacity);
-        let mut ptr: *own [u8] = malloc(sizeof(u8) * capacity);
+        let mut ptr: *mut [u8] = malloc(sizeof(u8) * capacity);
 
         memcpy(ptr, self.str.ptr, self.str.length);
         free(self.str.ptr);
@@ -133,7 +128,7 @@ function gcd(mut a: u32, mut b: u32) -> u32 {
 }
 
 function aoc_01_p1() {
-    let mut input: *own CFile = fopen("day01.txt", "r");
+    let mut input: *mut CFile = fopen("day01.txt", "r");
     if (input == null) {
         printf("unable to open input file\n");
         return;
@@ -172,15 +167,15 @@ function aoc_01_p1() {
 
 struct Node {
     value: *[u8],
-    next: *own Self,
+    next: *mut Self,
 }
 
 function omg_linked_list(values: *[*[u8]], value_count: u64) {
-    let mut head: *own Node = null;
+    let mut head: *mut Node = null;
 
     let mut index: u64 = 0;
     while (index < value_count) {
-        let mut node: *own Node = malloc(sizeof(Node));
+        let mut node: *mut Node = malloc(sizeof(Node));
         *node = Node {
             value: values[index],
             next: head,
@@ -192,7 +187,7 @@ function omg_linked_list(values: *[*[u8]], value_count: u64) {
 
     printf("Reversed:\n");
     while (head != null) {
-        let node: *own Node = head;
+        let node: *mut Node = head;
 
         printf("%s\n", node.value);
         head = node.next;

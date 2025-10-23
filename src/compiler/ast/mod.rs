@@ -321,7 +321,6 @@ impl fmt::Display for TypeNode {
             Self::Pointer { pointee_type, semantics } => match semantics {
                 PointerSemantics::Immutable => write!(f, "*{pointee_type}"),
                 PointerSemantics::Mutable => write!(f, "*mut {pointee_type}"),
-                PointerSemantics::Owned => write!(f, "*own {pointee_type}"),
             }
             Self::Array { item_type, length: Some(length) } => {
                 write!(f, "[{item_type}; {length}]")

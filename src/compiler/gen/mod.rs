@@ -166,10 +166,10 @@ impl<W: Write> Generator<W> {
             value => return Ok(value)
         };
 
-        // If the pointee is a `*own _`, copy the semantics from the pointer to the pointee
+        // If the pointee is `*mut _`, copy the semantics from the pointer to the pointee
         if let &TypeRepr::Pointer {
             pointee_type: next_pointee_type,
-            semantics: PointerSemantics::Owned,
+            semantics: PointerSemantics::Mutable,
         } = pointee_type.repr(&self.context) {
             let &TypeRepr::Pointer { semantics, .. } = pointer.get_type().repr(&self.context) else {
                 panic!("indirect value pointer is not a pointer type")
@@ -999,7 +999,7 @@ impl<W: Write> Generator<W> {
                 TypeRepr::Array { item_type, length } => {
                     // &[T; N], &[T]
                     let &TypeRepr::Pointer { semantics, .. } = pointer.get_type().repr(&self.context) else {
-                        panic!("bad pointer for indirect");
+                        panic!("indirect value pointer is not a pointer type")
                     };
                     let element_pointer_type = self.context.get_pointer_type(item_type, semantics);
                     let element_pointer = local_context.new_anonymous_register(element_pointer_type);
@@ -1019,10 +1019,10 @@ impl<W: Write> Generator<W> {
                     TypeRepr::Array { item_type, length } => {
                         // &*[T; N], &*[T]
                         let &TypeRepr::Pointer { semantics: outer_semantics, .. } = pointer.get_type().repr(&self.context) else {
-                            panic!("bad pointer for indirect");
+                            panic!("indirect value pointer is not a pointer type")
                         };
                         let semantics = match semantics {
-                            PointerSemantics::Owned => outer_semantics,
+                            PointerSemantics::Mutable => outer_semantics,
                             _ => semantics
                         };
                         let array_pointer = local_context.new_anonymous_register(pointee_type);
@@ -1177,7 +1177,7 @@ impl<W: Write> Generator<W> {
             Value::Indirect { pointer, pointee_type } => match pointee_type.repr(&self.context).clone() {
                 TypeRepr::Structure { members, .. } => {
                     let &TypeRepr::Pointer { semantics, .. } = pointer.get_type().repr(&self.context) else {
-                        panic!("bad pointer for indirect");
+                        panic!("indirect value pointer is not a pointer type")
                     };
 
                     let Some(member_index) = members.iter().position(|member| &member.name == member_name) else {
@@ -1337,7 +1337,7 @@ impl<W: Write> Generator<W> {
     fn generate_local_let_statement(&mut self, name: &str, type_node: &ast::TypeNode, is_mutable: bool, value: Option<&ast::Node>, local_context: &mut LocalContext) -> crate::Result<Value> {
         let value_type = self.context.interpret_type_node(type_node)?;
 
-        let semantics = PointerSemantics::simple(is_mutable);
+        let semantics = PointerSemantics::from_flag(is_mutable);
         let pointer_type = self.context.get_pointer_type(value_type, semantics);
         let pointer = local_context.define_indirect_symbol(name.into(), pointer_type, value_type);
 
@@ -1413,7 +1413,7 @@ impl<W: Write> Generator<W> {
             .map(|(ast::FunctionParameterNode { name, is_mutable, .. }, &parameter_type)| {
                 let input_register = local_context.new_anonymous_register(parameter_type);
 
-                let semantics = PointerSemantics::simple(*is_mutable);
+                let semantics = PointerSemantics::from_flag(*is_mutable);
                 let pointer_type = self.context.get_pointer_type(parameter_type, semantics);
                 let pointer = local_context.define_indirect_symbol(name.into(), pointer_type, parameter_type);
 

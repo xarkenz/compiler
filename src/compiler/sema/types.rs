@@ -4,11 +4,10 @@ use super::*;
 pub enum PointerSemantics {
     Immutable,
     Mutable,
-    Owned,
 }
 
 impl PointerSemantics {
-    pub fn simple(is_mutable: bool) -> Self {
+    pub fn from_flag(is_mutable: bool) -> Self {
         if is_mutable {
             Self::Mutable
         }

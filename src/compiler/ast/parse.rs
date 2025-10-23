@@ -349,10 +349,6 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         self.scan_token()?;
                         PointerSemantics::Mutable
                     }
-                    Some(Token::Own) => {
-                        self.scan_token()?;
-                        PointerSemantics::Owned
-                    }
                     _ => {
                         PointerSemantics::Immutable
                     }
@@ -434,8 +430,11 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     return_type,
                 })
             }
-            got_token @ (Token::Mut | Token::Own) => {
-                Err(Box::new(crate::Error::UnexpectedQualifier { span: self.current_span(), got_token: got_token.clone() }))
+            Token::Mut => {
+                Err(Box::new(crate::Error::UnexpectedQualifier {
+                    span: self.current_span(),
+                    got_token: Token::Mut,
+                }))
             }
             _ => {
                 let segments = self.parse_path(None, false)?.0;
@@ -774,9 +773,20 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.scan_token()?;
 
                     let path = context.get_absolute_path(&segments)?;
+                    let import_name = match alias.as_ref() {
+                        Some(alias) => alias.as_str(),
+                        None => match path.tail_name() {
+                            Some(name) => name,
+                            None => {
+                                return Err(Box::new(crate::Error::ImportAliasRequired {
+                                    path: path.to_string(),
+                                }));
+                            }
+                        }
+                    };
                     // Establish an alias symbol in the current module corresponding to this import
                     context.current_module_info_mut().define(
-                        alias.as_deref().unwrap_or(path.tail_name().unwrap()),
+                        import_name,
                         Symbol::Alias(path.clone()),
                     )?;
 

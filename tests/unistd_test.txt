@@ -1,15 +1,15 @@
 import i32 as ProcessID;
 
 // stdio.h
-function printf(format: *[u8], ..) -> i32;
+foreign function printf(format: *[u8], ..) -> i32;
 // unistd.h
-function getpid() -> ProcessID;
-function getppid() -> ProcessID;
-function fork() -> ProcessID;
+foreign function getpid() -> ProcessID;
+foreign function getppid() -> ProcessID;
+foreign function fork() -> ProcessID;
 // sys/wait.h
-function wait(status: *i32) -> ProcessID;
+foreign function wait(status: *i32) -> ProcessID;
 
-function main() -> i32 {
+foreign function main() -> i32 {
     // Approach:
     // - Parent prints statement 1
     // - Fork child process, parent waits for child to finish
