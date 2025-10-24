@@ -3,8 +3,6 @@ pub mod parse;
 use crate::sema::{NamespaceHandle, PointerSemantics, Register, TypeHandle};
 use crate::token::*;
 
-use std::fmt;
-
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Associativity {
     LeftToRight,
@@ -259,7 +257,6 @@ impl BinaryOperation {
     }
 }
 
-// TODO: star import
 #[derive(Clone, Debug)]
 pub enum PathSegment {
     Name(String),
@@ -271,11 +268,11 @@ pub enum PathSegment {
     Type(Box<TypeNode>),
 }
 
-impl fmt::Display for PathSegment {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for PathSegment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match *self {
             Self::Name(ref name) => write!(f, "{name}"),
-            Self::RootModule => write!(f, ""),
+            Self::RootModule => Ok(()),
             Self::SuperModule => write!(f, "super"),
             Self::SelfModule => write!(f, "module"),
             Self::SelfType => write!(f, "Self"),
@@ -312,8 +309,8 @@ pub enum TypeNode {
     },
 }
 
-impl fmt::Display for TypeNode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for TypeNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Path { segments } => {
                 write!(f, "{}", PathSegment::path_to_string(segments))
@@ -389,6 +386,9 @@ pub enum Node {
         structure_type: Box<Node>,
         members: Vec<(String, Box<Node>)>,
     },
+    Grouping {
+        content: Box<Node>,
+    },
     Scope {
         statements: Vec<Box<Node>>,
     },
@@ -453,20 +453,32 @@ pub enum Node {
 }
 
 impl Node {
-    pub fn as_array_length(&self) -> Option<usize> {
+    pub fn as_name(&self) -> crate::Result<&str> {
+        match self {
+            Self::Literal(Literal::Name(name)) => {
+                Ok(name)
+            }
+            _ => {
+                todo!("need to integrate `Span` into codegen")
+                // Err(Box::new(crate::Error::ExpectedIdentifier { span: ??? }))
+            }
+        }
+    }
+
+    pub fn as_constant_usize(&self) -> crate::Result<usize> {
         // Must be an integer literal
         if let &Self::Literal(Literal::Integer(value)) = self {
             // Must be an acceptable usize value
-            if value >= 0 && value <= usize::MAX as i128 {
-                return Some(value as usize);
+            if let Ok(value) = usize::try_from(value) {
+                return Ok(value);
             }
         }
-        None
+        Err(Box::new(crate::Error::NonConstantArrayLength {}))
     }
 }
 
-impl fmt::Display for Node {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Literal(literal) => {
                 write!(f, "{literal}")
@@ -516,6 +528,9 @@ impl fmt::Display for Node {
                     write!(f, " ")?;
                 }
                 write!(f, "}})")
+            }
+            Self::Grouping { content } => {
+                write!(f, "({content})")
             }
             Self::Scope { statements } => {
                 write!(f, " {{")?;

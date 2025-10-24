@@ -211,6 +211,10 @@ pub enum Error {
     },
     UnknownArrayType {
     },
+    NoSuchMethod {
+        type_name: String,
+        method_name: String,
+    },
     InvalidStructIdentifier {
     },
     NonStructSymbol {
@@ -369,6 +373,7 @@ impl std::fmt::Display for Error {
             Self::NonConstantSymbol { name } => write!(f, "'{name}' is not constant and cannot be used in a constant expression"),
             Self::IncompatibleValueType { value, type_name } => write!(f, "'{value}' cannot be used as a value of type '{type_name}'"),
             Self::UnknownArrayType {} => write!(f, "unable to infer array type"),
+            Self::NoSuchMethod { type_name, method_name } => write!(f, "{type_name} has no method '{method_name}' (to call a member, wrap it in parentheses)"),
             Self::InvalidStructIdentifier {} => write!(f, "invalid syntax for struct type"),
             Self::NonStructSymbol { name } => write!(f, "cannot use '{name}' as a struct type"),
             Self::NonStructType { type_name } => write!(f, "type '{type_name}' is not a struct type"),

@@ -269,6 +269,10 @@ impl<W: Write> Generator<W> {
             ast::Node::StructureLiteral { structure_type: type_name, members } => {
                 self.generate_structure_literal(type_name, members, local_context)?
             }
+            ast::Node::Grouping { content } => {
+                // Fine to bypass validation steps since this is literally just parentheses
+                return self.generate_local_node(content, local_context, expected_type);
+            }
             ast::Node::Scope { statements } => {
                 local_context.enter_scope();
 
@@ -1150,6 +1154,7 @@ impl<W: Write> Generator<W> {
 
     fn generate_member_access(&mut self, lhs: Value, member_name: &ast::Node, local_context: &mut LocalContext) -> crate::Result<Value> {
         let lhs_type = lhs.get_type();
+        let member_name = member_name.as_name()?;
 
         let cannot_access_error = |context: &GlobalContext| {
             Box::new(crate::Error::ExpectedStruct {
@@ -1157,22 +1162,6 @@ impl<W: Write> Generator<W> {
             })
         };
 
-        let ast::Node::Literal(token::Literal::Name(member_name)) = member_name else {
-            todo!("need to integrate `Span` into codegen")
-            // return Err(Box::new(crate::Error::ExpectedIdentifier { span: ??? }));
-        };
-
-        // First, search for a method implemented for the type
-        let lhs_namespace = self.context.type_namespace(lhs_type);
-        if let Some(Symbol::Value(value)) = self.context.namespace_info(lhs_namespace).find(member_name) {
-            // A method (presumably) was found, so bind self and return it
-            return Ok(Value::BoundFunction {
-                self_value: Box::new(lhs),
-                function_value: Box::new(value.clone()),
-            });
-        }
-
-        // No method was found, so attempt to get a struct member
         match lhs {
             Value::Indirect { pointer, pointee_type } => match pointee_type.repr(&self.context).clone() {
                 TypeRepr::Structure { members, .. } => {
@@ -1180,9 +1169,9 @@ impl<W: Write> Generator<W> {
                         panic!("indirect value pointer is not a pointer type")
                     };
 
-                    let Some(member_index) = members.iter().position(|member| &member.name == member_name) else {
+                    let Some(member_index) = members.iter().position(|member| member.name == member_name) else {
                         return Err(Box::new(crate::Error::UndefinedStructMember {
-                            member_name: member_name.clone(),
+                            member_name: member_name.to_string(),
                             type_name: lhs_type.path(&self.context).to_string(),
                         }));
                     };
@@ -1247,9 +1236,50 @@ impl<W: Write> Generator<W> {
     }
 
     fn generate_call_operation(&mut self, callee: &ast::Node, arguments: &[Box<ast::Node>], local_context: &mut LocalContext) -> crate::Result<Value> {
-        let callee = self.generate_local_node(callee, local_context, None)?;
-        let callee = self.coerce_to_rvalue(callee, local_context)?;
+        // Determine which kind of call operation this is
+        let callee = match callee {
+            // Method call operation in the format `value.method(..)`
+            ast::Node::Binary { operation: ast::BinaryOperation::Access, lhs, rhs } => {
+                let method_name = rhs.as_name()?;
+                let lhs = self.generate_local_node(lhs, local_context, None)?;
 
+                // If lhs is a pointer, perform an implicit dereference (this is also done before
+                // member accesses)
+                let lhs = match lhs.get_type().repr(&self.context) {
+                    &TypeRepr::Pointer { pointee_type, .. } => {
+                        let pointer = self.coerce_to_rvalue(lhs, local_context)?;
+                        Value::Indirect {
+                            pointer: Box::new(pointer),
+                            pointee_type,
+                        }
+                    }
+                    _ => lhs
+                };
+
+                // Search in the type's implementation namespace for a matching method
+                let lhs_namespace = self.context.type_namespace(lhs.get_type());
+                if let Some(Symbol::Value(value)) = self.context.namespace_info(lhs_namespace).find(method_name) {
+                    // A method was found, so bind lhs as self and use it as the callee
+                    Value::BoundFunction {
+                        self_value: Box::new(lhs),
+                        function_value: Box::new(value.clone()),
+                    }
+                }
+                else {
+                    return Err(Box::new(crate::Error::NoSuchMethod {
+                        type_name: lhs.get_type().path(&self.context).to_string(),
+                        method_name: method_name.to_string(),
+                    }));
+                }
+            }
+            // Normal call operation
+            _ => {
+                let callee = self.generate_local_node(callee, local_context, None)?;
+                self.coerce_to_rvalue(callee, local_context)?
+            }
+        };
+
+        // Ensure the callee is, in fact, a function that can be called
         let TypeRepr::Function { signature } = callee.get_type().repr(&self.context).clone() else {
             return Err(Box::new(crate::Error::ExpectedFunction {
                 type_name: callee.get_type().path(&self.context).to_string(),
@@ -1265,11 +1295,12 @@ impl<W: Write> Generator<W> {
             .chain(std::iter::repeat(None));
 
         if let Value::BoundFunction { self_value, .. } = &callee {
+            // This is a method call, and so we need to match the self value to the first parameter
             let Some(self_parameter_type) = parameters_iter.next().unwrap() else {
                 return Err(Box::new(crate::Error::ExpectedSelfParameter {}));
             };
 
-            // TODO: figure out what happens if methods are implemented on pointers
+            // Make an effort to convert the bound self value to the parameter type
             let self_argument = match self_parameter_type.repr(&self.context) {
                 TypeRepr::Pointer { .. } => match self_value.as_ref() {
                     Value::Indirect { pointer, .. } => {
@@ -1298,6 +1329,7 @@ impl<W: Write> Generator<W> {
             argument_values.push(self_argument);
         }
 
+        // Generate each argument for the call operation in order
         for (argument, parameter_type) in arguments.iter().zip(parameters_iter) {
             let argument = self.generate_local_node(argument, local_context, parameter_type)?;
             let argument = self.coerce_to_rvalue(argument, local_context)?;
@@ -1305,6 +1337,7 @@ impl<W: Write> Generator<W> {
             argument_values.push(argument);
         }
 
+        // Ensure the number of arguments is correct
         let expected_count = signature.parameter_types().len();
         let got_count = argument_values.len();
         if !signature.is_variadic() && got_count > expected_count {
@@ -1314,6 +1347,7 @@ impl<W: Write> Generator<W> {
             return Err(Box::new(crate::Error::MissingFunctionArguments { expected_count, got_count }));
         }
 
+        // Generate the function call itself, which will look different depending on return type
         if signature.return_type() == TypeHandle::NEVER {
             self.emitter.emit_function_call(None, &callee, &argument_values, &self.context)?;
             self.emitter.emit_unreachable()?;
@@ -1701,6 +1735,10 @@ impl<W: Write> Generator<W> {
                 _ => {
                     return Err(Box::new(crate::Error::UnsupportedConstantExpression {}));
                 }
+            }
+            ast::Node::Grouping { content } => {
+                // Fine to bypass validation steps since this is literally just parentheses
+                return self.fold_as_constant(content, constant_id, local_context, expected_type);
             }
             _ => {
                 return Err(Box::new(crate::Error::UnsupportedConstantExpression {}));

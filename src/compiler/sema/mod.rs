@@ -268,8 +268,7 @@ impl GlobalContext {
                 let base_type = PathBaseType::Array {
                     item_type: self.type_path_for_type_node(item_type)?,
                     length: match length {
-                        Some(node) => Some(node.as_array_length()
-                            .ok_or_else(|| Box::new(crate::Error::NonConstantArrayLength {}))?),
+                        Some(node) => Some(node.as_constant_usize()?),
                         None => None,
                     },
                 };

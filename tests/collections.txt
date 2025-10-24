@@ -183,7 +183,7 @@ implement AVLTree {
     function get(self: *Self, key: *void) -> *void {
         let mut node: *AVLTreeNode = self.root;
         while (node != null) {
-            let ordering: i32 = self.comparator(key, node.key);
+            let ordering: i32 = (self.comparator)(key, node.key);
             if (ordering < 0) {
                 node = node.left;
             }
@@ -202,7 +202,7 @@ implement AVLTree {
             *node_ref = AVLTreeNode::alloc(key);
             return null;
         }
-        let ordering: i32 = self.comparator(key, (*node_ref).key);
+        let ordering: i32 = (self.comparator)(key, (*node_ref).key);
         if (ordering < 0) {
             self.insert_subtree(&(*node_ref).left, key);
         }

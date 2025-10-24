@@ -160,10 +160,12 @@ impl<'a, T: BufRead> Parser<'a, T> {
             let mut operand = match token {
                 Token::ParenLeft => {
                     self.scan_token()?;
-                    let expression = self.parse_expression(None, &[Token::ParenRight])?;
+                    let content = self.parse_expression(None, &[Token::ParenRight])?;
                     self.scan_token()?;
 
-                    expression
+                    Box::new(Node::Grouping {
+                        content,
+                    })
                 }
                 Token::Literal(literal) => {
                     let literal = literal.clone();
@@ -174,7 +176,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         let first_segment = match literal {
                             Literal::Name(name) => PathSegment::Name(name),
                             Literal::PrimitiveType(primitive_type) => PathSegment::PrimitiveType(primitive_type),
-                            _ => return Err(Box::new(crate::Error::ExpectedIdentifier { span: literal_span }))
+                            _ => return Err(Box::new(crate::Error::ExpectedIdentifier {
+                                span: literal_span,
+                            }))
                         };
                         self.scan_token()?;
 
