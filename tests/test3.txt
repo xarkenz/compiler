@@ -1,16 +1,16 @@
 function a() -> bool {
-    return true;
+    true
 }
 
 function b() -> bool {
-    return false;
+    false
 }
 
 function c() -> bool {
-    return true;
+    true
 }
 
 foreign function main() -> i32 {
     let x = a() || b() && c();
-    return 0;
+    0
 }

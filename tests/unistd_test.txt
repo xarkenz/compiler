@@ -41,5 +41,5 @@ foreign function main() -> i32 {
         printf("4. ID of P's Child is %d\n", child_pid);
     }
 
-    return 0;
+    0
 }

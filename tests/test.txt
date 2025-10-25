@@ -24,9 +24,9 @@ implement u8 {
 implement u64 {
     function max(self: Self, other: Self) -> Self {
         if (self > other) {
-            return self;
+            self
         } else {
-            return other;
+            other
         }
     }
 }
@@ -48,24 +48,24 @@ struct String {
 
 implement String {
     function new() -> Self {
-        return String {
+        Self {
             str: MutStr {
                 ptr: null,
                 length: 0,
             },
             capacity: 0,
-        };
+        }
     }
 
     function del(self: Self) {
-        free(self.str.ptr);
+        free(self.str.ptr as *mut void);
     }
 
     function as_str(self: *Self) -> Str {
-        return Str {
+        Str {
             ptr: self.str.ptr,
             length: self.str.length,
-        };
+        }
     }
 
     function grow_by(mut self: *mut Self, additional: u64) {
@@ -73,8 +73,8 @@ implement String {
         let capacity = u64::max(self.capacity * 2, required_capacity);
         let mut ptr = malloc(sizeof(u8) * capacity) as *mut [u8];
 
-        memcpy(ptr, self.str.ptr, self.str.length);
-        free(self.str.ptr);
+        memcpy(ptr as *mut void, self.str.ptr as *void, self.str.length);
+        free(self.str.ptr as *mut void);
 
         self.str.ptr = ptr;
         self.capacity = capacity;
@@ -114,7 +114,7 @@ function fibonacci(limit: i32) -> i32 {
         b = temp;
     }
 
-    return a;
+    a
 }
 
 function gcd(mut a: u32, mut b: u32) -> u32 {
@@ -124,7 +124,7 @@ function gcd(mut a: u32, mut b: u32) -> u32 {
         b = temp;
     }
 
-    return a;
+    a
 }
 
 function aoc_01_p1() {
@@ -171,7 +171,7 @@ struct Node {
 }
 
 function omg_linked_list(values: *[*[u8]], value_count: u64) {
-    let mut head = null as *mut Node;
+    let mut head: *mut Node = null;
 
     let mut index: u64 = 0;
     while (index < value_count) {
@@ -192,7 +192,7 @@ function omg_linked_list(values: *[*[u8]], value_count: u64) {
         printf("%s\n", node.value);
         head = node.next;
 
-        free(node);
+        free(node as *mut void);
     }
 }
 
@@ -239,7 +239,7 @@ implement i64 {
             }
         }
 
-        return string;
+        string
     }
 }
 
@@ -283,5 +283,5 @@ foreign function main() -> i32 {
     printf("i64::to_string: \"%s\"\n", number_string.str.ptr);
     number_string.del();
 
-    return 0;
+    0
 }

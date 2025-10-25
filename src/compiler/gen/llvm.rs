@@ -730,12 +730,13 @@ impl<W: Write> Emitter<W> {
         emit!(self, ")\n")
     }
 
-    pub fn emit_return(&mut self, value: Option<&Value>, context: &GlobalContext) -> crate::Result<()> {
-        if let Some(value) = value {
-            emit!(self, "\tret {} {}\n", value.get_type().llvm_syntax(context), value.llvm_syntax(context))
+    pub fn emit_return(&mut self, value: &Value, context: &GlobalContext) -> crate::Result<()> {
+        let value_type = value.get_type();
+        if value_type == TypeHandle::VOID || value_type == TypeHandle::NEVER {
+            emit!(self, "\tret void\n")
         }
         else {
-            emit!(self, "\tret void\n")
+            emit!(self, "\tret {} {}\n", value_type.llvm_syntax(context), value.llvm_syntax(context))
         }
     }
 

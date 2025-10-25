@@ -383,6 +383,7 @@ pub enum Node {
     },
     Scope {
         statements: Vec<Box<Node>>,
+        tail: Option<Box<Node>>,
     },
     Conditional {
         condition: Box<Node>,
@@ -467,6 +468,32 @@ impl Node {
         }
         Err(Box::new(crate::Error::NonConstantArrayLength {}))
     }
+
+    pub fn requires_semicolon(&self) -> bool {
+        match self {
+            Self::Scope { .. } |
+            Self::Function { .. } |
+            Self::Structure { .. } |
+            Self::Implement { .. } |
+            Self::Module { .. } => {
+                false
+            }
+            Self::Conditional { consequent, alternative, .. } => {
+                if let Some(alternative) = alternative {
+                    alternative.requires_semicolon()
+                }
+                else {
+                    consequent.requires_semicolon()
+                }
+            }
+            Self::While { body, .. } => {
+                body.requires_semicolon()
+            }
+            _ => {
+                true
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for Node {
@@ -524,10 +551,13 @@ impl std::fmt::Display for Node {
             Self::Grouping { content } => {
                 write!(f, "({content})")
             }
-            Self::Scope { statements } => {
+            Self::Scope { statements, tail } => {
                 write!(f, " {{")?;
                 for statement in statements {
                     write!(f, "{statement}")?;
+                }
+                if let Some(tail) = tail {
+                    write!(f, "{tail}")?;
                 }
                 write!(f, " }}")
             }

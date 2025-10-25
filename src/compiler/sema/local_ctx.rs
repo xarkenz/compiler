@@ -2,7 +2,7 @@ use super::*;
 
 #[derive(Debug)]
 pub struct LocalContext {
-    function_identifier: String,
+    function_path: AbsolutePath,
     return_type: TypeHandle,
     break_stack: Vec<Label>,
     continue_stack: Vec<Label>,
@@ -14,9 +14,9 @@ pub struct LocalContext {
 }
 
 impl LocalContext {
-    pub fn new(function_identifier: String, return_type: TypeHandle) -> Self {
+    pub fn new(function_path: AbsolutePath, return_type: TypeHandle) -> Self {
         Self {
-            function_identifier,
+            function_path,
             return_type,
             break_stack: Vec::new(),
             continue_stack: Vec::new(),
@@ -28,8 +28,8 @@ impl LocalContext {
         }
     }
 
-    pub fn function_identifier(&self) -> &str {
-        &self.function_identifier
+    pub fn function_path(&self) -> &AbsolutePath {
+        &self.function_path
     }
 
     pub fn return_type(&self) -> TypeHandle {
@@ -99,8 +99,8 @@ impl LocalContext {
             .and_modify(|version| *version += 1)
             .or_insert(0);
         let identifier = match version {
-            0 => format!("{}.{name}", self.function_identifier()),
-            1.. => format!("{}.{name}-{version}", self.function_identifier()),
+            0 => format!("{}.{name}", self.function_path()),
+            1.. => format!("{}.{name}-{version}", self.function_path()),
         };
         let register = Register::new_global(identifier, pointer_type);
         let value = Value::Constant(Constant::Indirect {

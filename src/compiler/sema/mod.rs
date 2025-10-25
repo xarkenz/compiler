@@ -544,7 +544,7 @@ impl GlobalContext {
                             self.can_coerce_type(from_param, to_param, false)
                         })
             }
-            (TypeRepr::Void, _) | (_, TypeRepr::Void) => true,
+            (TypeRepr::Never, _) => true,
             _ => false
         }
     }

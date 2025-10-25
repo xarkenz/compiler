@@ -68,7 +68,7 @@ impl<W: Write> Generator<W> {
             }
             ast::Node::Constant { value, global_register, .. } => {
                 let global_register = global_register.as_ref().expect("register should be valid after fill phase");
-                self.generate_global_let_constant_statement(value, global_register)
+                self.generate_global_constant_statement(value, global_register)
             }
             ast::Node::Function { name, parameters, body, global_register, .. } => {
                 let global_register = global_register.as_ref().expect("register should be valid after fill phase");
@@ -135,7 +135,7 @@ impl<W: Write> Generator<W> {
                 // Fine to bypass validation steps since this is literally just parentheses
                 return self.generate_local_node(content, local_context, expected_type);
             }
-            ast::Node::Scope { statements } => {
+            ast::Node::Scope { statements, tail } => {
                 local_context.enter_scope();
 
                 let mut result = Value::Void;
@@ -148,87 +148,22 @@ impl<W: Write> Generator<W> {
                         break;
                     }
                 }
+                if let Some(tail) = tail {
+                    if result.get_type() != TypeHandle::NEVER {
+                        let tail_value = self.generate_local_node(tail, local_context, expected_type)?;
+                        result = self.coerce_to_rvalue(tail_value, local_context)?;
+                    }
+                }
 
                 local_context.exit_scope();
 
                 result
             }
             ast::Node::Conditional { condition, consequent, alternative } => {
-                let condition = self.generate_local_node(condition, local_context, Some(TypeHandle::BOOL))?;
-                let condition = self.coerce_to_rvalue(condition, local_context)?;
-
-                let consequent_label = local_context.new_block_label();
-                let alternative_label = local_context.new_block_label();
-
-                self.emitter.emit_conditional_branch(&condition, &consequent_label, &alternative_label, &self.context)?;
-
-                if let Some(alternative) = alternative {
-                    let mut tail_label = None;
-
-                    self.start_new_block(&consequent_label, local_context)?;
-                    let consequent_value = self.generate_local_node(consequent, local_context, None)?;
-                    if consequent_value.get_type() != TypeHandle::NEVER {
-                        let tail_label = tail_label.get_or_insert_with(|| local_context.new_block_label());
-                        self.emitter.emit_unconditional_branch(tail_label)?;
-                    }
-
-                    self.start_new_block(&alternative_label, local_context)?;
-                    let alternative_value = self.generate_local_node(alternative, local_context, None)?;
-                    if alternative_value.get_type() != TypeHandle::NEVER {
-                        let tail_label = tail_label.get_or_insert_with(|| local_context.new_block_label());
-                        self.emitter.emit_unconditional_branch(tail_label)?;
-                    }
-
-                    if let Some(tail_label) = tail_label {
-                        self.start_new_block(&tail_label, local_context)?;
-
-                        Value::Void
-                    }
-                    else {
-                        Value::Never
-                    }
-                }
-                else {
-                    self.start_new_block(&consequent_label, local_context)?;
-                    let consequent_value = self.generate_local_node(consequent, local_context, None)?;
-                    if consequent_value.get_type() != TypeHandle::NEVER {
-                        self.emitter.emit_unconditional_branch(&alternative_label)?;
-                    }
-
-                    self.start_new_block(&alternative_label, local_context)?;
-
-                    Value::Void
-                }
+                self.generate_conditional(condition, consequent, alternative.as_deref(), local_context, expected_type)?
             }
             ast::Node::While { condition, body } => {
-                // TODO: handling never, break/continue vs. return
-                let condition_label = local_context.new_block_label();
-
-                self.emitter.emit_unconditional_branch(&condition_label)?;
-
-                self.start_new_block(&condition_label, local_context)?;
-
-                let condition = self.generate_local_node(condition, local_context, Some(TypeHandle::BOOL))?;
-                let condition = self.coerce_to_rvalue(condition, local_context)?;
-
-                let body_label = local_context.new_block_label();
-                let tail_label = local_context.new_block_label();
-
-                local_context.push_break_label(tail_label.clone());
-                local_context.push_continue_label(condition_label.clone());
-
-                self.emitter.emit_conditional_branch(&condition, &body_label, &tail_label, &self.context)?;
-
-                self.start_new_block(&body_label, local_context)?;
-                self.generate_local_node(body, local_context, None)?;
-                self.emitter.emit_unconditional_branch(&condition_label)?;
-
-                self.start_new_block(&tail_label, local_context)?;
-
-                local_context.pop_break_label();
-                local_context.pop_continue_label();
-
-                Value::Void
+                self.generate_while_loop(condition, body, local_context)?
             }
             ast::Node::Break => {
                 let break_label = local_context.break_label()
@@ -251,20 +186,24 @@ impl<W: Write> Generator<W> {
 
                 if let Some(value) = value {
                     if return_type == TypeHandle::VOID {
-                        return Err(Box::new(crate::Error::UnexpectedReturnValue {}));
+                        return Err(Box::new(crate::Error::UnexpectedReturnValue {
+                            function_name: local_context.function_path().to_string(),
+                        }));
                     }
                     else {
                         let value = self.generate_local_node(value, local_context, Some(return_type))?;
                         let value = self.coerce_to_rvalue(value, local_context)?;
 
-                        self.emitter.emit_return(Some(&value), &self.context)?;
+                        self.emitter.emit_return(&value, &self.context)?;
                     }
                 }
-                else if return_type == TypeHandle::VOID {
-                    self.emitter.emit_return(None, &self.context)?;
+                else if return_type != TypeHandle::VOID {
+                    return Err(Box::new(crate::Error::ExpectedReturnValue {
+                        function_name: local_context.function_path().to_string(),
+                    }));
                 }
                 else {
-                    return Err(Box::new(crate::Error::ExpectedReturnValue {}));
+                    self.emitter.emit_return(&Value::Void, &self.context)?;
                 }
 
                 Value::Never
@@ -273,7 +212,7 @@ impl<W: Write> Generator<W> {
                 self.generate_local_let_statement(name, value_type.as_ref(), *is_mutable, value.as_deref(), local_context)?
             }
             ast::Node::Constant { name, value_type, value, .. } => {
-                self.generate_local_let_constant_statement(name, value_type, value, local_context)?
+                self.generate_local_constant_statement(name, value_type, value, local_context)?
             }
             _ => {
                 return Err(Box::new(crate::Error::UnexpectedExpression {}));
@@ -282,6 +221,8 @@ impl<W: Write> Generator<W> {
 
         if let Some(expected_type) = expected_type {
             self.enforce_type(result, expected_type, local_context)
+                // For debugging purposes. This information is often useful
+                .inspect_err(|_| println!("node: {node:?}"))
         }
         else {
             Ok(result)
@@ -303,7 +244,7 @@ impl<W: Write> Generator<W> {
     pub fn enforce_type(&mut self, value: Value, target_type: TypeHandle, local_context: &mut LocalContext) -> crate::Result<Value> {
         let got_type = value.get_type();
 
-        if self.context.types_are_equivalent(got_type, target_type) {
+        if got_type == TypeHandle::NEVER || self.context.types_are_equivalent(got_type, target_type) {
             Ok(value)
         }
         // TODO: should from_mutable be true here?
@@ -358,14 +299,21 @@ impl<W: Write> Generator<W> {
             Ok(value)
         }
         else {
+            // TODO: pointer to int, int to pointer
             match (original_type.repr(&self.context), target_type.repr(&self.context)) {
-                (TypeRepr::Pointer { .. }, TypeRepr::Pointer { .. }) => {
+                (
+                    TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
+                    TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
+                ) => {
                     let result = local_context.new_anonymous_register(target_type);
                     self.emitter.emit_bitwise_cast(&result, &value, &self.context)?;
 
                     Ok(Value::Register(result))
-                },
-                (TypeRepr::Integer { size: from_size, .. }, TypeRepr::Integer { size: to_size, .. }) => {
+                }
+                (
+                    TypeRepr::Integer { size: from_size, .. },
+                    TypeRepr::Integer { size: to_size, .. },
+                ) => {
                     match to_size.cmp(from_size) {
                         std::cmp::Ordering::Greater => {
                             let result = local_context.new_anonymous_register(target_type);
@@ -383,24 +331,30 @@ impl<W: Write> Generator<W> {
                             Ok(value)
                         }
                     }
-                },
-                (original_repr @ TypeRepr::Integer { .. }, TypeRepr::Boolean) => {
+                }
+                (
+                    original_repr @ TypeRepr::Integer { .. },
+                    TypeRepr::Boolean,
+                ) => {
                     let result = local_context.new_anonymous_register(target_type);
                     let zero = IntegerValue::new(0, original_repr).unwrap();
                     self.emitter.emit_cmp_not_equal(&result, &value, &zero.into(), &self.context)?;
 
                     Ok(Value::Register(result))
-                },
-                (TypeRepr::Boolean, TypeRepr::Integer { .. }) => {
+                }
+                (
+                    TypeRepr::Boolean,
+                    TypeRepr::Integer { .. },
+                ) => {
                     let result = local_context.new_anonymous_register(target_type);
                     self.emitter.emit_zero_extension(&result, &value, &self.context)?;
 
                     Ok(Value::Register(result))
-                },
+                }
                 _ => {
-                    Err(Box::new(crate::Error::IncompatibleTypes {
-                        expected_type: target_type.path(self.context()).to_string(),
-                        got_type: original_type.path(self.context()).to_string(),
+                    Err(Box::new(crate::Error::InconvertibleTypes {
+                        original_type: target_type.path(self.context()).to_string(),
+                        target_type: original_type.path(self.context()).to_string(),
                     }))
                 }
             }
@@ -1421,6 +1375,107 @@ impl<W: Write> Generator<W> {
         }
     }
 
+    fn generate_conditional(&mut self, condition: &ast::Node, consequent: &ast::Node, alternative: Option<&ast::Node>, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+        let condition = self.generate_local_node(condition, local_context, Some(TypeHandle::BOOL))?;
+        let condition = self.coerce_to_rvalue(condition, local_context)?;
+
+        let consequent_label = local_context.new_block_label();
+        let alternative_label = local_context.new_block_label();
+
+        self.emitter.emit_conditional_branch(&condition, &consequent_label, &alternative_label, &self.context)?;
+
+        if let Some(alternative) = alternative {
+            let mut tail_label = None;
+
+            self.start_new_block(&consequent_label, local_context)?;
+            let consequent_value = self.generate_local_node(consequent, local_context, expected_type)?;
+            let consequent_type = consequent_value.get_type();
+            if consequent_type != TypeHandle::NEVER {
+                let tail_label = tail_label.get_or_insert_with(|| local_context.new_block_label());
+                self.emitter.emit_unconditional_branch(tail_label)?;
+            }
+            let consequent_end_label = local_context.current_block_label().clone();
+
+            let expected_type = expected_type.or_else(|| {
+                (consequent_type != TypeHandle::NEVER).then_some(consequent_type)
+            });
+
+            self.start_new_block(&alternative_label, local_context)?;
+            let alternative_value = self.generate_local_node(alternative, local_context, expected_type)?;
+            let alternative_type = alternative_value.get_type();
+            if alternative_type != TypeHandle::NEVER {
+                let tail_label = tail_label.get_or_insert_with(|| local_context.new_block_label());
+                self.emitter.emit_unconditional_branch(tail_label)?;
+            }
+            let alternative_end_label = local_context.current_block_label().clone();
+
+            let result_type = expected_type.unwrap_or(alternative_type);
+
+            if let Some(tail_label) = tail_label {
+                self.start_new_block(&tail_label, local_context)?;
+
+                if result_type == TypeHandle::VOID {
+                    Ok(Value::Void)
+                }
+                else {
+                    let result = local_context.new_anonymous_register(result_type);
+
+                    self.emitter.emit_phi(&result, [
+                        (&consequent_value, &consequent_end_label),
+                        (&alternative_value, &alternative_end_label),
+                    ], &self.context)?;
+
+                    Ok(Value::Register(result))
+                }
+            }
+            else {
+                Ok(Value::Never)
+            }
+        }
+        else {
+            self.start_new_block(&consequent_label, local_context)?;
+            let consequent_value = self.generate_local_node(consequent, local_context, Some(TypeHandle::VOID))?;
+            if consequent_value.get_type() != TypeHandle::NEVER {
+                self.emitter.emit_unconditional_branch(&alternative_label)?;
+            }
+
+            self.start_new_block(&alternative_label, local_context)?;
+
+            Ok(Value::Void)
+        }
+    }
+
+    fn generate_while_loop(&mut self, condition: &ast::Node, body: &ast::Node, local_context: &mut LocalContext) -> crate::Result<Value> {
+        // TODO: handling never, break/continue vs. return
+        let condition_label = local_context.new_block_label();
+
+        self.emitter.emit_unconditional_branch(&condition_label)?;
+
+        self.start_new_block(&condition_label, local_context)?;
+
+        let condition = self.generate_local_node(condition, local_context, Some(TypeHandle::BOOL))?;
+        let condition = self.coerce_to_rvalue(condition, local_context)?;
+
+        let body_label = local_context.new_block_label();
+        let tail_label = local_context.new_block_label();
+
+        local_context.push_break_label(tail_label.clone());
+        local_context.push_continue_label(condition_label.clone());
+
+        self.emitter.emit_conditional_branch(&condition, &body_label, &tail_label, &self.context)?;
+
+        self.start_new_block(&body_label, local_context)?;
+        self.generate_local_node(body, local_context, Some(TypeHandle::VOID))?;
+        self.emitter.emit_unconditional_branch(&condition_label)?;
+
+        self.start_new_block(&tail_label, local_context)?;
+
+        local_context.pop_break_label();
+        local_context.pop_continue_label();
+
+        Ok(Value::Void)
+    }
+
     fn generate_local_let_statement(&mut self, name: &str, type_node: Option<&ast::TypeNode>, is_mutable: bool, value: Option<&ast::Node>, local_context: &mut LocalContext) -> crate::Result<Value> {
         let value_type = match type_node {
             Some(type_node) => {
@@ -1461,7 +1516,7 @@ impl<W: Write> Generator<W> {
         Ok(Value::Void)
     }
 
-    fn generate_local_let_constant_statement(&mut self, name: &str, type_node: &ast::TypeNode, value: &ast::Node, local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_local_constant_statement(&mut self, name: &str, type_node: &ast::TypeNode, value: &ast::Node, local_context: &mut LocalContext) -> crate::Result<Value> {
         let value_type = self.context.interpret_type_node(type_node)?;
         let value = self.generate_constant_node(value, Some(local_context), Some(value_type))?;
 
@@ -1491,7 +1546,7 @@ impl<W: Write> Generator<W> {
         Ok(Value::Void)
     }
 
-    fn generate_global_let_constant_statement(&mut self, value: &ast::Node, global_register: &Register) -> crate::Result<Value> {
+    fn generate_global_constant_statement(&mut self, value: &ast::Node, global_register: &Register) -> crate::Result<Value> {
         // The fill phase has done most of the work for us already
         let TypeRepr::Pointer { pointee_type, .. } = *self.context.type_repr(global_register.get_type()) else {
             panic!("invalid global value register type");
@@ -1512,7 +1567,7 @@ impl<W: Write> Generator<W> {
         let signature = signature.clone();
 
         let mut local_context = LocalContext::new(
-            function_register.identifier().to_string(),
+            self.context.current_namespace_info().path().child(name),
             signature.return_type(),
         );
 
@@ -1537,18 +1592,11 @@ impl<W: Write> Generator<W> {
             self.emitter.emit_store(&input_register.into(), &pointer.into(), &self.context)?;
         }
 
-        let body_result = self.generate_local_node(body, &mut local_context, None)?;
+        let body_result = self.generate_local_node(body, &mut local_context, Some(signature.return_type()))?;
 
-        // Insert a void return if necessary
+        // Insert a return instruction if necessary
         if body_result.get_type() != TypeHandle::NEVER {
-            if signature.return_type() == TypeHandle::VOID {
-                self.emitter.emit_return(None, &self.context)?;
-            }
-            else {
-                return Err(Box::new(crate::Error::MissingReturnStatement {
-                    function_name: name.to_string(),
-                }));
-            }
+            self.emitter.emit_return(&body_result, &self.context)?;
         }
 
         self.emitter.emit_function_exit()?;

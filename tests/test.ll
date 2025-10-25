@@ -56,10 +56,13 @@ define i64 @"<u64>::max"(i64 %0, i64 %1) {
 	br i1 %4, label %.block.1, label %.block.2
 .block.1:
 	%5 = load i64, i64* %self
-	ret i64 %5
+	br label %.block.3
 .block.2:
 	%6 = load i64, i64* %other
-	ret i64 %6
+	br label %.block.3
+.block.3:
+	%7 = phi i64 [ %5, %.block.1 ], [ %6, %.block.2 ]
+	ret i64 %7
 }
 
 %"type.::Str" = type { i8*, i64 }
@@ -428,64 +431,63 @@ define void @"::omg_linked_list"(i8** %0, i64 %1) {
 	store i8** %0, i8*** %values
 	%value_count = alloca i64
 	store i64 %1, i64* %value_count
-	%2 = bitcast {}* null to %"type.::Node"*
 	%head = alloca %"type.::Node"*
-	store %"type.::Node"* %2, %"type.::Node"** %head
+	store %"type.::Node"* null, %"type.::Node"** %head
 	%index = alloca i64
 	store i64 0, i64* %index
 	br label %.block.1
 .block.1:
-	%3 = load i64, i64* %index
-	%4 = load i64, i64* %value_count
-	%5 = icmp ult i64 %3, %4
-	br i1 %5, label %.block.2, label %.block.3
+	%2 = load i64, i64* %index
+	%3 = load i64, i64* %value_count
+	%4 = icmp ult i64 %2, %3
+	br i1 %4, label %.block.2, label %.block.3
 .block.2:
-	%6 = call {}*(i64) @malloc(i64 16)
-	%7 = bitcast {}* %6 to %"type.::Node"*
+	%5 = call {}*(i64) @malloc(i64 16)
+	%6 = bitcast {}* %5 to %"type.::Node"*
 	%node = alloca %"type.::Node"*
-	store %"type.::Node"* %7, %"type.::Node"** %node
-	%8 = load %"type.::Node"*, %"type.::Node"** %node
-	%9 = load i64, i64* %index
-	%10 = load i8**, i8*** %values
-	%11 = getelementptr inbounds i8*, i8** %10, i64 %9
-	%12 = load i8*, i8** %11
-	%13 = load %"type.::Node"*, %"type.::Node"** %head
-	%14 = alloca %"type.::Node"
-	store %"type.::Node" { i8* undef, %"type.::Node"* undef }, %"type.::Node"* %14
-	%15 = getelementptr inbounds %"type.::Node", %"type.::Node"* %14, i32 0, i32 0
-	store i8* %12, i8** %15
-	%16 = getelementptr inbounds %"type.::Node", %"type.::Node"* %14, i32 0, i32 1
-	store %"type.::Node"* %13, %"type.::Node"** %16
-	%17 = load %"type.::Node", %"type.::Node"* %14
-	store %"type.::Node" %17, %"type.::Node"* %8
-	%18 = load %"type.::Node"*, %"type.::Node"** %node
-	store %"type.::Node"* %18, %"type.::Node"** %head
-	%19 = load i64, i64* %index
-	%20 = add nuw i64 %19, 1
-	store i64 %20, i64* %index
+	store %"type.::Node"* %6, %"type.::Node"** %node
+	%7 = load %"type.::Node"*, %"type.::Node"** %node
+	%8 = load i64, i64* %index
+	%9 = load i8**, i8*** %values
+	%10 = getelementptr inbounds i8*, i8** %9, i64 %8
+	%11 = load i8*, i8** %10
+	%12 = load %"type.::Node"*, %"type.::Node"** %head
+	%13 = alloca %"type.::Node"
+	store %"type.::Node" { i8* undef, %"type.::Node"* undef }, %"type.::Node"* %13
+	%14 = getelementptr inbounds %"type.::Node", %"type.::Node"* %13, i32 0, i32 0
+	store i8* %11, i8** %14
+	%15 = getelementptr inbounds %"type.::Node", %"type.::Node"* %13, i32 0, i32 1
+	store %"type.::Node"* %12, %"type.::Node"** %15
+	%16 = load %"type.::Node", %"type.::Node"* %13
+	store %"type.::Node" %16, %"type.::Node"* %7
+	%17 = load %"type.::Node"*, %"type.::Node"** %node
+	store %"type.::Node"* %17, %"type.::Node"** %head
+	%18 = load i64, i64* %index
+	%19 = add nuw i64 %18, 1
+	store i64 %19, i64* %index
 	br label %.block.1
 .block.3:
-	%21 = call i32(i8*, ...) @printf(i8* bitcast ([11 x i8]* @.const.4 to i8*))
+	%20 = call i32(i8*, ...) @printf(i8* bitcast ([11 x i8]* @.const.4 to i8*))
 	br label %.block.4
 .block.4:
-	%22 = load %"type.::Node"*, %"type.::Node"** %head
-	%23 = icmp ne %"type.::Node"* %22, null
-	br i1 %23, label %.block.5, label %.block.6
+	%21 = load %"type.::Node"*, %"type.::Node"** %head
+	%22 = icmp ne %"type.::Node"* %21, null
+	br i1 %22, label %.block.5, label %.block.6
 .block.5:
-	%24 = load %"type.::Node"*, %"type.::Node"** %head
+	%23 = load %"type.::Node"*, %"type.::Node"** %head
 	%node-1 = alloca %"type.::Node"*
-	store %"type.::Node"* %24, %"type.::Node"** %node-1
-	%25 = load %"type.::Node"*, %"type.::Node"** %node-1
-	%26 = getelementptr inbounds %"type.::Node", %"type.::Node"* %25, i32 0, i32 0
-	%27 = load i8*, i8** %26
-	%28 = call i32(i8*, ...) @printf(i8* bitcast ([4 x i8]* @.const.5 to i8*), i8* %27)
-	%29 = load %"type.::Node"*, %"type.::Node"** %node-1
-	%30 = getelementptr inbounds %"type.::Node", %"type.::Node"* %29, i32 0, i32 1
-	%31 = load %"type.::Node"*, %"type.::Node"** %30
-	store %"type.::Node"* %31, %"type.::Node"** %head
-	%32 = load %"type.::Node"*, %"type.::Node"** %node-1
-	%33 = bitcast %"type.::Node"* %32 to {}*
-	call void({}*) @free({}* %33)
+	store %"type.::Node"* %23, %"type.::Node"** %node-1
+	%24 = load %"type.::Node"*, %"type.::Node"** %node-1
+	%25 = getelementptr inbounds %"type.::Node", %"type.::Node"* %24, i32 0, i32 0
+	%26 = load i8*, i8** %25
+	%27 = call i32(i8*, ...) @printf(i8* bitcast ([4 x i8]* @.const.5 to i8*), i8* %26)
+	%28 = load %"type.::Node"*, %"type.::Node"** %node-1
+	%29 = getelementptr inbounds %"type.::Node", %"type.::Node"* %28, i32 0, i32 1
+	%30 = load %"type.::Node"*, %"type.::Node"** %29
+	store %"type.::Node"* %30, %"type.::Node"** %head
+	%31 = load %"type.::Node"*, %"type.::Node"** %node-1
+	%32 = bitcast %"type.::Node"* %31 to {}*
+	call void({}*) @free({}* %32)
 	br label %.block.4
 .block.6:
 	ret void

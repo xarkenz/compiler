@@ -196,8 +196,10 @@ pub enum Error {
     InvalidReturn {
     },
     ExpectedReturnValue {
+        function_name: String,
     },
     UnexpectedReturnValue {
+        function_name: String,
     },
     NonValueSymbol {
         name: String,
@@ -373,8 +375,8 @@ impl std::fmt::Display for Error {
             Self::InvalidBreak {} => write!(f, "unexpected 'break' outside loop"),
             Self::InvalidContinue {} => write!(f, "unexpected 'continue' outside loop"),
             Self::InvalidReturn {} => write!(f, "unexpected 'return' outside function"),
-            Self::ExpectedReturnValue {} => write!(f, "cannot return without a value from a non-void function"),
-            Self::UnexpectedReturnValue {} => write!(f, "cannot return a value from a void function"),
+            Self::ExpectedReturnValue { function_name } => write!(f, "cannot return without a value from non-void function '{function_name}'"),
+            Self::UnexpectedReturnValue { function_name } => write!(f, "cannot return a value from void function '{function_name}'"),
             Self::NonValueSymbol { name } => write!(f, "cannot use '{name}' as a value"),
             Self::NonConstantSymbol { name } => write!(f, "'{name}' is not constant and cannot be used in a constant expression"),
             Self::IncompatibleValueType { value, type_name } => write!(f, "'{value}' cannot be used as a value of type '{type_name}'"),
