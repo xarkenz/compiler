@@ -29,10 +29,8 @@ impl fmt::Display for Literal {
 pub enum Token {
     Plus,
     PlusEqual,
-    Plus2,
     Minus,
     MinusEqual,
-    Minus2,
     Star,
     StarEqual,
     Slash,
@@ -106,10 +104,8 @@ impl fmt::Display for Token {
         match self {
             Self::Plus => write!(f, "+"),
             Self::PlusEqual => write!(f, "+="),
-            Self::Plus2 => write!(f, "++"),
             Self::Minus => write!(f, "-"),
             Self::MinusEqual => write!(f, "-="),
-            Self::Minus2 => write!(f, "--"),
             Self::Star => write!(f, "*"),
             Self::StarEqual => write!(f, "*="),
             Self::Slash => write!(f, "/"),
@@ -183,10 +179,8 @@ impl fmt::Display for Token {
 pub const SYMBOLIC_TOKENS: &[(&str, Token)] = &[
     ("+", Token::Plus),
     ("+=", Token::PlusEqual),
-    ("++", Token::Plus2),
     ("-", Token::Minus),
     ("-=", Token::MinusEqual),
-    ("--", Token::Minus2),
     ("*", Token::Star),
     ("*=", Token::StarEqual),
     ("/", Token::Slash),

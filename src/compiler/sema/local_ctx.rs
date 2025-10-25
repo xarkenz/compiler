@@ -8,6 +8,7 @@ pub struct LocalContext {
     continue_stack: Vec<Label>,
     symbol_versions: HashMap<String, usize>,
     scope_stack: Vec<HashMap<String, Value>>,
+    current_block_label: Label,
     next_anonymous_register_id: usize,
     next_basic_block_id: usize,
 }
@@ -21,8 +22,9 @@ impl LocalContext {
             continue_stack: Vec::new(),
             symbol_versions: HashMap::new(),
             scope_stack: vec![HashMap::new()],
+            current_block_label: Label::new(".block.0".into()),
             next_anonymous_register_id: 0,
-            next_basic_block_id: 0,
+            next_basic_block_id: 1,
         }
     }
 
@@ -127,5 +129,13 @@ impl LocalContext {
         self.next_basic_block_id += 1;
 
         Label::new(format!(".block.{id}"))
+    }
+
+    pub fn current_block_label(&self) -> &Label {
+        &self.current_block_label
+    }
+
+    pub fn set_current_block_label(&mut self, label: Label) {
+        self.current_block_label = label;
     }
 }

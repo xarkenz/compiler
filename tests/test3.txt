@@ -1,0 +1,16 @@
+function a() -> bool {
+    return true;
+}
+
+function b() -> bool {
+    return false;
+}
+
+function c() -> bool {
+    return true;
+}
+
+foreign function main() -> i32 {
+    let x: bool = a() || b() && c();
+    return 0;
+}

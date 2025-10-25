@@ -45,11 +45,259 @@ impl<W: Write> Generator<W> {
         &mut self.context
     }
 
+    pub fn generate_all<'a>(
+        mut self,
+        top_level_statements: impl IntoIterator<Item = &'a ast::Node>,
+        file_id: usize,
+        filenames: &[String],
+    ) -> crate::Result<()> {
+        self.emitter.emit_preamble(file_id, &filenames[file_id])?;
+
+        for top_level_statement in top_level_statements {
+            self.generate_global_node(top_level_statement)?;
+        }
+
+        self.emitter.emit_postamble()
+    }
+
+    pub fn generate_global_node(&mut self, node: &ast::Node) -> crate::Result<Value> {
+        match node {
+            ast::Node::Let { value, global_register, .. } => {
+                let global_register = global_register.as_ref().expect("register should be valid after fill phase");
+                self.generate_global_let_statement(value.as_deref(), global_register)
+            }
+            ast::Node::Constant { value, global_register, .. } => {
+                let global_register = global_register.as_ref().expect("register should be valid after fill phase");
+                self.generate_global_let_constant_statement(value, global_register)
+            }
+            ast::Node::Function { name, parameters, body, global_register, .. } => {
+                let global_register = global_register.as_ref().expect("register should be valid after fill phase");
+                if let Some(body) = body {
+                    self.generate_function_definition(name, parameters, body, global_register)
+                }
+                else {
+                    self.generate_function_declaration(global_register)
+                }
+            }
+            ast::Node::Structure { members, self_type, .. } => {
+                if members.is_some() {
+                    self.generate_structure_definition(*self_type)
+                }
+                else {
+                    self.generate_opaque_structure_definition(*self_type)
+                }
+            }
+            ast::Node::Implement { self_type, statements } => {
+                self.generate_implement_block(self_type, statements)
+            }
+            ast::Node::Module { statements, namespace, .. } => {
+                self.generate_module_block(statements, *namespace)
+            }
+            ast::Node::Import { .. } | ast::Node::GlobImport { .. } => {
+                // The fill phase has done all of the work for us already
+                Ok(Value::Void)
+            }
+            _ => {
+                Err(Box::new(crate::Error::UnexpectedExpression {}))
+            }
+        }
+    }
+
+    pub fn generate_local_node(&mut self, node: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+        if let Ok(constant) = self.generate_constant_node(node, Some(local_context), expected_type) {
+            return Ok(Value::Constant(constant));
+        }
+
+        let result = match node {
+            ast::Node::Literal(literal) => {
+                self.generate_literal(literal, local_context, expected_type)?
+            }
+            ast::Node::Path { segments } => {
+                let path = self.context.get_absolute_path(segments)?;
+                self.context.get_path_value(&path)?
+            }
+            ast::Node::Unary { operation, operand } => {
+                self.generate_unary_operation(*operation, operand, local_context, expected_type)?
+            }
+            ast::Node::Binary { operation, lhs, rhs } => {
+                self.generate_binary_operation(*operation, lhs, rhs, local_context, expected_type)?
+            }
+            ast::Node::Call { callee, arguments } => {
+                self.generate_call_operation(callee, arguments, local_context)?
+            }
+            ast::Node::ArrayLiteral { items } => {
+                self.generate_array_literal(items, local_context, expected_type)?
+            }
+            ast::Node::StructureLiteral { structure_type: type_name, members } => {
+                self.generate_structure_literal(type_name, members, local_context)?
+            }
+            ast::Node::Grouping { content } => {
+                // Fine to bypass validation steps since this is literally just parentheses
+                return self.generate_local_node(content, local_context, expected_type);
+            }
+            ast::Node::Scope { statements } => {
+                local_context.enter_scope();
+
+                let mut result = Value::Void;
+                for statement in statements {
+                    let statement_value = self.generate_local_node(statement, local_context, None)?;
+
+                    if statement_value.get_type() == TypeHandle::NEVER {
+                        // The rest of the statements in the block will never be executed, so they don't need to be generated
+                        result = statement_value;
+                        break;
+                    }
+                }
+
+                local_context.exit_scope();
+
+                result
+            }
+            ast::Node::Conditional { condition, consequent, alternative } => {
+                let condition = self.generate_local_node(condition, local_context, Some(TypeHandle::BOOL))?;
+                let condition = self.coerce_to_rvalue(condition, local_context)?;
+
+                let consequent_label = local_context.new_block_label();
+                let alternative_label = local_context.new_block_label();
+
+                self.emitter.emit_conditional_branch(&condition, &consequent_label, &alternative_label, &self.context)?;
+
+                if let Some(alternative) = alternative {
+                    let mut tail_label = None;
+
+                    self.start_new_block(&consequent_label, local_context)?;
+                    let consequent_value = self.generate_local_node(consequent, local_context, None)?;
+                    if consequent_value.get_type() != TypeHandle::NEVER {
+                        let tail_label = tail_label.get_or_insert_with(|| local_context.new_block_label());
+                        self.emitter.emit_unconditional_branch(tail_label)?;
+                    }
+
+                    self.start_new_block(&alternative_label, local_context)?;
+                    let alternative_value = self.generate_local_node(alternative, local_context, None)?;
+                    if alternative_value.get_type() != TypeHandle::NEVER {
+                        let tail_label = tail_label.get_or_insert_with(|| local_context.new_block_label());
+                        self.emitter.emit_unconditional_branch(tail_label)?;
+                    }
+
+                    if let Some(tail_label) = tail_label {
+                        self.start_new_block(&tail_label, local_context)?;
+
+                        Value::Void
+                    }
+                    else {
+                        Value::Never
+                    }
+                }
+                else {
+                    self.start_new_block(&consequent_label, local_context)?;
+                    let consequent_value = self.generate_local_node(consequent, local_context, None)?;
+                    if consequent_value.get_type() != TypeHandle::NEVER {
+                        self.emitter.emit_unconditional_branch(&alternative_label)?;
+                    }
+
+                    self.start_new_block(&alternative_label, local_context)?;
+
+                    Value::Void
+                }
+            }
+            ast::Node::While { condition, body } => {
+                // TODO: handling never, break/continue vs. return
+                let condition_label = local_context.new_block_label();
+
+                self.emitter.emit_unconditional_branch(&condition_label)?;
+
+                self.start_new_block(&condition_label, local_context)?;
+
+                let condition = self.generate_local_node(condition, local_context, Some(TypeHandle::BOOL))?;
+                let condition = self.coerce_to_rvalue(condition, local_context)?;
+
+                let body_label = local_context.new_block_label();
+                let tail_label = local_context.new_block_label();
+
+                local_context.push_break_label(tail_label.clone());
+                local_context.push_continue_label(condition_label.clone());
+
+                self.emitter.emit_conditional_branch(&condition, &body_label, &tail_label, &self.context)?;
+
+                self.start_new_block(&body_label, local_context)?;
+                self.generate_local_node(body, local_context, None)?;
+                self.emitter.emit_unconditional_branch(&condition_label)?;
+
+                self.start_new_block(&tail_label, local_context)?;
+
+                local_context.pop_break_label();
+                local_context.pop_continue_label();
+
+                Value::Void
+            }
+            ast::Node::Break => {
+                let break_label = local_context.break_label()
+                    .ok_or_else(|| Box::new(crate::Error::InvalidBreak {}))?;
+
+                self.emitter.emit_unconditional_branch(break_label)?;
+
+                Value::Break
+            }
+            ast::Node::Continue => {
+                let continue_label = local_context.continue_label()
+                    .ok_or_else(|| Box::new(crate::Error::InvalidContinue {}))?;
+
+                self.emitter.emit_unconditional_branch(continue_label)?;
+
+                Value::Continue
+            }
+            ast::Node::Return { value } => {
+                let return_type = local_context.return_type();
+
+                if let Some(value) = value {
+                    if return_type == TypeHandle::VOID {
+                        return Err(Box::new(crate::Error::UnexpectedReturnValue {}));
+                    }
+                    else {
+                        let value = self.generate_local_node(value, local_context, Some(return_type))?;
+                        let value = self.coerce_to_rvalue(value, local_context)?;
+
+                        self.emitter.emit_return(Some(&value), &self.context)?;
+                    }
+                }
+                else if return_type == TypeHandle::VOID {
+                    self.emitter.emit_return(None, &self.context)?;
+                }
+                else {
+                    return Err(Box::new(crate::Error::ExpectedReturnValue {}));
+                }
+
+                Value::Never
+            }
+            ast::Node::Let { name, value_type, is_mutable, value, .. } => {
+                self.generate_local_let_statement(name, value_type, *is_mutable, value.as_deref(), local_context)?
+            }
+            ast::Node::Constant { name, value_type, value, .. } => {
+                self.generate_local_let_constant_statement(name, value_type, value, local_context)?
+            }
+            _ => {
+                return Err(Box::new(crate::Error::UnexpectedExpression {}));
+            }
+        };
+
+        if let Some(expected_type) = expected_type {
+            self.enforce_type(result, expected_type, local_context)
+        }
+        else {
+            Ok(result)
+        }
+    }
+
     pub fn new_anonymous_constant(&mut self, pointer_type: TypeHandle) -> Register {
         let id = self.next_anonymous_constant_id;
         self.next_anonymous_constant_id += 1;
 
         Register::new_global(format!(".const.{id}"), pointer_type)
+    }
+
+    pub fn start_new_block(&mut self, label: &Label, local_context: &mut LocalContext) -> crate::Result<()> {
+        local_context.set_current_block_label(label.clone());
+        self.emitter.emit_label(label)
     }
 
     pub fn enforce_type(&mut self, value: Value, target_type: TypeHandle, local_context: &mut LocalContext) -> crate::Result<Value> {
@@ -181,249 +429,6 @@ impl<W: Write> Generator<W> {
         self.emitter.emit_load(&result, &pointer, &self.context)?;
 
         Ok(Value::Register(result))
-    }
-
-    pub fn generate_all<'a>(
-        mut self,
-        top_level_statements: impl IntoIterator<Item = &'a ast::Node>,
-        file_id: usize,
-        filenames: &[String],
-    ) -> crate::Result<()> {
-        self.emitter.emit_preamble(file_id, &filenames[file_id])?;
-
-        for top_level_statement in top_level_statements {
-            self.generate_global_node(top_level_statement)?;
-        }
-
-        self.emitter.emit_postamble()
-    }
-
-    pub fn generate_global_node(&mut self, node: &ast::Node) -> crate::Result<Value> {
-        match node {
-            ast::Node::Let { value, global_register, .. } => {
-                let global_register = global_register.as_ref().expect("register should be valid after fill phase");
-                self.generate_global_let_statement(value.as_deref(), global_register)
-            }
-            ast::Node::Constant { value, global_register, .. } => {
-                let global_register = global_register.as_ref().expect("register should be valid after fill phase");
-                self.generate_global_let_constant_statement(value, global_register)
-            }
-            ast::Node::Function { name, parameters, body, global_register, .. } => {
-                let global_register = global_register.as_ref().expect("register should be valid after fill phase");
-                if let Some(body) = body {
-                    self.generate_function_definition(name, parameters, body, global_register)
-                }
-                else {
-                    self.generate_function_declaration(global_register)
-                }
-            }
-            ast::Node::Structure { members, self_type, .. } => {
-                if members.is_some() {
-                    self.generate_structure_definition(*self_type)
-                }
-                else {
-                    self.generate_opaque_structure_definition(*self_type)
-                }
-            }
-            ast::Node::Implement { self_type, statements } => {
-                self.generate_implement_block(self_type, statements)
-            }
-            ast::Node::Module { statements, namespace, .. } => {
-                self.generate_module_block(statements, *namespace)
-            }
-            ast::Node::Import { .. } | ast::Node::GlobImport { .. } => {
-                // The fill phase has done all of the work for us already
-                Ok(Value::Void)
-            }
-            _ => {
-                Err(Box::new(crate::Error::UnexpectedExpression {}))
-            }
-        }
-    }
-
-    pub fn generate_local_node(&mut self, node: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
-        if let Ok(constant) = self.generate_constant_node(node, Some(local_context), expected_type) {
-            return Ok(Value::Constant(constant));
-        }
-
-        let result = match node {
-            ast::Node::Literal(literal) => {
-                self.generate_literal(literal, local_context, expected_type)?
-            }
-            ast::Node::Path { segments } => {
-                let path = self.context.get_absolute_path(segments)?;
-                self.context.get_path_value(&path)?
-            }
-            ast::Node::Unary { operation, operand } => {
-                self.generate_unary_operation(*operation, operand, local_context, expected_type)?
-            }
-            ast::Node::Binary { operation, lhs, rhs } => {
-                self.generate_binary_operation(*operation, lhs, rhs, local_context, expected_type)?
-            }
-            ast::Node::Call { callee, arguments } => {
-                self.generate_call_operation(callee, arguments, local_context)?
-            }
-            ast::Node::ArrayLiteral { items } => {
-                self.generate_array_literal(items, local_context, expected_type)?
-            }
-            ast::Node::StructureLiteral { structure_type: type_name, members } => {
-                self.generate_structure_literal(type_name, members, local_context)?
-            }
-            ast::Node::Grouping { content } => {
-                // Fine to bypass validation steps since this is literally just parentheses
-                return self.generate_local_node(content, local_context, expected_type);
-            }
-            ast::Node::Scope { statements } => {
-                local_context.enter_scope();
-
-                let mut result = Value::Void;
-                for statement in statements {
-                    let statement_value = self.generate_local_node(statement, local_context, None)?;
-
-                    if statement_value.get_type() == TypeHandle::NEVER {
-                        // The rest of the statements in the block will never be executed, so they don't need to be generated
-                        result = statement_value;
-                        break;
-                    }
-                }
-
-                local_context.exit_scope();
-
-                result
-            }
-            ast::Node::Conditional { condition, consequent, alternative } => {
-                let condition = self.generate_local_node(condition, local_context, Some(TypeHandle::BOOL))?;
-                let condition = self.coerce_to_rvalue(condition, local_context)?;
-
-                let consequent_label = local_context.new_block_label();
-                let alternative_label = local_context.new_block_label();
-
-                self.emitter.emit_conditional_branch(&condition, &consequent_label, &alternative_label, &self.context)?;
-
-                if let Some(alternative) = alternative {
-                    let mut tail_label = None;
-
-                    self.emitter.emit_label(&consequent_label)?;
-                    let consequent_value = self.generate_local_node(consequent, local_context, None)?;
-                    if consequent_value.get_type() != TypeHandle::NEVER {
-                        let tail_label = tail_label.get_or_insert_with(|| local_context.new_block_label());
-                        self.emitter.emit_unconditional_branch(tail_label)?;
-                    }
-
-                    self.emitter.emit_label(&alternative_label)?;
-                    let alternative_value = self.generate_local_node(alternative, local_context, None)?;
-                    if alternative_value.get_type() != TypeHandle::NEVER {
-                        let tail_label = tail_label.get_or_insert_with(|| local_context.new_block_label());
-                        self.emitter.emit_unconditional_branch(tail_label)?;
-                    }
-
-                    if let Some(tail_label) = tail_label {
-                        self.emitter.emit_label(&tail_label)?;
-
-                        Value::Void
-                    }
-                    else {
-                        Value::Never
-                    }
-                }
-                else {
-                    self.emitter.emit_label(&consequent_label)?;
-                    let consequent_value = self.generate_local_node(consequent, local_context, None)?;
-                    if consequent_value.get_type() != TypeHandle::NEVER {
-                        self.emitter.emit_unconditional_branch(&alternative_label)?;
-                    }
-
-                    self.emitter.emit_label(&alternative_label)?;
-
-                    Value::Void
-                }
-            }
-            ast::Node::While { condition, body } => {
-                // TODO: handling never, break/continue vs. return
-                let condition_label = local_context.new_block_label();
-
-                self.emitter.emit_unconditional_branch(&condition_label)?;
-
-                self.emitter.emit_label(&condition_label)?;
-
-                let condition = self.generate_local_node(condition, local_context, Some(TypeHandle::BOOL))?;
-                let condition = self.coerce_to_rvalue(condition, local_context)?;
-
-                let body_label = local_context.new_block_label();
-                let tail_label = local_context.new_block_label();
-
-                local_context.push_break_label(tail_label.clone());
-                local_context.push_continue_label(condition_label.clone());
-
-                self.emitter.emit_conditional_branch(&condition, &body_label, &tail_label, &self.context)?;
-
-                self.emitter.emit_label(&body_label)?;
-                self.generate_local_node(body, local_context, None)?;
-                self.emitter.emit_unconditional_branch(&condition_label)?;
-
-                self.emitter.emit_label(&tail_label)?;
-
-                local_context.pop_break_label();
-                local_context.pop_continue_label();
-
-                Value::Void
-            }
-            ast::Node::Break => {
-                let break_label = local_context.break_label()
-                    .ok_or_else(|| Box::new(crate::Error::InvalidBreak {}))?;
-
-                self.emitter.emit_unconditional_branch(break_label)?;
-
-                Value::Break
-            }
-            ast::Node::Continue => {
-                let continue_label = local_context.continue_label()
-                    .ok_or_else(|| Box::new(crate::Error::InvalidContinue {}))?;
-
-                self.emitter.emit_unconditional_branch(continue_label)?;
-
-                Value::Continue
-            }
-            ast::Node::Return { value } => {
-                let return_type = local_context.return_type();
-
-                if let Some(value) = value {
-                    if return_type == TypeHandle::VOID {
-                        return Err(Box::new(crate::Error::UnexpectedReturnValue {}));
-                    }
-                    else {
-                        let value = self.generate_local_node(value, local_context, Some(return_type.clone()))?;
-                        let value = self.coerce_to_rvalue(value, local_context)?;
-
-                        self.emitter.emit_return(Some(&value), &self.context)?;
-                    }
-                }
-                else if return_type == TypeHandle::VOID {
-                    self.emitter.emit_return(None, &self.context)?;
-                }
-                else {
-                    return Err(Box::new(crate::Error::ExpectedReturnValue {}));
-                }
-
-                Value::Never
-            }
-            ast::Node::Let { name, value_type, is_mutable, value, .. } => {
-                self.generate_local_let_statement(name, value_type, *is_mutable, value.as_deref(), local_context)?
-            }
-            ast::Node::Constant { name, value_type, value, .. } => {
-                self.generate_local_let_constant_statement(name, value_type, value, local_context)?
-            }
-            _ => {
-                return Err(Box::new(crate::Error::UnexpectedExpression {}));
-            }
-        };
-
-        if let Some(expected_type) = expected_type {
-            self.enforce_type(result, expected_type, local_context)
-        }
-        else {
-            Ok(result)
-        }
     }
 
     fn generate_literal(&mut self, literal: &token::Literal, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
@@ -616,10 +621,6 @@ impl<W: Write> Generator<W> {
 
     fn generate_unary_operation(&mut self, operation: ast::UnaryOperation, operand: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let result = match operation {
-            ast::UnaryOperation::PostIncrement => todo!(),
-            ast::UnaryOperation::PostDecrement => todo!(),
-            ast::UnaryOperation::PreIncrement => todo!(),
-            ast::UnaryOperation::PreDecrement => todo!(),
             ast::UnaryOperation::Positive => {
                 let operand = self.generate_local_node(operand, local_context, expected_type)?;
 
@@ -760,70 +761,70 @@ impl<W: Write> Generator<W> {
                 self.change_type(value, target_type, local_context)?
             }
             ast::BinaryOperation::Add => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
 
                 self.emitter.emit_addition(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::Subtract => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
 
                 self.emitter.emit_subtraction(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::Multiply => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
 
                 self.emitter.emit_multiplication(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::Divide => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
 
                 self.emitter.emit_division(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::Remainder => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
 
                 self.emitter.emit_remainder(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::ShiftLeft => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
 
                 self.emitter.emit_shift_left(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::ShiftRight => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
 
                 self.emitter.emit_shift_right(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::BitwiseAnd => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
 
                 self.emitter.emit_bitwise_and(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::BitwiseOr => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
 
                 self.emitter.emit_bitwise_or(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::BitwiseXor => {
-                let (result, lhs, rhs) = self.generate_binary_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
 
                 self.emitter.emit_bitwise_xor(&result, &lhs, &rhs, &self.context)?;
 
@@ -871,8 +872,60 @@ impl<W: Write> Generator<W> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::LogicalAnd => todo!(),
-            ast::BinaryOperation::LogicalOr => todo!(),
+            ast::BinaryOperation::LogicalAnd => {
+                let lhs = self.generate_local_node(lhs, local_context, Some(TypeHandle::BOOL))?;
+                let lhs = self.coerce_to_rvalue(lhs, local_context)?;
+
+                let initial_label = local_context.current_block_label().clone();
+                let lhs_true_label = local_context.new_block_label();
+                let tail_label = local_context.new_block_label();
+
+                self.emitter.emit_conditional_branch(&lhs, &lhs_true_label, &tail_label, &self.context)?;
+                self.start_new_block(&lhs_true_label, local_context)?;
+
+                let rhs = self.generate_local_node(rhs, local_context, Some(TypeHandle::BOOL))?;
+                let rhs = self.coerce_to_rvalue(rhs, local_context)?;
+
+                self.emitter.emit_unconditional_branch(&tail_label)?;
+                let rhs_output_label = local_context.current_block_label().clone();
+                self.start_new_block(&tail_label, local_context)?;
+
+                let result = local_context.new_anonymous_register(TypeHandle::BOOL);
+
+                self.emitter.emit_phi(&result, [
+                    (&Value::from(false), &initial_label),
+                    (&rhs, &rhs_output_label),
+                ], &self.context)?;
+
+                Value::Register(result)
+            }
+            ast::BinaryOperation::LogicalOr => {
+                let lhs = self.generate_local_node(lhs, local_context, Some(TypeHandle::BOOL))?;
+                let lhs = self.coerce_to_rvalue(lhs, local_context)?;
+
+                let initial_label = local_context.current_block_label().clone();
+                let lhs_false_label = local_context.new_block_label();
+                let tail_label = local_context.new_block_label();
+
+                self.emitter.emit_conditional_branch(&lhs, &tail_label, &lhs_false_label, &self.context)?;
+                self.start_new_block(&lhs_false_label, local_context)?;
+
+                let rhs = self.generate_local_node(rhs, local_context, Some(TypeHandle::BOOL))?;
+                let rhs = self.coerce_to_rvalue(rhs, local_context)?;
+
+                self.emitter.emit_unconditional_branch(&tail_label)?;
+                let rhs_output_label = local_context.current_block_label().clone();
+                self.start_new_block(&tail_label, local_context)?;
+
+                let result = local_context.new_anonymous_register(TypeHandle::BOOL);
+
+                self.emitter.emit_phi(&result, [
+                    (&Value::from(true), &initial_label),
+                    (&rhs, &rhs_output_label),
+                ], &self.context)?;
+
+                Value::Register(result)
+            }
             ast::BinaryOperation::Assign => {
                 let lhs = self.generate_local_node(lhs, local_context, expected_type)?;
                 let (pointer, pointee_type) = lhs.into_mutable_lvalue(&self.context)?;
@@ -1196,7 +1249,7 @@ impl<W: Write> Generator<W> {
         }
     }
 
-    fn generate_binary_arithmetic_operands(&mut self, lhs: &ast::Node, rhs: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(Register, Value, Value)> {
+    fn generate_arithmetic_operands(&mut self, lhs: &ast::Node, rhs: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(Register, Value, Value)> {
         let lhs = self.generate_local_node(lhs, local_context, expected_type)?;
         let lhs = self.coerce_to_rvalue(lhs, local_context)?;
 
@@ -1224,7 +1277,7 @@ impl<W: Write> Generator<W> {
         let lhs = self.generate_local_node(lhs, local_context, expected_type)?;
         let (pointer, pointee_type) = lhs.into_mutable_lvalue(&self.context)?;
 
-        let rhs = self.generate_local_node(rhs, local_context, Some(pointee_type.clone()))?;
+        let rhs = self.generate_local_node(rhs, local_context, Some(pointee_type))?;
         let rhs = self.coerce_to_rvalue(rhs, local_context)?;
 
         let lhs = local_context.new_anonymous_register(pointee_type);
@@ -1455,10 +1508,8 @@ impl<W: Write> Generator<W> {
             })
             .collect();
 
-        self.emitter.emit_function_enter(&function_register, &parameter_registers, &self.context)?;
-
-        let entry_label = local_context.new_block_label();
-        self.emitter.emit_label(&entry_label)?;
+        self.emitter.emit_function_enter(function_register, &parameter_registers, &self.context)?;
+        self.emitter.emit_label(local_context.current_block_label())?;
 
         for (input_register, pointer) in std::iter::zip(parameter_registers, parameter_pointers) {
             self.emitter.emit_local_allocation(&pointer, &self.context)?;
@@ -1486,7 +1537,7 @@ impl<W: Write> Generator<W> {
 
     fn generate_function_declaration(&mut self, function_register: &Register) -> crate::Result<Value> {
         // The fill phase has done basically all of the work for us already
-        self.emitter.emit_function_declaration(&function_register, &self.context)?;
+        self.emitter.emit_function_declaration(function_register, &self.context)?;
 
         Ok(Value::Void)
     }

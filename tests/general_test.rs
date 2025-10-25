@@ -1,21 +1,13 @@
-use std::time::Instant;
-use compiler::cli::CompilerArgs;
 use clap::Parser;
 
 #[test]
 fn general_test() {
-    let start_time = Instant::now();
-
-    let args = CompilerArgs::parse_from([
+    let args = compiler::cli::CompilerArgs::parse_from([
         "compiler",
-        "-s", "tests/collections.txt",
-        "-o", "tests/collections.ll",
+        "-s", "tests/test3.txt",
+        "-o", "tests/test3.ll",
     ]);
-    match compiler::cli::invoke(&args) {
-        Err(error) => println!("\x1b[31mError: {}\x1b[0m", error.to_string_with_context(args.source_paths())),
-        Ok(_) => println!("\x1b[32mFinished\x1b[0m"),
+    if let Err(error) = compiler::cli::invoke(&args) {
+        panic!("Error: {}", error.to_string_with_context(args.source_paths()))
     }
-
-    let time_taken_ms = start_time.elapsed().as_millis();
-    println!("\x1b[2mTime: {time_taken_ms} ms\x1b[22m");
 }

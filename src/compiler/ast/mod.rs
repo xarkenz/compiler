@@ -50,10 +50,6 @@ impl PartialOrd for Precedence {
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum UnaryOperation {
-    PostIncrement,
-    PostDecrement,
-    PreIncrement,
-    PreDecrement,
     Positive,
     Negative,
     BitwiseNot,
@@ -67,10 +63,14 @@ pub enum UnaryOperation {
 impl UnaryOperation {
     pub fn precedence(&self) -> Precedence {
         match self {
-            Self::PostIncrement | Self::PostDecrement => Precedence::Postfix,
-            Self::PreIncrement | Self::PreDecrement | Self::Positive | Self::Negative
-                | Self::BitwiseNot | Self::LogicalNot | Self::Reference | Self::Dereference
-                | Self::GetSize | Self::GetAlign => Precedence::Prefix,
+            Self::Positive |
+            Self::Negative |
+            Self::BitwiseNot |
+            Self::LogicalNot |
+            Self::Reference |
+            Self::Dereference |
+            Self::GetSize |
+            Self::GetAlign => Precedence::Prefix,
         }
     }
 
@@ -81,9 +81,7 @@ impl UnaryOperation {
     pub fn from_prefix_token(token: &Token) -> Option<Self> {
         match token {
             Token::Plus => Some(Self::Positive),
-            Token::Plus2 => Some(Self::PreIncrement),
             Token::Minus => Some(Self::Negative),
-            Token::Minus2 => Some(Self::PreDecrement),
             Token::Star => Some(Self::Dereference),
             Token::Ampersand => Some(Self::Reference),
             Token::Tilde => Some(Self::BitwiseNot),
@@ -95,19 +93,13 @@ impl UnaryOperation {
     }
 
     pub fn from_postfix_token(token: &Token) -> Option<Self> {
-        match token {
-            Token::Plus2 => Some(Self::PostIncrement),
-            Token::Minus2 => Some(Self::PostDecrement),
-            _ => None
-        }
+        // Not currently used
+        let _ = token;
+        None
     }
 
     pub fn to_string_with_operand(&self, operand: &Node) -> String {
         match self {
-            Self::PostIncrement => format!("{operand}++"),
-            Self::PostDecrement => format!("{operand}--"),
-            Self::PreIncrement => format!("++{operand}"),
-            Self::PreDecrement => format!("--{operand}"),
             Self::Positive => format!("+{operand}"),
             Self::Negative => format!("-{operand}"),
             Self::BitwiseNot => format!("~{operand}"),
@@ -449,7 +441,7 @@ pub enum Node {
     },
     GlobImport {
         segments: Vec<PathSegment>,
-    }
+    },
 }
 
 impl Node {
@@ -459,7 +451,7 @@ impl Node {
                 Ok(name)
             }
             _ => {
-                todo!("need to integrate `Span` into codegen")
+                todo!("need to integrate `Span` into AST")
                 // Err(Box::new(crate::Error::ExpectedIdentifier { span: ??? }))
             }
         }

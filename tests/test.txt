@@ -8,13 +8,13 @@ foreign function printf(format: *[u8], ..) -> u32;
 
 foreign function malloc(size_bytes: u64) -> *mut void;
 foreign function free(alloc: *mut void);
-foreign function memcpy(dest: *mut void, src: *void, count: u64) -> *mut void;
+foreign function memcpy(dest: *mut void, src: *void, byte_count: u64) -> *mut void;
 
 foreign function strlen(str: *[u8]) -> u64;
 foreign function isdigit(char: i32) -> i32;
 
 implement u8 {
-    function swap(self: *mut Self, other: *mut Self) {
+    function swap(mut self: *mut Self, mut other: *mut Self) {
         let temp: Self = *self;
         *self = *other;
         *other = temp;
@@ -68,7 +68,7 @@ implement String {
         };
     }
 
-    function grow_by(self: *mut Self, additional: u64) {
+    function grow_by(mut self: *mut Self, additional: u64) {
         let required_capacity: u64 = self.capacity + additional;
         let capacity: u64 = u64::max(self.capacity * 2, required_capacity);
         let mut ptr: *mut [u8] = malloc(sizeof(u8) * capacity);
@@ -80,7 +80,7 @@ implement String {
         self.capacity = capacity;
     }
 
-    function push(self: *mut Self, ch: u8) {
+    function push(mut self: *mut Self, ch: u8) {
         if (self.str.length == self.capacity) {
             self.grow_by(1);
         }
@@ -89,7 +89,7 @@ implement String {
         self.str.length += 1;
     }
 
-    function insert(self: *mut Self, mut index: u64, mut ch: u8) {
+    function insert(mut self: *mut Self, mut index: u64, mut ch: u8) {
         if (self.str.length == self.capacity) {
             self.grow_by(1);
         }

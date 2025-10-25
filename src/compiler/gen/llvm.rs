@@ -203,6 +203,30 @@ impl<W: Write> Emitter<W> {
         )
     }
 
+    pub fn emit_phi<'a, I>(&mut self, result: &Register, inputs: I, context: &GlobalContext) -> crate::Result<()>
+    where
+        I: IntoIterator<Item = (&'a Value, &'a Label)>,
+    {
+        let mut inputs = inputs.into_iter();
+
+        let (value, label) = inputs.next()
+            .expect("inputs cannot be empty");
+        emit!(
+            self,
+            "\t{} = phi {} [ {}, {} ]",
+            result.llvm_syntax(),
+            result.get_type().llvm_syntax(context),
+            value.llvm_syntax(context),
+            label.llvm_syntax(),
+        )?;
+
+        for (value, label) in inputs {
+            emit!(self, ", [ {}, {} ]", value.llvm_syntax(context), label.llvm_syntax())?;
+        }
+
+        emit!(self, "\n")
+    }
+
     pub fn emit_local_allocation(&mut self, pointer: &Register, context: &GlobalContext) -> crate::Result<()> {
         let &TypeRepr::Pointer { pointee_type, .. } = pointer.get_type().repr(context) else {
             panic!("{} is not a pointer", pointer.llvm_syntax());

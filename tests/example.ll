@@ -29,10 +29,72 @@ define dso_local void @do_call(void (i32)* noundef %0, i32 noundef %1) #0 {
 }
 
 ; Function Attrs: noinline nounwind optnone uwtable
+define dso_local zeroext i1 @func_a() #0 {
+  ret i1 true
+}
+
+; Function Attrs: noinline nounwind optnone uwtable
+define dso_local zeroext i1 @func_b() #0 {
+  ret i1 false
+}
+
+; Function Attrs: noinline nounwind optnone uwtable
 define dso_local i32 @main() #0 {
   %1 = alloca i32, align 4
+  %2 = alloca i8, align 1
+  %3 = alloca i8, align 1
   store i32 0, i32* %1, align 4
   call void @do_call(void (i32)* noundef @my_func, i32 noundef 8)
+  %4 = call zeroext i1 @func_a()
+  br i1 %4, label %5, label %9
+
+5:                                                ; preds = %0
+  %6 = call zeroext i1 @func_b()
+  br i1 %6, label %7, label %9
+
+7:                                                ; preds = %5
+  %8 = call zeroext i1 @func_a()
+  br label %9
+
+9:                                                ; preds = %7, %5, %0
+  %10 = phi i1 [ false, %5 ], [ false, %0 ], [ %8, %7 ]
+  %11 = zext i1 %10 to i8
+  store i8 %11, i8* %2, align 1
+  %12 = call zeroext i1 @func_a()
+  br i1 %12, label %15, label %13
+
+13:                                               ; preds = %9
+  %14 = call zeroext i1 @func_b()
+  br label %15
+
+15:                                               ; preds = %13, %9
+  %16 = phi i1 [ true, %9 ], [ %14, %13 ]
+  %17 = zext i1 %16 to i8
+  store i8 %17, i8* %3, align 1
+  %18 = call zeroext i1 @func_a()
+  br i1 %18, label %19, label %22
+
+19:                                               ; preds = %15
+  %20 = call zeroext i1 @func_b()
+  br i1 %20, label %21, label %22
+
+21:                                               ; preds = %19
+  call void @my_func(i32 noundef 1)
+  br label %22
+
+22:                                               ; preds = %21, %19, %15
+  %23 = call zeroext i1 @func_a()
+  br i1 %23, label %26, label %24
+
+24:                                               ; preds = %22
+  %25 = call zeroext i1 @func_b()
+  br i1 %25, label %26, label %27
+
+26:                                               ; preds = %24, %22
+  call void @my_func(i32 noundef 2)
+  br label %27
+
+27:                                               ; preds = %26, %24
   ret i32 0
 }
 
