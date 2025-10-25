@@ -641,12 +641,15 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     } else {
                         false
                     };
-
                     let name = self.expect_identifier()?;
                     self.scan_token()?;
-                    self.expect_token(&[Token::Colon])?;
-                    self.scan_token()?;
-                    let value_type = self.parse_type(Some(&[Token::Equal, Token::Semicolon]))?;
+                    self.expect_token(&[Token::Colon, Token::Equal, Token::Semicolon])?;
+                    let value_type = if let Some(Token::Colon) = self.current_token() {
+                        self.scan_token()?;
+                        Some(self.parse_type(Some(&[Token::Equal, Token::Semicolon]))?)
+                    } else {
+                        None
+                    };
                     let value = if let Some(Token::Equal) = self.current_token() {
                         self.scan_token()?;
                         Some(self.parse_expression(None, &[Token::Semicolon])?)

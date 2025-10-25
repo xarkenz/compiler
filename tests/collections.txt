@@ -55,7 +55,7 @@ implement LinkedList {
     }
 
     function push_front(mut self: *mut Self, value: *void) {
-        let mut new_node: *mut LinkedListNode = malloc(sizeof(LinkedListNode));
+        let mut new_node = malloc(sizeof(LinkedListNode)) as *mut LinkedListNode;
         *new_node = LinkedListNode {
             value: value,
             next: self.head,
@@ -68,8 +68,8 @@ implement LinkedList {
             return null;
         }
         else {
-            let front: *mut LinkedListNode = self.head;
-            let value: *void = front.value;
+            let front = self.head;
+            let value = front.value;
             self.head = front.next;
             free(front);
             return value;
@@ -86,7 +86,7 @@ struct AVLTreeNode {
 
 implement AVLTreeNode {
     function alloc(key: *void) -> *mut Self {
-        let mut alloc: *mut Self = malloc(sizeof(Self));
+        let mut alloc = malloc(sizeof(Self)) as *mut Self;
         *alloc = Self {
             key: key,
             left: null,
@@ -114,7 +114,7 @@ implement AVLTreeNode {
     }
 
     function rotate_right(mut self: *mut Self) -> *mut Self {
-        let mut new_root: *mut Self = self.left;
+        let mut new_root = self.left;
         self.left = new_root.right;
         new_root.right = self;
         self.recompute_height();
@@ -123,7 +123,7 @@ implement AVLTreeNode {
     }
 
     function rotate_left(mut self: *mut Self) -> *mut Self {
-        let mut new_root: *mut Self = self.right;
+        let mut new_root = self.right;
         self.right = new_root.left;
         new_root.left = self;
         self.recompute_height();
@@ -135,7 +135,7 @@ implement AVLTreeNode {
         if (self == null) {
             return null;
         }
-        let imbalance: i32 = self.left.get_height() - self.right.get_height();
+        let imbalance = self.left.get_height() - self.right.get_height();
         if (imbalance > 1) {
             if (self.left.right.get_height() > self.left.left.get_height()) {
                 self.left = self.left.rotate_left();
@@ -181,9 +181,9 @@ implement AVLTree {
     }
 
     function get(self: *Self, key: *void) -> *void {
-        let mut node: *AVLTreeNode = self.root;
+        let mut node = self.root;
         while (node != null) {
-            let ordering: i32 = (self.comparator)(key, node.key);
+            let ordering = (self.comparator)(key, node.key);
             if (ordering < 0) {
                 node = node.left;
             }
@@ -202,7 +202,7 @@ implement AVLTree {
             *node_ref = AVLTreeNode::alloc(key);
             return null;
         }
-        let ordering: i32 = (self.comparator)(key, (*node_ref).key);
+        let ordering = (self.comparator)(key, (*node_ref).key);
         if (ordering < 0) {
             self.insert_subtree(&(*node_ref).left, key);
         }
@@ -210,7 +210,7 @@ implement AVLTree {
             self.insert_subtree(&(*node_ref).right, key);
         }
         else {
-            let replaced_key: *void = (*node_ref).key;
+            let replaced_key = (*node_ref).key;
             (*node_ref).key = key;
             return replaced_key;
         }
@@ -248,9 +248,9 @@ struct BTreeLeaf {
 
 implement BTreeLeaf {
     function alloc(l_order: u64, first_element: *void) -> *mut Self {
-        let mut elements: *mut [*void] = malloc(sizeof(*void) * l_order);
+        let mut elements = malloc(sizeof(*void) * l_order) as *mut [*void];
         elements[0] = first_element;
-        let mut alloc: *mut Self = malloc(sizeof(Self));
+        let mut alloc = malloc(sizeof(Self)) as *mut Self;
         *alloc = Self {
             is_leaf: true,
             degree: 1,
@@ -287,10 +287,10 @@ implement BTree {
 }
 
 function max_percolate_dmut(mut array: *mut [*void], length: u64, comparator: function(*void, *void) -> i32, mut index: u64) {
-    let target: *void = array[index];
+    let target = array[index];
     while (true) {
-        let left: u64 = (index + 1) * 2 - 1;
-        let right: u64 = left + 1;
+        let left = (index + 1) * 2 - 1;
+        let right = left + 1;
         if (left >= length) {
             break;
         }
@@ -317,7 +317,7 @@ function max_percolate_dmut(mut array: *mut [*void], length: u64, comparator: fu
 
 function heap_sort(mut array: *mut [*void], length: u64, comparator: function(*void, *void) -> i32) {
     // Build max heap
-    let mut index: u64 = length / 2;
+    let mut index = length / 2;
     while (index > 0) {
         index -= 1;
         // Percolate dmut
@@ -328,7 +328,7 @@ function heap_sort(mut array: *mut [*void], length: u64, comparator: function(*v
     while (index > 1) {
         index -= 1;
         // Swap max with last unsorted element
-        let max_value: *void = array[0];
+        let max_value = array[0];
         array[0] = array[index];
         array[index] = max_value;
         // Percolate the root dmut within the unsorted range
@@ -353,7 +353,7 @@ function print_i32_ptr_array(array: *[*i32], length: u64) {
 foreign function main() -> i32 {
     let keys: [i32; 15] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
-    let mut list: LinkedList = LinkedList::new();
+    let mut list = LinkedList::new();
     let mut i: u64 = 0;
     while (i < 5) {
         printf("push: %d\n", keys[i]);
@@ -365,17 +365,17 @@ foreign function main() -> i32 {
         printf("pop: %d\n", *value);
     }
 
-    let mut tree: AVLTree = AVLTree::new(i32::cmp);
+    let mut tree = AVLTree::new(i32::cmp);
     let mut i: u64 = 0;
     while (i < 7) {
-        let idx: u64 = (i * 7) % 10;
+        let idx = (i * 7) % 10;
         printf("insert: %d\n", keys[idx]);
         tree.insert(&keys[idx]);
         i += 1;
     }
     let mut i: u64 = 0;
     while (i < 10) {
-        let key: *i32 = tree.get(&keys[i]);
+        let key = tree.get(&keys[i]);
         let mut is_contained: *[u8];
         if (key != null) {
             is_contained = "yes";
@@ -388,13 +388,13 @@ foreign function main() -> i32 {
     }
     tree.print(i32::print);
 
-    let mut b_tree: BTree = BTree::new(3, 2, i32::cmp);
+    let mut b_tree = BTree::new(3, 2, i32::cmp);
     b_tree.insert(&keys[0]);
 
     let mut heap_sort_test: [*i32; 15];
     let mut index: u64 = 0;
     while (index < 15) {
-        let key: *i32 = &keys[((index + 7) * 7) % 15];
+        let key = &keys[((index + 7) * 7) % 15];
         heap_sort_test[index] = key;
         index += 1;
     }

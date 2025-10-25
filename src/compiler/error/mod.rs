@@ -274,6 +274,12 @@ pub enum Error {
         name: String,
         possible_paths: Vec<String>,
     },
+    MustSpecifyTypeForGlobal {
+        name: String,
+    },
+    MustSpecifyTypeForUninitialized {
+        name: String,
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Box<Error>>;
@@ -411,6 +417,8 @@ impl std::fmt::Display for Error {
                 }
                 write!(f, "); try importing one of these paths directly")
             }
+            Self::MustSpecifyTypeForGlobal { name } => write!(f, "must specify type for global variable '{name}'"),
+            Self::MustSpecifyTypeForUninitialized { name } => write!(f, "must specify type for '{name}' if no initial value is given"),
         }
     }
 }

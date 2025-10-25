@@ -270,7 +270,7 @@ impl<W: Write> Generator<W> {
                 Value::Never
             }
             ast::Node::Let { name, value_type, is_mutable, value, .. } => {
-                self.generate_local_let_statement(name, value_type, *is_mutable, value.as_deref(), local_context)?
+                self.generate_local_let_statement(name, value_type.as_ref(), *is_mutable, value.as_deref(), local_context)?
             }
             ast::Node::Constant { name, value_type, value, .. } => {
                 self.generate_local_let_constant_statement(name, value_type, value, local_context)?
@@ -876,11 +876,11 @@ impl<W: Write> Generator<W> {
                 let lhs = self.generate_local_node(lhs, local_context, Some(TypeHandle::BOOL))?;
                 let lhs = self.coerce_to_rvalue(lhs, local_context)?;
 
-                let initial_label = local_context.current_block_label().clone();
                 let lhs_true_label = local_context.new_block_label();
                 let tail_label = local_context.new_block_label();
 
                 self.emitter.emit_conditional_branch(&lhs, &lhs_true_label, &tail_label, &self.context)?;
+                let short_circuit_label = local_context.current_block_label().clone();
                 self.start_new_block(&lhs_true_label, local_context)?;
 
                 let rhs = self.generate_local_node(rhs, local_context, Some(TypeHandle::BOOL))?;
@@ -893,7 +893,7 @@ impl<W: Write> Generator<W> {
                 let result = local_context.new_anonymous_register(TypeHandle::BOOL);
 
                 self.emitter.emit_phi(&result, [
-                    (&Value::from(false), &initial_label),
+                    (&Value::from(false), &short_circuit_label),
                     (&rhs, &rhs_output_label),
                 ], &self.context)?;
 
@@ -903,11 +903,11 @@ impl<W: Write> Generator<W> {
                 let lhs = self.generate_local_node(lhs, local_context, Some(TypeHandle::BOOL))?;
                 let lhs = self.coerce_to_rvalue(lhs, local_context)?;
 
-                let initial_label = local_context.current_block_label().clone();
                 let lhs_false_label = local_context.new_block_label();
                 let tail_label = local_context.new_block_label();
 
                 self.emitter.emit_conditional_branch(&lhs, &tail_label, &lhs_false_label, &self.context)?;
+                let short_circuit_label = local_context.current_block_label().clone();
                 self.start_new_block(&lhs_false_label, local_context)?;
 
                 let rhs = self.generate_local_node(rhs, local_context, Some(TypeHandle::BOOL))?;
@@ -920,7 +920,7 @@ impl<W: Write> Generator<W> {
                 let result = local_context.new_anonymous_register(TypeHandle::BOOL);
 
                 self.emitter.emit_phi(&result, [
-                    (&Value::from(true), &initial_label),
+                    (&Value::from(true), &short_circuit_label),
                     (&rhs, &rhs_output_label),
                 ], &self.context)?;
 
@@ -1421,20 +1421,41 @@ impl<W: Write> Generator<W> {
         }
     }
 
-    fn generate_local_let_statement(&mut self, name: &str, type_node: &ast::TypeNode, is_mutable: bool, value: Option<&ast::Node>, local_context: &mut LocalContext) -> crate::Result<Value> {
-        let value_type = self.context.interpret_type_node(type_node)?;
+    fn generate_local_let_statement(&mut self, name: &str, type_node: Option<&ast::TypeNode>, is_mutable: bool, value: Option<&ast::Node>, local_context: &mut LocalContext) -> crate::Result<Value> {
+        let value_type = match type_node {
+            Some(type_node) => {
+                Some(self.context.interpret_type_node(type_node)?)
+            }
+            None => None,
+        };
+
+        let value = match value {
+            Some(node) => {
+                let value = self.generate_local_node(node, local_context, value_type)?;
+                Some(self.coerce_to_rvalue(value, local_context)?)
+            }
+            None => None,
+        };
+
+        let value_type = match value_type {
+            Some(value_type) => value_type,
+            None => {
+                let Some(value) = &value else {
+                    return Err(Box::new(crate::Error::MustSpecifyTypeForUninitialized {
+                        name: name.to_string(),
+                    }));
+                };
+                value.get_type()
+            }
+        };
 
         let semantics = PointerSemantics::from_flag(is_mutable);
         let pointer_type = self.context.get_pointer_type(value_type, semantics);
         let pointer = local_context.define_indirect_symbol(name.into(), pointer_type, value_type);
 
         self.emitter.emit_local_allocation(&pointer, &self.context)?;
-
-        if let Some(node) = value {
-            let value = self.generate_local_node(node, local_context, Some(value_type))?;
-            let value = self.coerce_to_rvalue(value, local_context)?;
-
-            self.emitter.emit_store(&value, &pointer.into(), &self.context)?;
+        if let Some(value) = &value {
+            self.emitter.emit_store(value, &pointer.into(), &self.context)?;
         }
 
         Ok(Value::Void)

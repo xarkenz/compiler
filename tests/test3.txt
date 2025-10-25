@@ -11,6 +11,6 @@ function c() -> bool {
 }
 
 foreign function main() -> i32 {
-    let x: bool = a() || b() && c();
+    let x = a() || b() && c();
     return 0;
 }

@@ -13,20 +13,20 @@ declare i32 @wait(i32*)
 
 define i32 @main() {
 .block.0:
-	%parent_pid = alloca i32
 	%0 = call i32() @getpid()
+	%parent_pid = alloca i32
 	store i32 %0, i32* %parent_pid
 	%1 = load i32, i32* %parent_pid
 	%2 = call i32(i8*, ...) @printf(i8* bitcast ([31 x i8]* @.const.0 to i8*), i32 %1)
-	%child_pid = alloca i32
 	%3 = call i32() @fork()
+	%child_pid = alloca i32
 	store i32 %3, i32* %child_pid
 	%4 = load i32, i32* %child_pid
 	%5 = icmp eq i32 %4, 0
 	br i1 %5, label %.block.1, label %.block.2
 .block.1:
-	%child_pid-1 = alloca i32
 	%6 = call i32() @getpid()
+	%child_pid-1 = alloca i32
 	store i32 %6, i32* %child_pid-1
 	%7 = load i32, i32* %child_pid-1
 	%8 = call i32(i8*, ...) @printf(i8* bitcast ([26 x i8]* @.const.1 to i8*), i32 %7)

@@ -400,7 +400,7 @@ pub enum Node {
     },
     Let {
         name: String,
-        value_type: TypeNode,
+        value_type: Option<TypeNode>,
         is_mutable: bool,
         value: Option<Box<Node>>,
         global_register: Option<Register>,
@@ -558,10 +558,13 @@ impl std::fmt::Display for Node {
             }
             Self::Let { name, value_type, is_mutable, value, .. } => {
                 if *is_mutable {
-                    write!(f, " let mut {name}: {value_type}")?;
+                    write!(f, " let mut {name}")?;
                 }
                 else {
-                    write!(f, " let {name}: {value_type}")?;
+                    write!(f, " let {name}")?;
+                }
+                if let Some(value_type) = value_type {
+                    write!(f, ": {value_type}")?;
                 }
                 if let Some(value) = value {
                     write!(f, " = {value};")

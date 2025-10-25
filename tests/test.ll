@@ -29,19 +29,18 @@ define void @"<u8>::swap"(i8* %0, i8* %1) {
 	store i8* %0, i8** %self
 	%other = alloca i8*
 	store i8* %1, i8** %other
-	%temp = alloca i8
 	%2 = load i8*, i8** %self
-	%3 = bitcast i8* %2 to i8*
-	%4 = load i8, i8* %3
-	store i8 %4, i8* %temp
-	%5 = load i8*, i8** %self
-	%6 = load i8*, i8** %other
-	%7 = bitcast i8* %6 to i8*
-	%8 = load i8, i8* %7
-	store i8 %8, i8* %5
-	%9 = load i8*, i8** %other
-	%10 = load i8, i8* %temp
-	store i8 %10, i8* %9
+	%3 = load i8, i8* %2
+	%temp = alloca i8
+	store i8 %3, i8* %temp
+	%4 = load i8*, i8** %self
+	%5 = load i8*, i8** %other
+	%6 = bitcast i8* %5 to i8*
+	%7 = load i8, i8* %6
+	store i8 %7, i8* %4
+	%8 = load i8*, i8** %other
+	%9 = load i8, i8* %temp
+	store i8 %9, i8* %8
 	ret void
 }
 
@@ -115,26 +114,26 @@ define void @"::String::grow_by"(%"type.::String"* %0, i64 %1) {
 	store %"type.::String"* %0, %"type.::String"** %self
 	%additional = alloca i64
 	store i64 %1, i64* %additional
-	%required_capacity = alloca i64
 	%2 = load %"type.::String"*, %"type.::String"** %self
 	%3 = getelementptr inbounds %"type.::String", %"type.::String"* %2, i32 0, i32 1
 	%4 = load i64, i64* %3
 	%5 = load i64, i64* %additional
 	%6 = add nuw i64 %4, %5
+	%required_capacity = alloca i64
 	store i64 %6, i64* %required_capacity
-	%capacity = alloca i64
 	%7 = load %"type.::String"*, %"type.::String"** %self
 	%8 = getelementptr inbounds %"type.::String", %"type.::String"* %7, i32 0, i32 1
 	%9 = load i64, i64* %8
 	%10 = mul nuw i64 %9, 2
 	%11 = load i64, i64* %required_capacity
 	%12 = call i64(i64, i64) @"<u64>::max"(i64 %10, i64 %11)
+	%capacity = alloca i64
 	store i64 %12, i64* %capacity
-	%ptr = alloca i8*
 	%13 = load i64, i64* %capacity
 	%14 = mul nuw i64 1, %13
 	%15 = call {}*(i64) @malloc(i64 %14)
 	%16 = bitcast {}* %15 to i8*
+	%ptr = alloca i8*
 	store i8* %16, i8** %ptr
 	%17 = load i8*, i8** %ptr
 	%18 = bitcast i8* %17 to {}*
@@ -285,10 +284,10 @@ define i32 @"::fibonacci"(i32 %0) {
 	%3 = icmp slt i32 %1, %2
 	br i1 %3, label %.block.2, label %.block.3
 .block.2:
-	%temp = alloca i32
 	%4 = load i32, i32* %a
 	%5 = load i32, i32* %b
 	%6 = add nsw i32 %4, %5
+	%temp = alloca i32
 	store i32 %6, i32* %temp
 	%7 = load i32, i32* %b
 	store i32 %7, i32* %a
@@ -312,10 +311,10 @@ define i32 @"::gcd"(i32 %0, i32 %1) {
 	%3 = icmp uge i32 %2, 1
 	br i1 %3, label %.block.2, label %.block.3
 .block.2:
-	%temp = alloca i32
 	%4 = load i32, i32* %a
 	%5 = load i32, i32* %b
 	%6 = urem i32 %4, %5
+	%temp = alloca i32
 	store i32 %6, i32* %temp
 	%7 = load i32, i32* %b
 	store i32 %7, i32* %a
@@ -329,8 +328,8 @@ define i32 @"::gcd"(i32 %0, i32 %1) {
 
 define void @"::aoc_01_p1"() {
 .block.0:
-	%input = alloca %"type.::CFile"*
 	%0 = call %"type.::CFile"*(i8*, i8*) @fopen(i8* bitcast ([10 x i8]* @.const.0 to i8*), i8* bitcast ([2 x i8]* @.const.1 to i8*))
+	%input = alloca %"type.::CFile"*
 	store %"type.::CFile"* %0, %"type.::CFile"** %input
 	%1 = load %"type.::CFile"*, %"type.::CFile"** %input
 	%2 = icmp eq %"type.::CFile"* %1, null
@@ -367,12 +366,12 @@ define void @"::aoc_01_p1"() {
 	store i64 %15, i64* %index
 	br label %.block.6
 .block.8:
-	%calibration_value = alloca i32
 	%16 = load i64, i64* %index
 	%17 = getelementptr inbounds [100 x i8], [100 x i8]* %line, i32 0, i64 %16
 	%18 = load i8, i8* %17
 	%19 = sub nuw i8 %18, 48
 	%20 = zext i8 %19 to i32
+	%calibration_value = alloca i32
 	store i32 %20, i32* %calibration_value
 	%21 = bitcast [100 x i8]* %line to i8*
 	%22 = call i64(i8*) @strlen(i8* %21)
@@ -393,8 +392,7 @@ define void @"::aoc_01_p1"() {
 	store i64 %31, i64* %index
 	br label %.block.9
 .block.11:
-	%calibration_value-1 = alloca i32
-	%32 = load i32, i32* %calibration_value-1
+	%32 = load i32, i32* %calibration_value
 	%33 = mul nuw i32 %32, 10
 	%34 = load i64, i64* %index
 	%35 = getelementptr inbounds [100 x i8], [100 x i8]* %line, i32 0, i64 %34
@@ -402,6 +400,7 @@ define void @"::aoc_01_p1"() {
 	%37 = sub nuw i8 %36, 48
 	%38 = zext i8 %37 to i32
 	%39 = add nuw i32 %33, %38
+	%calibration_value-1 = alloca i32
 	store i32 %39, i32* %calibration_value-1
 	%40 = load i32, i32* %calibration_value-1
 	%41 = load i32, i32* %calibration_sum
@@ -429,63 +428,64 @@ define void @"::omg_linked_list"(i8** %0, i64 %1) {
 	store i8** %0, i8*** %values
 	%value_count = alloca i64
 	store i64 %1, i64* %value_count
+	%2 = bitcast {}* null to %"type.::Node"*
 	%head = alloca %"type.::Node"*
-	store %"type.::Node"* null, %"type.::Node"** %head
+	store %"type.::Node"* %2, %"type.::Node"** %head
 	%index = alloca i64
 	store i64 0, i64* %index
 	br label %.block.1
 .block.1:
-	%2 = load i64, i64* %index
-	%3 = load i64, i64* %value_count
-	%4 = icmp ult i64 %2, %3
-	br i1 %4, label %.block.2, label %.block.3
+	%3 = load i64, i64* %index
+	%4 = load i64, i64* %value_count
+	%5 = icmp ult i64 %3, %4
+	br i1 %5, label %.block.2, label %.block.3
 .block.2:
+	%6 = call {}*(i64) @malloc(i64 16)
+	%7 = bitcast {}* %6 to %"type.::Node"*
 	%node = alloca %"type.::Node"*
-	%5 = call {}*(i64) @malloc(i64 16)
-	%6 = bitcast {}* %5 to %"type.::Node"*
-	store %"type.::Node"* %6, %"type.::Node"** %node
-	%7 = load %"type.::Node"*, %"type.::Node"** %node
-	%8 = load i64, i64* %index
-	%9 = load i8**, i8*** %values
-	%10 = getelementptr inbounds i8*, i8** %9, i64 %8
-	%11 = load i8*, i8** %10
-	%12 = load %"type.::Node"*, %"type.::Node"** %head
-	%13 = alloca %"type.::Node"
-	store %"type.::Node" { i8* undef, %"type.::Node"* undef }, %"type.::Node"* %13
-	%14 = getelementptr inbounds %"type.::Node", %"type.::Node"* %13, i32 0, i32 0
-	store i8* %11, i8** %14
-	%15 = getelementptr inbounds %"type.::Node", %"type.::Node"* %13, i32 0, i32 1
-	store %"type.::Node"* %12, %"type.::Node"** %15
-	%16 = load %"type.::Node", %"type.::Node"* %13
-	store %"type.::Node" %16, %"type.::Node"* %7
-	%17 = load %"type.::Node"*, %"type.::Node"** %node
-	store %"type.::Node"* %17, %"type.::Node"** %head
-	%18 = load i64, i64* %index
-	%19 = add nuw i64 %18, 1
-	store i64 %19, i64* %index
+	store %"type.::Node"* %7, %"type.::Node"** %node
+	%8 = load %"type.::Node"*, %"type.::Node"** %node
+	%9 = load i64, i64* %index
+	%10 = load i8**, i8*** %values
+	%11 = getelementptr inbounds i8*, i8** %10, i64 %9
+	%12 = load i8*, i8** %11
+	%13 = load %"type.::Node"*, %"type.::Node"** %head
+	%14 = alloca %"type.::Node"
+	store %"type.::Node" { i8* undef, %"type.::Node"* undef }, %"type.::Node"* %14
+	%15 = getelementptr inbounds %"type.::Node", %"type.::Node"* %14, i32 0, i32 0
+	store i8* %12, i8** %15
+	%16 = getelementptr inbounds %"type.::Node", %"type.::Node"* %14, i32 0, i32 1
+	store %"type.::Node"* %13, %"type.::Node"** %16
+	%17 = load %"type.::Node", %"type.::Node"* %14
+	store %"type.::Node" %17, %"type.::Node"* %8
+	%18 = load %"type.::Node"*, %"type.::Node"** %node
+	store %"type.::Node"* %18, %"type.::Node"** %head
+	%19 = load i64, i64* %index
+	%20 = add nuw i64 %19, 1
+	store i64 %20, i64* %index
 	br label %.block.1
 .block.3:
-	%20 = call i32(i8*, ...) @printf(i8* bitcast ([11 x i8]* @.const.4 to i8*))
+	%21 = call i32(i8*, ...) @printf(i8* bitcast ([11 x i8]* @.const.4 to i8*))
 	br label %.block.4
 .block.4:
-	%21 = load %"type.::Node"*, %"type.::Node"** %head
-	%22 = icmp ne %"type.::Node"* %21, null
-	br i1 %22, label %.block.5, label %.block.6
+	%22 = load %"type.::Node"*, %"type.::Node"** %head
+	%23 = icmp ne %"type.::Node"* %22, null
+	br i1 %23, label %.block.5, label %.block.6
 .block.5:
+	%24 = load %"type.::Node"*, %"type.::Node"** %head
 	%node-1 = alloca %"type.::Node"*
-	%23 = load %"type.::Node"*, %"type.::Node"** %head
-	store %"type.::Node"* %23, %"type.::Node"** %node-1
-	%24 = load %"type.::Node"*, %"type.::Node"** %node-1
-	%25 = getelementptr inbounds %"type.::Node", %"type.::Node"* %24, i32 0, i32 0
-	%26 = load i8*, i8** %25
-	%27 = call i32(i8*, ...) @printf(i8* bitcast ([4 x i8]* @.const.5 to i8*), i8* %26)
-	%28 = load %"type.::Node"*, %"type.::Node"** %node-1
-	%29 = getelementptr inbounds %"type.::Node", %"type.::Node"* %28, i32 0, i32 1
-	%30 = load %"type.::Node"*, %"type.::Node"** %29
-	store %"type.::Node"* %30, %"type.::Node"** %head
-	%31 = load %"type.::Node"*, %"type.::Node"** %node-1
-	%32 = bitcast %"type.::Node"* %31 to {}*
-	call void({}*) @free({}* %32)
+	store %"type.::Node"* %24, %"type.::Node"** %node-1
+	%25 = load %"type.::Node"*, %"type.::Node"** %node-1
+	%26 = getelementptr inbounds %"type.::Node", %"type.::Node"* %25, i32 0, i32 0
+	%27 = load i8*, i8** %26
+	%28 = call i32(i8*, ...) @printf(i8* bitcast ([4 x i8]* @.const.5 to i8*), i8* %27)
+	%29 = load %"type.::Node"*, %"type.::Node"** %node-1
+	%30 = getelementptr inbounds %"type.::Node", %"type.::Node"* %29, i32 0, i32 1
+	%31 = load %"type.::Node"*, %"type.::Node"** %30
+	store %"type.::Node"* %31, %"type.::Node"** %head
+	%32 = load %"type.::Node"*, %"type.::Node"** %node-1
+	%33 = bitcast %"type.::Node"* %32 to {}*
+	call void({}*) @free({}* %33)
 	br label %.block.4
 .block.6:
 	ret void
@@ -502,7 +502,6 @@ define void @"::student_stuff"() {
 	store i32 97, i32* %joe_age
 	%joe_calculus_grade_before_curve = alloca i32
 	store i32 47, i32* %joe_calculus_grade_before_curve
-	%joe = alloca %"type.::Student"
 	%0 = load i32, i32* %joe_age
 	%1 = load i32, i32* %joe_calculus_grade_before_curve
 	%2 = add nuw i32 %1, 15
@@ -518,6 +517,7 @@ define void @"::student_stuff"() {
 	%8 = getelementptr inbounds %"type.::Student", %"type.::Student"* %6, i32 0, i32 2
 	store [4 x i32] %5, [4 x i32]* %8
 	%9 = load %"type.::Student", %"type.::Student"* %6
+	%joe = alloca %"type.::Student"
 	store %"type.::Student" %9, %"type.::Student"* %joe
 	%10 = getelementptr inbounds %"type.::Student", %"type.::Student"* %joe, i32 0, i32 0
 	%11 = load i8*, i8** %10
@@ -550,8 +550,8 @@ define %"type.::String" @"<i64>::to_string"(i64 %0) {
 .block.0:
 	%self = alloca i64
 	store i64 %0, i64* %self
-	%string = alloca %"type.::String"
 	%1 = call %"type.::String"() @"::String::new"()
+	%string = alloca %"type.::String"
 	store %"type.::String" %1, %"type.::String"* %string
 	%2 = load i64, i64* %self
 	%3 = icmp eq i64 %2, 0
@@ -560,9 +560,9 @@ define %"type.::String" @"<i64>::to_string"(i64 %0) {
 	call void(%"type.::String"*, i8) @"::String::push"(%"type.::String"* %string, i8 48)
 	br label %.block.3
 .block.2:
-	%is_negative = alloca i1
 	%4 = load i64, i64* %self
 	%5 = icmp slt i64 %4, 0
+	%is_negative = alloca i1
 	store i1 %5, i1* %is_negative
 	%6 = load i1, i1* %is_negative
 	br i1 %6, label %.block.4, label %.block.5
@@ -600,16 +600,21 @@ define %"type.::String" @"<i64>::to_string"(i64 %0) {
 	ret %"type.::String" %18
 }
 
+@"::global_var" = global i32 5
+
+@.const.10 = private unnamed_addr constant [14 x i8] c"I am a string\00"
+@"::global_const" = constant i8* bitcast ([14 x i8]* @.const.10 to i8*)
+
 define i32 @main() {
 .block.0:
 	call void() @"::aoc_01_p1"()
 	call void() @"::student_stuff"()
 	%values = alloca [4 x i8*]
-	store [4 x i8*] [ i8* bitcast ([8 x i8]* @.const.10 to i8*), i8* bitcast ([8 x i8]* @.const.11 to i8*), i8* bitcast ([8 x i8]* @.const.12 to i8*), i8* bitcast ([8 x i8]* @.const.13 to i8*) ], [4 x i8*]* %values
+	store [4 x i8*] [ i8* bitcast ([8 x i8]* @.const.11 to i8*), i8* bitcast ([8 x i8]* @.const.12 to i8*), i8* bitcast ([8 x i8]* @.const.13 to i8*), i8* bitcast ([8 x i8]* @.const.14 to i8*) ], [4 x i8*]* %values
 	%0 = bitcast [4 x i8*]* %values to i8**
 	call void(i8**, i64) @"::omg_linked_list"(i8** %0, i64 4)
-	%string = alloca %"type.::String"
 	%1 = call %"type.::String"() @"::String::new"()
+	%string = alloca %"type.::String"
 	store %"type.::String" %1, %"type.::String"* %string
 	call void(%"type.::String"*, i8) @"::String::push"(%"type.::String"* %string, i8 72)
 	call void(%"type.::String"*, i8) @"::String::push"(%"type.::String"* %string, i8 101)
@@ -624,34 +629,34 @@ define i32 @main() {
 	call void(%"type.::String"*, i8) @"::String::push"(%"type.::String"* %string, i8 100)
 	call void(%"type.::String"*, i8) @"::String::push"(%"type.::String"* %string, i8 33)
 	call void(%"type.::String"*, i8) @"::String::push"(%"type.::String"* %string, i8 0)
-	%str = alloca %"type.::Str"
 	%2 = bitcast %"type.::String"* %string to %"type.::String"*
 	%3 = call %"type.::Str"(%"type.::String"*) @"::String::as_str"(%"type.::String"* %2)
+	%str = alloca %"type.::Str"
 	store %"type.::Str" %3, %"type.::Str"* %str
 	%4 = getelementptr inbounds %"type.::Str", %"type.::Str"* %str, i32 0, i32 0
 	%5 = load i8*, i8** %4
-	%6 = call i32(i8*, ...) @printf(i8* bitcast ([4 x i8]* @.const.14 to i8*), i8* %5)
+	%6 = call i32(i8*, ...) @printf(i8* bitcast ([4 x i8]* @.const.15 to i8*), i8* %5)
 	%7 = load %"type.::String", %"type.::String"* %string
 	call void(%"type.::String") @"::String::del"(%"type.::String" %7)
-	%number_string = alloca %"type.::String"
 	%8 = sub nsw i32 0, 12345
 	%9 = sext i32 %8 to i64
 	%10 = call %"type.::String"(i64) @"<i64>::to_string"(i64 %9)
+	%number_string = alloca %"type.::String"
 	store %"type.::String" %10, %"type.::String"* %number_string
 	call void(%"type.::String"*, i8) @"::String::push"(%"type.::String"* %number_string, i8 0)
 	%11 = getelementptr inbounds %"type.::String", %"type.::String"* %number_string, i32 0, i32 0
 	%12 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %11, i32 0, i32 0
 	%13 = load i8*, i8** %12
-	%14 = call i32(i8*, ...) @printf(i8* bitcast ([22 x i8]* @.const.15 to i8*), i8* %13)
+	%14 = call i32(i8*, ...) @printf(i8* bitcast ([22 x i8]* @.const.16 to i8*), i8* %13)
 	%15 = load %"type.::String", %"type.::String"* %number_string
 	call void(%"type.::String") @"::String::del"(%"type.::String" %15)
 	ret i32 0
 }
 
-@.const.10 = private unnamed_addr constant [8 x i8] c"Value 1\00"
-@.const.11 = private unnamed_addr constant [8 x i8] c"Value 2\00"
-@.const.12 = private unnamed_addr constant [8 x i8] c"Value 3\00"
-@.const.13 = private unnamed_addr constant [8 x i8] c"Value 4\00"
-@.const.14 = private unnamed_addr constant [4 x i8] c"%s\0A\00"
-@.const.15 = private unnamed_addr constant [22 x i8] c"i64::to_string: \22%s\22\0A\00"
+@.const.11 = private unnamed_addr constant [8 x i8] c"Value 1\00"
+@.const.12 = private unnamed_addr constant [8 x i8] c"Value 2\00"
+@.const.13 = private unnamed_addr constant [8 x i8] c"Value 3\00"
+@.const.14 = private unnamed_addr constant [8 x i8] c"Value 4\00"
+@.const.15 = private unnamed_addr constant [4 x i8] c"%s\0A\00"
+@.const.16 = private unnamed_addr constant [22 x i8] c"i64::to_string: \22%s\22\0A\00"
 

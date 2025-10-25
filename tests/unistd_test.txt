@@ -19,16 +19,16 @@ foreign function main() -> i32 {
     // - Parent prints statement 4
 
     // Obtain the PID of the parent process (which is currently the only process)
-    let parent_pid: ProcessID = getpid();
+    let parent_pid = getpid();
 
     printf("1. Parent (P) is having ID %d\n", parent_pid);
 
     // Fork this process (and obtain the PID of the child process in parent process)
-    let child_pid: ProcessID = fork();
+    let child_pid = fork();
 
     if (child_pid == 0) {
         // This is the child process, so obtain the PID of this process
-        let child_pid: ProcessID = getpid();
+        let child_pid = getpid();
 
         printf("2. Child is having ID %d\n", child_pid);
 

@@ -18,7 +18,6 @@ define i1 @"::c"() {
 
 define i32 @main() {
 .block.0:
-	%x = alloca i1
 	%0 = call i1() @"::a"()
 	br i1 %0, label %.block.2, label %.block.1
 .block.1:
@@ -32,6 +31,7 @@ define i32 @main() {
 	br label %.block.2
 .block.2:
 	%4 = phi i1 [ true, %.block.0 ], [ %3, %.block.4 ]
+	%x = alloca i1
 	store i1 %4, i1* %x
 	ret i32 0
 }

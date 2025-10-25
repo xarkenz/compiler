@@ -158,7 +158,7 @@ impl<W: Write> Emitter<W> {
         );
         if self.is_global {
             // Write the constant declaration immediately
-            emit!(self, "{declaration}\n")
+            emit!(self, "{declaration}\n\n")
         }
         else {
             // Enqueue the constant declaration so it will be written just after the function end

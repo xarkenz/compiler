@@ -560,6 +560,11 @@ impl GlobalContext {
     pub fn process_global_statement(&mut self, node: &mut Node) -> crate::Result<()> {
         match *node {
             Node::Let { ref name, ref value_type, is_mutable, ref mut global_register, .. } => {
+                let Some(value_type) = value_type else {
+                    return Err(Box::new(crate::Error::MustSpecifyTypeForGlobal {
+                        name: self.current_namespace_info().path().child(name).to_string(),
+                    }));
+                };
                 let value_type = self.interpret_type_node(value_type)?;
                 *global_register = Some(self.define_global_value(name, value_type, is_mutable)?);
             }
