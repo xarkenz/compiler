@@ -327,55 +327,15 @@ impl<W: Write> Emitter<W> {
         emit!(self, "\n")
     }
 
-    pub fn emit_bitwise_cast(&mut self, result: &Register, value: &Value, context: &GlobalContext) -> crate::Result<()> {
+    pub fn emit_conversion(&mut self, operation: ConversionOperation, result: &Register, value: &Value, context: &GlobalContext) -> crate::Result<()> {
         emit!(
             self,
-            "\t{} = bitcast {} {} to {}\n",
+            "\t{} = {operation} {} {} to {}\n",
             result.llvm_syntax(),
             value.get_type().llvm_syntax(context),
             value.llvm_syntax(context),
             result.get_type().llvm_syntax(context),
         )
-    }
-
-    pub fn emit_truncation(&mut self, result: &Register, value: &Value, context: &GlobalContext) -> crate::Result<()> {
-        emit!(
-            self,
-            "\t{} = trunc {} {} to {}\n",
-            result.llvm_syntax(),
-            value.get_type().llvm_syntax(context),
-            value.llvm_syntax(context),
-            result.get_type().llvm_syntax(context),
-        )
-    }
-
-    pub fn emit_sign_extension(&mut self, result: &Register, value: &Value, context: &GlobalContext) -> crate::Result<()> {
-        emit!(
-            self,
-            "\t{} = sext {} {} to {}\n",
-            result.llvm_syntax(),
-            value.get_type().llvm_syntax(context),
-            value.llvm_syntax(context),
-            result.get_type().llvm_syntax(context),
-        )
-    }
-
-    pub fn emit_zero_extension(&mut self, result: &Register, value: &Value, context: &GlobalContext) -> crate::Result<()> {
-        emit!(
-            self,
-            "\t{} = zext {} {} to {}\n",
-            result.llvm_syntax(),
-            value.get_type().llvm_syntax(context),
-            value.llvm_syntax(context),
-            result.get_type().llvm_syntax(context),
-        )
-    }
-
-    pub fn emit_extension(&mut self, result: &Register, value: &Value, context: &GlobalContext) -> crate::Result<()> {
-        match value.get_type().repr(context) {
-            TypeRepr::Integer { signed: true, .. } => self.emit_sign_extension(result, value, context),
-            _ => self.emit_zero_extension(result, value, context)
-        }
     }
 
     pub fn emit_negation(&mut self, result: &Register, operand: &Value, context: &GlobalContext) -> crate::Result<()> {
@@ -387,13 +347,21 @@ impl<W: Write> Emitter<W> {
                 operand.get_type().llvm_syntax(context),
                 operand.llvm_syntax(context),
             ),
-            _ => emit!(
+            TypeRepr::Integer { signed: false, .. } => emit!(
                 self,
                 "\t{} = sub {} 0, {}\n",
                 result.llvm_syntax(),
                 operand.get_type().llvm_syntax(context),
                 operand.llvm_syntax(context),
-            )
+            ),
+            TypeRepr::Float32 | TypeRepr::Float64 => emit!(
+                self,
+                "\t{} = fneg {} {}\n",
+                result.llvm_syntax(),
+                operand.get_type().llvm_syntax(context),
+                operand.llvm_syntax(context),
+            ),
+            _ => unimplemented!()
         }
     }
 
@@ -407,14 +375,23 @@ impl<W: Write> Emitter<W> {
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
             ),
-            _ => emit!(
+            TypeRepr::Integer { signed: false, .. } => emit!(
                 self,
                 "\t{} = add nuw {} {}, {}\n",
                 result.llvm_syntax(),
                 lhs.get_type().llvm_syntax(context),
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
-            )
+            ),
+            TypeRepr::Float32 | TypeRepr::Float64 => emit!(
+                self,
+                "\t{} = fadd {} {}, {}\n",
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
+            ),
+            _ => unimplemented!()
         }
     }
 
@@ -428,14 +405,23 @@ impl<W: Write> Emitter<W> {
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
             ),
-            _ => emit!(
+            TypeRepr::Integer { signed: false, .. } => emit!(
                 self,
                 "\t{} = sub nuw {} {}, {}\n",
                 result.llvm_syntax(),
                 lhs.get_type().llvm_syntax(context),
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
-            )
+            ),
+            TypeRepr::Float32 | TypeRepr::Float64 => emit!(
+                self,
+                "\t{} = fsub {} {}, {}\n",
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
+            ),
+            _ => unimplemented!()
         }
     }
 
@@ -449,14 +435,23 @@ impl<W: Write> Emitter<W> {
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
             ),
-            _ => emit!(
+            TypeRepr::Integer { signed: false, .. } => emit!(
                 self,
                 "\t{} = mul nuw {} {}, {}\n",
                 result.llvm_syntax(),
                 lhs.get_type().llvm_syntax(context),
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
-            )
+            ),
+            TypeRepr::Float32 | TypeRepr::Float64 => emit!(
+                self,
+                "\t{} = fmul {} {}, {}\n",
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
+            ),
+            _ => unimplemented!()
         }
     }
 
@@ -470,14 +465,23 @@ impl<W: Write> Emitter<W> {
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
             ),
-            _ => emit!(
+            TypeRepr::Integer { signed: false, .. } => emit!(
                 self,
                 "\t{} = udiv {} {}, {}\n",
                 result.llvm_syntax(),
                 lhs.get_type().llvm_syntax(context),
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
-            )
+            ),
+            TypeRepr::Float32 | TypeRepr::Float64 => emit!(
+                self,
+                "\t{} = fdiv {} {}, {}\n",
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
+            ),
+            _ => unimplemented!()
         }
     }
 
@@ -491,14 +495,23 @@ impl<W: Write> Emitter<W> {
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
             ),
-            _ => emit!(
+            TypeRepr::Integer { signed: false, .. } => emit!(
                 self,
                 "\t{} = urem {} {}, {}\n",
                 result.llvm_syntax(),
                 lhs.get_type().llvm_syntax(context),
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
-            )
+            ),
+            TypeRepr::Float32 | TypeRepr::Float64 => emit!(
+                self,
+                "\t{} = frem {} {}, {}\n",
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
+            ),
+            _ => unimplemented!()
         }
     }
 
@@ -523,14 +536,15 @@ impl<W: Write> Emitter<W> {
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
             ),
-            _ => emit!(
+            TypeRepr::Integer { signed: false, .. } => emit!(
                 self,
                 "\t{} = lshr {} {}, {}\n",
                 result.llvm_syntax(),
                 lhs.get_type().llvm_syntax(context),
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
-            )
+            ),
+            _ => unimplemented!()
         }
     }
 
@@ -587,25 +601,47 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_cmp_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
-        emit!(
-            self,
-            "\t{} = icmp eq {} {}, {}\n",
-            result.llvm_syntax(),
-            lhs.get_type().llvm_syntax(context),
-            lhs.llvm_syntax(context),
-            rhs.llvm_syntax(context),
-        )
+        match lhs.get_type().repr(context) {
+            TypeRepr::Integer { .. } => emit!(
+                self,
+                "\t{} = icmp eq {} {}, {}\n",
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
+            ),
+            TypeRepr::Float32 | TypeRepr::Float64 => emit!(
+                self,
+                "\t{} = fcmp oeq {} {}, {}\n",
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
+            ),
+            _ => unimplemented!()
+        }
     }
 
     pub fn emit_cmp_not_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
-        emit!(
-            self,
-            "\t{} = icmp ne {} {}, {}\n",
-            result.llvm_syntax(),
-            lhs.get_type().llvm_syntax(context),
-            lhs.llvm_syntax(context),
-            rhs.llvm_syntax(context),
-        )
+        match lhs.get_type().repr(context) {
+            TypeRepr::Integer { .. } => emit!(
+                self,
+                "\t{} = icmp ne {} {}, {}\n",
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
+            ),
+            TypeRepr::Float32 | TypeRepr::Float64 => emit!(
+                self,
+                "\t{} = fcmp une {} {}, {}\n",
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
+            ),
+            _ => unimplemented!()
+        }
     }
 
     pub fn emit_cmp_less_than(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
@@ -618,14 +654,23 @@ impl<W: Write> Emitter<W> {
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
             ),
-            _ => emit!(
+            TypeRepr::Integer { signed: false, .. } => emit!(
                 self,
                 "\t{} = icmp ult {} {}, {}\n",
                 result.llvm_syntax(),
                 lhs.get_type().llvm_syntax(context),
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
-            )
+            ),
+            TypeRepr::Float32 | TypeRepr::Float64 => emit!(
+                self,
+                "\t{} = fcmp olt {} {}, {}\n",
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
+            ),
+            _ => unimplemented!()
         }
     }
 
@@ -639,14 +684,23 @@ impl<W: Write> Emitter<W> {
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
             ),
-            _ => emit!(
+            TypeRepr::Integer { signed: false, .. } => emit!(
                 self,
                 "\t{} = icmp ule {} {}, {}\n",
                 result.llvm_syntax(),
                 lhs.get_type().llvm_syntax(context),
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
-            )
+            ),
+            TypeRepr::Float32 | TypeRepr::Float64 => emit!(
+                self,
+                "\t{} = fcmp ole {} {}, {}\n",
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
+            ),
+            _ => unimplemented!()
         }
     }
 
@@ -660,14 +714,23 @@ impl<W: Write> Emitter<W> {
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
             ),
-            _ => emit!(
+            TypeRepr::Integer { signed: false, .. } => emit!(
                 self,
                 "\t{} = icmp ugt {} {}, {}\n",
                 result.llvm_syntax(),
                 lhs.get_type().llvm_syntax(context),
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
-            )
+            ),
+            TypeRepr::Float32 | TypeRepr::Float64 => emit!(
+                self,
+                "\t{} = fcmp ogt {} {}, {}\n",
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
+            ),
+            _ => unimplemented!()
         }
     }
 
@@ -681,14 +744,23 @@ impl<W: Write> Emitter<W> {
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
             ),
-            _ => emit!(
+            TypeRepr::Integer { signed: false, .. } => emit!(
                 self,
                 "\t{} = icmp uge {} {}, {}\n",
                 result.llvm_syntax(),
                 lhs.get_type().llvm_syntax(context),
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
-            )
+            ),
+            TypeRepr::Float32 | TypeRepr::Float64 => emit!(
+                self,
+                "\t{} = fcmp oge {} {}, {}\n",
+                result.llvm_syntax(),
+                lhs.get_type().llvm_syntax(context),
+                lhs.llvm_syntax(context),
+                rhs.llvm_syntax(context),
+            ),
+            _ => unimplemented!()
         }
     }
 

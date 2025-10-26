@@ -527,7 +527,7 @@ impl GlobalContext {
                 from_length == to_length && self.can_coerce_type(from_item, to_item, from_mutable)
             }
             (
-                &TypeRepr::Array { item_type: from_item, length: _ },
+                &TypeRepr::Array { item_type: from_item, .. },
                 &TypeRepr::Array { item_type: to_item, length: None },
             ) => {
                 self.can_coerce_type(from_item, to_item, from_mutable)
@@ -830,6 +830,8 @@ impl GlobalContext {
             TypeRepr::Void => None,
             TypeRepr::Boolean => Some(1),
             TypeRepr::Integer { size, .. } => Some(size),
+            TypeRepr::Float32 => Some(4),
+            TypeRepr::Float64 => Some(8),
             TypeRepr::Pointer { .. } => Some(self.pointer_size),
             TypeRepr::Function { .. } => Some(self.pointer_size),
             TypeRepr::Array { item_type, .. } => self.type_alignment(item_type),
@@ -848,6 +850,8 @@ impl GlobalContext {
             TypeRepr::Void => Some(0),
             TypeRepr::Boolean => Some(1),
             TypeRepr::Integer { size, .. } => Some(size),
+            TypeRepr::Float32 => Some(4),
+            TypeRepr::Float64 => Some(8),
             TypeRepr::Pointer { .. } => Some(self.pointer_size),
             TypeRepr::Function { .. } => Some(self.pointer_size),
             TypeRepr::Array { item_type, length } => {
@@ -881,21 +885,23 @@ impl GlobalContext {
 
     fn generate_type_llvm_syntax(&self, identifier: &str, repr: &TypeRepr) -> String {
         match *repr {
-            TypeRepr::Unresolved => "<ERROR unresolved type>".to_owned(),
-            TypeRepr::Meta => "<ERROR meta type>".to_owned(),
-            TypeRepr::Never => "void".to_owned(),
-            TypeRepr::Void => "void".to_owned(),
-            TypeRepr::Boolean => "i1".to_owned(),
+            TypeRepr::Unresolved => "<ERROR unresolved type>".to_string(),
+            TypeRepr::Meta => "<ERROR meta type>".to_string(),
+            TypeRepr::Never => "void".to_string(),
+            TypeRepr::Void => "void".to_string(),
+            TypeRepr::Boolean => "i1".to_string(),
             TypeRepr::Integer { size, .. } => format!("i{}", size * 8),
+            TypeRepr::Float32 => "float".to_string(),
+            TypeRepr::Float64 => "double".to_string(),
             TypeRepr::Pointer { pointee_type, .. } => {
                 match self.type_llvm_syntax(pointee_type) {
-                    "void" => "{}*".to_owned(),
+                    "void" => "{}*".to_string(),
                     pointee_syntax => format!("{pointee_syntax}*")
                 }
             }
             TypeRepr::Array { item_type, length } => match length {
                 Some(length) => format!("[{} x {}]", length, self.type_llvm_syntax(item_type)),
-                None => self.type_llvm_syntax(item_type).to_owned(),
+                None => self.type_llvm_syntax(item_type).to_string(),
             }
             TypeRepr::Structure { .. } | TypeRepr::ForeignStructure { .. } => {
                 format!("%\"type.{identifier}\"")

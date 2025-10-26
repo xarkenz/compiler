@@ -29,5 +29,9 @@ int32_t main() {
     if (func_a() || func_b()) {
         my_func(2);
     }
+    float f1 = 3;
+    float f2 = 6;
+    float f3 = f1 + f2;
+    printf("Result: %f\n", f3);
     return 0;
 }

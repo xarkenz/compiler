@@ -1,38 +1,24 @@
 ; file_id = 0
 source_filename = "tests/test3.txt"
 
-define i1 @"::a"() {
-.block.0:
-	ret i1 true
-}
-
-define i1 @"::b"() {
-.block.0:
-	ret i1 false
-}
-
-define i1 @"::c"() {
-.block.0:
-	ret i1 true
-}
+declare i32 @printf(i8*, ...)
 
 define i32 @main() {
 .block.0:
-	%0 = call i1() @"::a"()
-	br i1 %0, label %.block.2, label %.block.1
-.block.1:
-	%1 = call i1() @"::b"()
-	br i1 %1, label %.block.3, label %.block.4
-.block.3:
-	%2 = call i1() @"::c"()
-	br label %.block.4
-.block.4:
-	%3 = phi i1 [ false, %.block.1 ], [ %2, %.block.3 ]
-	br label %.block.2
-.block.2:
-	%4 = phi i1 [ true, %.block.0 ], [ %3, %.block.4 ]
-	%x = alloca i1
-	store i1 %4, i1* %x
+	%f1 = alloca float
+	store float 0x4008000000000000, float* %f1
+	%f2 = alloca float
+	store float 0x4018000000000000, float* %f2
+	%0 = load float, float* %f1
+	%1 = load float, float* %f2
+	%2 = fadd float %0, %1
+	%f3 = alloca float
+	store float %2, float* %f3
+	%3 = load float, float* %f3
+	%4 = fpext float %3 to double
+	%5 = call i32(i8*, ...) @printf(i8* bitcast ([12 x i8]* @.const.0 to i8*), double %4)
 	ret i32 0
 }
+
+@.const.0 = private unnamed_addr constant [12 x i8] c"Result: %f\0A\00"
 

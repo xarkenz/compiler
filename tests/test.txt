@@ -105,8 +105,8 @@ implement String {
 }
 
 function fibonacci(limit: i32) -> i32 {
-    let mut a: i32 = 0;
-    let mut b: i32 = 1;
+    let mut a = 0_i32;
+    let mut b = 1_i32;
 
     while (b < limit) {
         let temp = a + b;
@@ -134,12 +134,12 @@ function aoc_01_p1() {
         return;
     }
 
-    let mut calibration_sum: u32 = 0;
+    let mut calibration_sum = 0_u32;
 
     let mut line: [u8; 100];
     while (fgets(&line, 100, input) != null) {
         // Start at the beginning of the line
-        let mut index: u64 = 0;
+        let mut index = 0_u64;
 
         // Find the first digit
         while (isdigit(line[index] as i32) == 0) {
@@ -203,8 +203,8 @@ struct Student {
 }
 
 function student_stuff() {
-    let joe_age: u32 = 97;
-    let joe_calculus_grade_before_curve: u32 = 47;
+    let joe_age = 97_u32;
+    let joe_calculus_grade_before_curve = 47_u32;
 
     let joe = Student {
         age: joe_age,
@@ -278,7 +278,7 @@ foreign function main() -> i32 {
     printf("%s\n", str.ptr);
     string.del();
 
-    let mut number_string = (-12345 as i64).to_string();
+    let mut number_string = -12345_i64.to_string();
     number_string.push('\0');
     printf("i64::to_string: \"%s\"\n", number_string.str.ptr);
     number_string.del();

@@ -4,6 +4,7 @@ target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16
 target triple = "x86_64-pc-linux-gnu"
 
 @.str = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
+@.str.1 = private unnamed_addr constant [12 x i8] c"Result: %f\0A\00", align 1
 
 ; Function Attrs: noinline nounwind optnone uwtable
 define dso_local void @my_func(i32 noundef %0) #0 {
@@ -43,58 +44,70 @@ define dso_local i32 @main() #0 {
   %1 = alloca i32, align 4
   %2 = alloca i8, align 1
   %3 = alloca i8, align 1
+  %4 = alloca float, align 4
+  %5 = alloca float, align 4
+  %6 = alloca float, align 4
   store i32 0, i32* %1, align 4
   call void @do_call(void (i32)* noundef @my_func, i32 noundef 8)
-  %4 = call zeroext i1 @func_a()
-  br i1 %4, label %5, label %9
+  %7 = call zeroext i1 @func_a()
+  br i1 %7, label %8, label %12
 
-5:                                                ; preds = %0
-  %6 = call zeroext i1 @func_b()
-  br i1 %6, label %7, label %9
+8:                                                ; preds = %0
+  %9 = call zeroext i1 @func_b()
+  br i1 %9, label %10, label %12
 
-7:                                                ; preds = %5
-  %8 = call zeroext i1 @func_a()
-  br label %9
+10:                                               ; preds = %8
+  %11 = call zeroext i1 @func_a()
+  br label %12
 
-9:                                                ; preds = %7, %5, %0
-  %10 = phi i1 [ false, %5 ], [ false, %0 ], [ %8, %7 ]
-  %11 = zext i1 %10 to i8
-  store i8 %11, i8* %2, align 1
-  %12 = call zeroext i1 @func_a()
-  br i1 %12, label %15, label %13
+12:                                               ; preds = %10, %8, %0
+  %13 = phi i1 [ false, %8 ], [ false, %0 ], [ %11, %10 ]
+  %14 = zext i1 %13 to i8
+  store i8 %14, i8* %2, align 1
+  %15 = call zeroext i1 @func_a()
+  br i1 %15, label %18, label %16
 
-13:                                               ; preds = %9
-  %14 = call zeroext i1 @func_b()
-  br label %15
+16:                                               ; preds = %12
+  %17 = call zeroext i1 @func_b()
+  br label %18
 
-15:                                               ; preds = %13, %9
-  %16 = phi i1 [ true, %9 ], [ %14, %13 ]
-  %17 = zext i1 %16 to i8
-  store i8 %17, i8* %3, align 1
-  %18 = call zeroext i1 @func_a()
-  br i1 %18, label %19, label %22
+18:                                               ; preds = %16, %12
+  %19 = phi i1 [ true, %12 ], [ %17, %16 ]
+  %20 = zext i1 %19 to i8
+  store i8 %20, i8* %3, align 1
+  %21 = call zeroext i1 @func_a()
+  br i1 %21, label %22, label %25
 
-19:                                               ; preds = %15
-  %20 = call zeroext i1 @func_b()
-  br i1 %20, label %21, label %22
-
-21:                                               ; preds = %19
-  call void @my_func(i32 noundef 1)
-  br label %22
-
-22:                                               ; preds = %21, %19, %15
-  %23 = call zeroext i1 @func_a()
-  br i1 %23, label %26, label %24
+22:                                               ; preds = %18
+  %23 = call zeroext i1 @func_b()
+  br i1 %23, label %24, label %25
 
 24:                                               ; preds = %22
-  %25 = call zeroext i1 @func_b()
-  br i1 %25, label %26, label %27
+  call void @my_func(i32 noundef 1)
+  br label %25
 
-26:                                               ; preds = %24, %22
+25:                                               ; preds = %24, %22, %18
+  %26 = call zeroext i1 @func_a()
+  br i1 %26, label %29, label %27
+
+27:                                               ; preds = %25
+  %28 = call zeroext i1 @func_b()
+  br i1 %28, label %29, label %30
+
+29:                                               ; preds = %27, %25
   call void @my_func(i32 noundef 2)
-  br label %27
+  br label %30
 
-27:                                               ; preds = %26, %24
+30:                                               ; preds = %29, %27
+  store float 3.000000e+00, float* %4, align 4
+  store float 6.000000e+00, float* %5, align 4
+  %31 = load float, float* %4, align 4
+  %32 = load float, float* %5, align 4
+  %33 = fadd float %31, %32
+  store float %33, float* %6, align 4
+  %34 = load float, float* %6, align 4
+  %35 = fpext float %34 to double
+  %36 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([12 x i8], [12 x i8]* @.str.1, i64 0, i64 0), double noundef %35)
   ret i32 0
 }
 

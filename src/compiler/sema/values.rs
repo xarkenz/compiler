@@ -47,14 +47,14 @@ impl IntegerValue {
 
     pub fn expanded_value(&self) -> i128 {
         match *self {
-            IntegerValue::Signed8(value) => value as i128,
-            IntegerValue::Unsigned8(value) => value as i128,
-            IntegerValue::Signed16(value) => value as i128,
-            IntegerValue::Unsigned16(value) => value as i128,
-            IntegerValue::Signed32(value) => value as i128,
-            IntegerValue::Unsigned32(value) => value as i128,
-            IntegerValue::Signed64(value) => value as i128,
-            IntegerValue::Unsigned64(value) => value as i128,
+            Self::Signed8(value) => value as i128,
+            Self::Unsigned8(value) => value as i128,
+            Self::Signed16(value) => value as i128,
+            Self::Unsigned16(value) => value as i128,
+            Self::Signed32(value) => value as i128,
+            Self::Unsigned32(value) => value as i128,
+            Self::Signed64(value) => value as i128,
+            Self::Unsigned64(value) => value as i128,
         }
     }
 
@@ -83,6 +83,60 @@ impl fmt::Display for IntegerValue {
             Self::Unsigned32(value) => write!(f, "{value}"),
             Self::Signed64(value) => write!(f, "{value}"),
             Self::Unsigned64(value) => write!(f, "{value}"),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum FloatValue {
+    Float32(f32),
+    Float64(f64),
+}
+
+impl FloatValue {
+    pub fn new(raw: f64, type_info: &TypeRepr) -> Option<Self> {
+        match type_info {
+            TypeRepr::Float32 => Some(Self::Float32(raw as f32)),
+            TypeRepr::Float64 => Some(Self::Float64(raw)),
+            _ => None
+        }
+    }
+
+    pub fn size(&self) -> usize {
+        match self {
+            Self::Float32(..) => 4,
+            Self::Float64(..) => 8,
+        }
+    }
+
+    pub fn expanded_value(&self) -> f64 {
+        match *self {
+            Self::Float32(value) => value as f64,
+            Self::Float64(value) => value,
+        }
+    }
+
+    pub fn get_type(&self) -> TypeHandle {
+        match self {
+            Self::Float32(..) => TypeHandle::F32,
+            Self::Float64(..) => TypeHandle::F64,
+        }
+    }
+
+    pub fn llvm_syntax(&self) -> String {
+        // Convert to hexadecimal representation for purposes of keeping exact value
+        match *self {
+            Self::Float32(value) => format!("0x{:016X}", (value as f64).to_bits()),
+            Self::Float64(value) => format!("0x{:016X}", value.to_bits()),
+        }
+    }
+}
+
+impl fmt::Display for FloatValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Float32(value) => write!(f, "{value}"),
+            Self::Float64(value) => write!(f, "{value}"),
         }
     }
 }
@@ -198,6 +252,120 @@ impl Ord for Register {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum ConversionOperation {
+    Truncate,
+    ZeroExtend,
+    SignExtend,
+    FloatTruncate,
+    FloatExtend,
+    FloatToUnsigned,
+    FloatToSigned,
+    UnsignedToFloat,
+    SignedToFloat,
+    PointerToInteger,
+    IntegerToPointer,
+    BitwiseCast,
+}
+
+impl ConversionOperation {
+    pub fn from_type_reprs(from_type: &TypeRepr, to_type: &TypeRepr) -> Option<Self> {
+        match (from_type, to_type) {
+            (
+                &TypeRepr::Integer { size: from_size, signed: from_signed },
+                &TypeRepr::Integer { size: to_size, .. },
+            ) => {
+                if from_size > to_size {
+                    Some(Self::Truncate)
+                }
+                else if from_size < to_size {
+                    if from_signed {
+                        Some(Self::SignExtend)
+                    }
+                    else {
+                        Some(Self::ZeroExtend)
+                    }
+                }
+                else {
+                    None
+                }
+            }
+            (TypeRepr::Boolean, TypeRepr::Integer { .. }) => {
+                Some(Self::ZeroExtend)
+            }
+            (TypeRepr::Float64, TypeRepr::Float32) => {
+                Some(Self::FloatTruncate)
+            }
+            (TypeRepr::Float32, TypeRepr::Float64) => {
+                Some(Self::FloatExtend)
+            }
+            (
+                TypeRepr::Float32 | TypeRepr::Float64,
+                &TypeRepr::Integer { signed, .. },
+            ) => {
+                if signed {
+                    Some(Self::FloatToSigned)
+                }
+                else {
+                    Some(Self::FloatToUnsigned)
+                }
+            }
+            (
+                &TypeRepr::Integer { signed, .. },
+                TypeRepr::Float32 | TypeRepr::Float64,
+            ) => {
+                if signed {
+                    Some(Self::SignedToFloat)
+                }
+                else {
+                    Some(Self::UnsignedToFloat)
+                }
+            }
+            (TypeRepr::Boolean, TypeRepr::Float32 | TypeRepr::Float64) => {
+                Some(Self::UnsignedToFloat)
+            }
+            (
+                TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
+                TypeRepr::Integer { .. },
+            ) => {
+                Some(Self::PointerToInteger)
+            }
+            (
+                TypeRepr::Integer { .. },
+                TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
+            ) => {
+                Some(Self::IntegerToPointer)
+            }
+            (
+                TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
+                TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
+            ) => {
+                Some(Self::BitwiseCast)
+            }
+            _ => None
+        }
+    }
+}
+
+impl std::fmt::Display for ConversionOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Truncate => write!(f, "trunc"),
+            Self::ZeroExtend => write!(f, "zext"),
+            Self::SignExtend => write!(f, "sext"),
+            Self::FloatTruncate => write!(f, "fptrunc"),
+            Self::FloatExtend => write!(f, "fpext"),
+            Self::FloatToUnsigned => write!(f, "fptoui"),
+            Self::FloatToSigned => write!(f, "fptosi"),
+            Self::UnsignedToFloat => write!(f, "uitofp"),
+            Self::SignedToFloat => write!(f, "sitofp"),
+            Self::PointerToInteger => write!(f, "ptrtoint"),
+            Self::IntegerToPointer => write!(f, "inttoptr"),
+            Self::BitwiseCast => write!(f, "bitcast"),
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum Constant {
     Undefined(TypeHandle),
@@ -206,6 +374,7 @@ pub enum Constant {
     NullPointer(TypeHandle),
     Boolean(bool),
     Integer(IntegerValue),
+    Float(FloatValue),
     String {
         array_type: TypeHandle,
         value: StringValue,
@@ -268,6 +437,7 @@ impl Constant {
             Self::NullPointer(value_type) => value_type,
             Self::Boolean(..) => TypeHandle::BOOL,
             Self::Integer(ref integer) => integer.get_type(),
+            Self::Float(ref float) => float.get_type(),
             Self::String { array_type, .. } => array_type,
             Self::Array { array_type, .. } => array_type,
             Self::Structure { struct_type, .. } => struct_type,
@@ -287,6 +457,7 @@ impl Constant {
             Self::NullPointer(..) => "null".to_owned(),
             Self::Boolean(value) => format!("{value}"),
             Self::Integer(value) => format!("{value}"),
+            Self::Float(value) => value.llvm_syntax(),
             Self::String { value, .. } => format!("{value}"),
             Self::Array { items, .. } => {
                 let mut items_iter = items.iter();
@@ -369,6 +540,12 @@ impl From<bool> for Constant {
 impl From<IntegerValue> for Constant {
     fn from(value: IntegerValue) -> Self {
         Self::Integer(value)
+    }
+}
+
+impl From<FloatValue> for Constant {
+    fn from(value: FloatValue) -> Self {
+        Self::Float(value)
     }
 }
 
@@ -484,6 +661,12 @@ impl From<bool> for Value {
 impl From<IntegerValue> for Value {
     fn from(value: IntegerValue) -> Self {
         Self::Constant(Constant::Integer(value))
+    }
+}
+
+impl From<FloatValue> for Value {
+    fn from(value: FloatValue) -> Self {
+        Self::Constant(Constant::Float(value))
     }
 }
 

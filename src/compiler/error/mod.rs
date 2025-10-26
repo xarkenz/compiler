@@ -85,6 +85,9 @@ pub enum Error {
     InvalidToken {
         span: Span,
     },
+    InvalidLiteralSuffix {
+        span: Span,
+    },
     NonAsciiCharacter {
         span: Span,
         what: char,
@@ -290,6 +293,7 @@ impl Error {
     pub fn span(&self) -> Option<&Span> {
         match self {
             Self::InvalidToken { span } => Some(span),
+            Self::InvalidLiteralSuffix { span } => Some(span),
             Self::NonAsciiCharacter { span, .. } => Some(span),
             Self::InvalidEscape { span, .. } => Some(span),
             Self::InvalidHexEscapeDigit { span, .. } => Some(span),
@@ -335,6 +339,7 @@ impl std::fmt::Display for Error {
             Self::OutputFileOpen { cause, .. } => write!(f, "unable to create file: {cause}"),
             Self::OutputFileWrite { cause, .. } => write!(f, "error while writing file: {cause}"),
             Self::InvalidToken { .. } => write!(f, "unrecognized token"),
+            Self::InvalidLiteralSuffix { .. } => write!(f, "unsupported literal suffix"),
             Self::NonAsciiCharacter { what, .. } => write!(f, "non-ASCII character '{what}' in literal"),
             Self::InvalidEscape { what, .. } => write!(f, "unrecognized escape '\\{what}'"),
             Self::InvalidHexEscapeDigit { what, .. } => write!(f, "expected hexadecimal digit, got '{what}'"),

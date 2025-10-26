@@ -258,7 +258,7 @@ impl<W: Write> Generator<W> {
             else {
                 let value = self.coerce_to_rvalue(value, local_context)?;
                 let result = local_context.new_anonymous_register(target_type);
-                self.emitter.emit_bitwise_cast(&result, &value, &self.context)?;
+                self.emitter.emit_conversion(ConversionOperation::BitwiseCast, &result, &value, &self.context)?;
 
                 Ok(Value::Register(result))
             }
@@ -274,7 +274,7 @@ impl<W: Write> Generator<W> {
     pub fn enforce_constant_type(&mut self, constant: Constant, target_type: TypeHandle) -> crate::Result<Constant> {
         let got_type = constant.get_type();
 
-        if self.context.types_are_equivalent(got_type, target_type) {
+        if got_type == TypeHandle::NEVER || self.context.types_are_equivalent(got_type, target_type) {
             Ok(constant)
         }
         // TODO: should from_mutable be true here?
@@ -299,64 +299,31 @@ impl<W: Write> Generator<W> {
             Ok(value)
         }
         else {
-            // TODO: pointer to int, int to pointer
-            match (original_type.repr(&self.context), target_type.repr(&self.context)) {
-                (
-                    TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
-                    TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
-                ) => {
-                    let result = local_context.new_anonymous_register(target_type);
-                    self.emitter.emit_bitwise_cast(&result, &value, &self.context)?;
+            let original_repr = original_type.repr(&self.context);
+            let target_repr = target_type.repr(&self.context);
 
-                    Ok(Value::Register(result))
+            // Signed and unsigned integers of the same size don't require conversion since they
+            // have the same IR representation
+            if let (
+                &TypeRepr::Integer { size: from_size, .. },
+                &TypeRepr::Integer { size: to_size, .. },
+            ) = (original_repr, target_repr) {
+                if from_size == to_size {
+                    return Ok(value);
                 }
-                (
-                    TypeRepr::Integer { size: from_size, .. },
-                    TypeRepr::Integer { size: to_size, .. },
-                ) => {
-                    match to_size.cmp(from_size) {
-                        std::cmp::Ordering::Greater => {
-                            let result = local_context.new_anonymous_register(target_type);
-                            self.emitter.emit_extension(&result, &value, &self.context)?;
+            }
 
-                            Ok(Value::Register(result))
-                        }
-                        std::cmp::Ordering::Less => {
-                            let result = local_context.new_anonymous_register(target_type);
-                            self.emitter.emit_truncation(&result, &value, &self.context)?;
+            if let Some(operation) = ConversionOperation::from_type_reprs(original_repr, target_repr) {
+                let result = local_context.new_anonymous_register(target_type);
+                self.emitter.emit_conversion(operation, &result, &value, &self.context)?;
 
-                            Ok(Value::Register(result))
-                        }
-                        std::cmp::Ordering::Equal => {
-                            Ok(value)
-                        }
-                    }
-                }
-                (
-                    original_repr @ TypeRepr::Integer { .. },
-                    TypeRepr::Boolean,
-                ) => {
-                    let result = local_context.new_anonymous_register(target_type);
-                    let zero = IntegerValue::new(0, original_repr).unwrap();
-                    self.emitter.emit_cmp_not_equal(&result, &value, &zero.into(), &self.context)?;
-
-                    Ok(Value::Register(result))
-                }
-                (
-                    TypeRepr::Boolean,
-                    TypeRepr::Integer { .. },
-                ) => {
-                    let result = local_context.new_anonymous_register(target_type);
-                    self.emitter.emit_zero_extension(&result, &value, &self.context)?;
-
-                    Ok(Value::Register(result))
-                }
-                _ => {
-                    Err(Box::new(crate::Error::InconvertibleTypes {
-                        original_type: target_type.path(self.context()).to_string(),
-                        target_type: original_type.path(self.context()).to_string(),
-                    }))
-                }
+                Ok(Value::from(result))
+            }
+            else {
+                Err(Box::new(crate::Error::InconvertibleTypes {
+                    original_type: target_type.path(self.context()).to_string(),
+                    target_type: original_type.path(self.context()).to_string(),
+                }))
             }
         }
     }
@@ -403,18 +370,36 @@ impl<W: Write> Generator<W> {
                         })?
                 }
             }
-            token::Literal::Integer(value) => {
-                let value_type = expected_type.unwrap_or(TypeHandle::I32);
+            token::Literal::Integer(value, suffix) => {
+                let value_type = match suffix {
+                    Some(suffix) => suffix.as_type(),
+                    None => expected_type.unwrap_or(TypeHandle::I32),
+                };
                 let Some(value) = IntegerValue::new(value, value_type.repr(&self.context)) else {
                     return Err(Box::new(crate::Error::IncompatibleValueType {
                         value: value.to_string(),
                         type_name: value_type.path(&self.context).to_string(),
                     }));
                 };
-                Value::Constant(Constant::Integer(value))
+
+                Value::from(value)
+            }
+            token::Literal::Float(value, suffix) => {
+                let value_type = match suffix {
+                    Some(suffix) => suffix.as_type(),
+                    None => expected_type.unwrap_or(TypeHandle::F64),
+                };
+                let Some(value) = FloatValue::new(value, value_type.repr(&self.context)) else {
+                    return Err(Box::new(crate::Error::IncompatibleValueType {
+                        value: value.to_string(),
+                        type_name: value_type.path(&self.context).to_string(),
+                    }));
+                };
+
+                Value::from(value)
             }
             token::Literal::Boolean(value) => {
-                Value::Constant(Constant::Boolean(value))
+                Value::from(value)
             }
             token::Literal::NullPointer => {
                 Value::Constant(Constant::NullPointer(expected_type.unwrap_or_else(|| {
@@ -1703,18 +1688,36 @@ impl<W: Write> Generator<W> {
                             }));
                         }
                     }
-                    token::Literal::Integer(value) => {
-                        let value_type = expected_type.unwrap_or(TypeHandle::I32);
-                        let value = IntegerValue::new(value, value_type.repr(&self.context))
-                            .ok_or_else(|| Box::new(crate::Error::IncompatibleValueType {
+                    token::Literal::Integer(value, suffix) => {
+                        let value_type = match suffix {
+                            Some(suffix) => suffix.as_type(),
+                            None => expected_type.unwrap_or(TypeHandle::I32),
+                        };
+                        let Some(value) = IntegerValue::new(value, value_type.repr(&self.context)) else {
+                            return Err(Box::new(crate::Error::IncompatibleValueType {
                                 value: value.to_string(),
                                 type_name: value_type.path(&self.context).to_string(),
-                            }))?;
+                            }));
+                        };
 
-                        Constant::Integer(value)
+                        Constant::from(value)
+                    }
+                    token::Literal::Float(value, suffix) => {
+                        let value_type = match suffix {
+                            Some(suffix) => suffix.as_type(),
+                            None => expected_type.unwrap_or(TypeHandle::F64),
+                        };
+                        let Some(value) = FloatValue::new(value, value_type.repr(&self.context)) else {
+                            return Err(Box::new(crate::Error::IncompatibleValueType {
+                                value: value.to_string(),
+                                type_name: value_type.path(&self.context).to_string(),
+                            }));
+                        };
+
+                        Constant::from(value)
                     }
                     token::Literal::Boolean(value) => {
-                        Constant::Boolean(value)
+                        Constant::from(value)
                     }
                     token::Literal::NullPointer => {
                         Constant::NullPointer(expected_type.unwrap_or_else(|| {

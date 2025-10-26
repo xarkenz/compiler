@@ -2,7 +2,6 @@ use super::*;
 
 use std::io::{BufRead, BufReader};
 use std::fs::File;
-
 use utf8_chars::BufReadCharsExt;
 
 #[derive(Debug)]
@@ -18,7 +17,10 @@ impl Scanner<BufReader<File>> {
     pub fn from_filename(file_id: usize, filename: String) -> crate::Result<Self> {
         File::open(filename)
             .map(|file| Self::new(file_id, BufReader::new(file)))
-            .map_err(|cause| Box::new(crate::Error::SourceFileOpen { file_id, cause }))
+            .map_err(|cause| Box::new(crate::Error::SourceFileOpen {
+                file_id,
+                cause,
+            }))
     }
 }
 
@@ -53,6 +55,48 @@ impl<T: BufRead> Scanner<T> {
         }
     }
 
+    pub fn next_token(&mut self) -> crate::Result<Option<(crate::Span, Token)>> {
+        if let Some(ch) = self.next_non_space_char()? {
+            if ch.is_ascii_digit() {
+                self.put_back(ch);
+                self.scan_numeric_literal().map(Some)
+            }
+            else if ch == '_' || ch.is_ascii_alphanumeric() {
+                self.put_back(ch);
+                self.scan_word_literal().map(Some)
+            }
+            else {
+                if ch == '/' {
+                    match self.next_char()? {
+                        Some('/') => {
+                            self.skip_line_comment()?;
+                            return self.next_token();
+                        }
+                        Some('*') => {
+                            self.skip_block_comment()?;
+                            return self.next_token();
+                        }
+                        Some(next_ch) => {
+                            self.put_back(next_ch);
+                        }
+                        None => {}
+                    }
+                }
+                else if ch == '"' {
+                    return self.scan_string_literal().map(Some);
+                }
+                else if ch == '\'' {
+                    return self.scan_character_literal().map(Some);
+                }
+                self.put_back(ch);
+                self.scan_symbolic_literal().map(Some)
+            }
+        }
+        else {
+            Ok(None)
+        }
+    }
+
     fn next_char(&mut self) -> crate::Result<Option<char>> {
         if let Some(ch) = self.put_backs.pop() {
             self.next_index += 1;
@@ -60,7 +104,11 @@ impl<T: BufRead> Scanner<T> {
         }
         else {
             let read = self.source.read_char()
-                .map_err(|cause| Box::new(crate::Error::SourceFileRead { file_id: self.file_id, line: self.line, cause }))?;
+                .map_err(|cause| Box::new(crate::Error::SourceFileRead {
+                    file_id: self.file_id,
+                    line: self.line,
+                    cause,
+                }))?;
 
             if let Some(ch) = read {
                 if ch == '\n' {
@@ -86,50 +134,153 @@ impl<T: BufRead> Scanner<T> {
                 return Ok(Some(ch));
             }
         }
-        
+
         Ok(None)
     }
 
-    fn scan_integer_literal(&mut self) -> crate::Result<Option<(crate::Span, Token)>> {
+    fn scan_alphanumeric_word(&mut self) -> crate::Result<(crate::Span, String)> {
         let start_index = self.next_index;
         let mut content = String::new();
 
         while let Some(ch) = self.next_char()? {
-            if ch.is_ascii_digit() {
-                content.push(ch);
-            } else {
-                self.put_back(ch);
-                break;
+            match ch {
+                '0'..='9' | 'A'..='Z' | 'a'..='z' | '_' => {
+                    content.push(ch);
+                }
+                _ => {
+                    self.put_back(ch);
+                    break;
+                }
             }
         }
 
-        let mut value = 0;
-        for digit in content.chars() {
-            value = 10 * value + (digit as i128 - '0' as i128);
-        }
-
-        let span = self.create_span(start_index, self.next_index);
-        Ok(Some((span, Token::Literal(Literal::Integer(value)))))
+        Ok((
+            self.create_span(start_index, self.next_index),
+            content,
+        ))
     }
 
-    fn scan_word_literal(&mut self) -> crate::Result<Option<(crate::Span, Token)>> {
+    fn scan_numeric_literal(&mut self) -> crate::Result<(crate::Span, Token)> {
         let start_index = self.next_index;
         let mut content = String::new();
+        let mut suffix = None;
 
         while let Some(ch) = self.next_char()? {
-            if ch == '_' || ch.is_ascii_alphanumeric() {
-                content.push(ch);
-            }
-            else {
-                self.put_back(ch);
-                break;
+            match ch {
+                '_' => {}
+                '0'..='9' => {
+                    content.push(ch);
+                }
+                '.' => {
+                    // A dot could either be a decimal point or an access operation. We'll
+                    // only consider it to be a decimal point if the following character is a digit.
+                    match self.next_char()? {
+                        Some('0'..='9') => {
+                            content.push(ch);
+                            return self.scan_float_literal_end(start_index, content);
+                        }
+                        Some(non_digit) => {
+                            self.put_back(non_digit);
+                        }
+                        None => {}
+                    }
+                    self.put_back(ch);
+                    break;
+                }
+                'E' | 'e' => {
+                    content.push(ch);
+                    return self.scan_float_literal_end(start_index, content);
+                }
+                'f' => {
+                    // This is a bit of a hack, but this detects the start of a float suffix.
+                    // Since the result will be a float literal, just delegate to float scanning.
+                    return self.scan_float_literal_end(start_index, content);
+                }
+                'A'..='Z' | 'a'..='z' => {
+                    // The only valid integer suffixes start with 'i' and 'u', but detect any
+                    // letter here to provide more graceful error handling.
+                    self.put_back(ch);
+                    suffix = Some(self.scan_integer_suffix()?);
+                    break;
+                }
+                _ => {
+                    self.put_back(ch);
+                    break;
+                }
             }
         }
 
-        let span = self.create_span(start_index, self.next_index);
+        let value = content.chars().fold(0, |value, digit| {
+            10 * value + (digit as i128 - '0' as i128)
+        });
+
+        Ok((
+            self.create_span(start_index, self.next_index),
+            Token::Literal(Literal::Integer(value, suffix)),
+        ))
+    }
+
+    fn scan_float_literal_end(&mut self, start_index: usize, mut content: String) -> crate::Result<(crate::Span, Token)> {
+        let mut suffix = None;
+
+        while let Some(ch) = self.next_char()? {
+            match ch {
+                '_' => {}
+                '0'..='9' => {
+                    content.push(ch);
+                }
+                '+' | '-' if matches!(content.chars().last(), Some('E' | 'e')) => {
+                    content.push(ch);
+                }
+                'A'..='Z' | 'a'..='z' => {
+                    self.put_back(ch);
+                    suffix = Some(self.scan_float_suffix()?);
+                    break;
+                }
+                _ => {
+                    self.put_back(ch);
+                    break;
+                }
+            }
+        }
+
+        let value = content.parse::<f64>()
+            .map_err(|_| Box::new(crate::Error::InvalidToken {
+                span: self.create_span(start_index, self.next_index),
+            }))?;
+
+        Ok((
+            self.create_span(start_index, self.next_index),
+            Token::Literal(Literal::Float(value, suffix)),
+        ))
+    }
+
+    fn scan_integer_suffix(&mut self) -> crate::Result<IntegerSuffix> {
+        let (span, content) = self.scan_alphanumeric_word()?;
+
+        IntegerSuffix::find(&content)
+            .ok_or_else(|| Box::new(crate::Error::InvalidLiteralSuffix {
+                span,
+            }))
+    }
+
+    fn scan_float_suffix(&mut self) -> crate::Result<FloatSuffix> {
+        let (span, content) = self.scan_alphanumeric_word()?;
+
+        FloatSuffix::find(&content)
+            .ok_or_else(|| Box::new(crate::Error::InvalidLiteralSuffix {
+                span,
+            }))
+    }
+
+    fn scan_word_literal(&mut self) -> crate::Result<(crate::Span, Token)> {
+        let (span, content) = self.scan_alphanumeric_word()?;
 
         if let Some(keyword_token) = get_keyword_token_match(&content) {
-            Ok(Some((span, keyword_token.clone())))
+            Ok((
+                span,
+                keyword_token.clone(),
+            ))
         }
         else {
             let literal = match content.as_str() {
@@ -142,11 +293,14 @@ impl<T: BufRead> Scanner<T> {
                 }
             };
 
-            Ok(Some((span, Token::Literal(literal))))
+            Ok((
+                span,
+                Token::Literal(literal),
+            ))
         }
     }
 
-    fn scan_symbolic_literal(&mut self) -> crate::Result<Option<(crate::Span, Token)>> {
+    fn scan_symbolic_literal(&mut self) -> crate::Result<(crate::Span, Token)> {
         let start_index = self.next_index;
         let mut content = String::new();
 
@@ -164,8 +318,10 @@ impl<T: BufRead> Scanner<T> {
         // Backtrack to find the longest exact token match
         while !content.is_empty() {
             if let Some(symbolic_token) = get_symbolic_token_match(content.as_str()) {
-                let span = self.create_span(start_index, self.next_index);
-                return Ok(Some((span, symbolic_token.clone())));
+                return Ok((
+                    self.create_span(start_index, self.next_index),
+                    symbolic_token.clone(),
+                ));
             }
 
             // Since no match was found, take away a character and try again
@@ -173,8 +329,9 @@ impl<T: BufRead> Scanner<T> {
             self.put_back(ch);
         }
 
-        let span = self.create_span(start_index, start_index);
-        Err(Box::new(crate::Error::InvalidToken { span }))
+        Err(Box::new(crate::Error::InvalidToken {
+            span: self.create_span(start_index, start_index),
+        }))
     }
 
     fn scan_escaped_char(&mut self) -> crate::Result<Option<u8>> {
@@ -185,22 +342,22 @@ impl<T: BufRead> Scanner<T> {
                 match self.next_char()? {
                     Some('\\') => {
                         Ok(Some(b'\\'))
-                    },
+                    }
                     Some('\"') => {
                         Ok(Some(b'\"'))
-                    },
+                    }
                     Some('\'') => {
                         Ok(Some(b'\''))
-                    },
+                    }
                     Some('n') => {
                         Ok(Some(b'\n'))
-                    },
+                    }
                     Some('t') => {
                         Ok(Some(b'\t'))
-                    },
+                    }
                     Some('0') => {
                         Ok(Some(b'\0'))
-                    },
+                    }
                     Some('x') => {
                         let mut byte = 0;
                         for _ in 0..2 {
@@ -212,32 +369,38 @@ impl<T: BufRead> Scanner<T> {
                                     'A'..='F' => ch as u8 - b'A' + 10,
                                     'a'..='f' => ch as u8 - b'a' + 10,
                                     _ => {
-                                        let span = self.create_span(start_index, start_index + 4);
-                                        return Err(Box::new(crate::Error::InvalidHexEscapeDigit { span, what: ch }));
+                                        return Err(Box::new(crate::Error::InvalidHexEscapeDigit {
+                                            span: self.create_span(start_index, start_index + 4),
+                                            what: ch,
+                                        }));
                                     }
                                 };
                             }
                             else {
-                                return Ok(None)
+                                return Ok(None);
                             }
                         }
                         Ok(Some(byte))
-                    },
+                    }
                     Some(ch) => {
-                        let span = self.create_span(start_index, self.next_index);
-                        Err(Box::new(crate::Error::InvalidEscape { span, what: ch }))
-                    },
+                        Err(Box::new(crate::Error::InvalidEscape {
+                            span: self.create_span(start_index, self.next_index),
+                            what: ch,
+                        }))
+                    }
                     None => {
                         Ok(None)
-                    },
+                    }
                 }
             }
             else if ch.is_ascii() {
                 Ok(Some(ch as u8))
             }
             else {
-                let span = self.create_span(start_index, start_index);
-                Err(Box::new(crate::Error::NonAsciiCharacter { span, what: ch }))
+                Err(Box::new(crate::Error::NonAsciiCharacter {
+                    span: self.create_span(start_index, start_index),
+                    what: ch,
+                }))
             }
         }
         else {
@@ -245,45 +408,65 @@ impl<T: BufRead> Scanner<T> {
         }
     }
 
-    fn scan_string_literal(&mut self) -> crate::Result<Option<(crate::Span, Token)>> {
+    fn scan_string_literal(&mut self) -> crate::Result<(crate::Span, Token)> {
         let start_index = self.next_index - 1;
         let mut bytes = Vec::new();
 
         while let Some(ch) = self.next_char()? {
             if ch == '"' {
-                let span = self.create_span(start_index, self.next_index);
                 // Add the NUL byte at the end
                 // TODO: syntax like r"hello" to opt out?
                 bytes.push(0);
-                return Ok(Some((span, Token::Literal(Literal::String(crate::sema::StringValue::new(bytes))))));
+                return Ok((
+                    self.create_span(start_index, self.next_index),
+                    Token::Literal(Literal::String(crate::sema::StringValue::new(bytes))),
+                ));
             }
             else {
                 self.put_back(ch);
                 bytes.push(self.scan_escaped_char()?.ok_or_else(|| {
-                    let span = self.create_span(start_index, start_index);
-                    Box::new(crate::Error::UnclosedString { span })
+                    Box::new(crate::Error::UnclosedString {
+                        span: self.create_span(start_index, start_index),
+                    })
                 })?);
             }
         }
 
-        let span = self.create_span(start_index, start_index);
-        Err(Box::new(crate::Error::UnclosedString { span }))
+        Err(Box::new(crate::Error::UnclosedString {
+            span: self.create_span(start_index, start_index),
+        }))
     }
 
-    fn scan_character_literal(&mut self) -> crate::Result<Option<(crate::Span, Token)>> {
+    fn scan_character_literal(&mut self) -> crate::Result<(crate::Span, Token)> {
         let start_index = self.next_index - 1;
         let byte = self.scan_escaped_char()?.ok_or_else(|| {
-            let span = self.create_span(self.next_index, self.next_index);
-            Box::new(crate::Error::UnclosedCharacter { span })
+            Box::new(crate::Error::UnclosedCharacter {
+                span: self.create_span(self.next_index, self.next_index),
+            })
         })?;
 
         if let Some('\'') = self.next_char()? {
-            let span = self.create_span(start_index, self.next_index);
-            Ok(Some((span, Token::Literal(Literal::Integer(byte as i128)))))
+            let suffix = match self.next_char()? {
+                Some(ch @ ('A'..='Z' | 'a'..='z' | '_')) => {
+                    self.put_back(ch);
+                    Some(self.scan_integer_suffix()?)
+                }
+                Some(ch) => {
+                    self.put_back(ch);
+                    None
+                }
+                None => None,
+            };
+
+            Ok((
+                self.create_span(start_index, self.next_index),
+                Token::Literal(Literal::Integer(byte as i128, suffix)),
+            ))
         }
         else {
-            let span = self.create_span(self.next_index, self.next_index);
-            Err(Box::new(crate::Error::UnclosedCharacter { span }))
+            Err(Box::new(crate::Error::UnclosedCharacter {
+                span: self.create_span(self.next_index, self.next_index),
+            }))
         }
     }
 
@@ -331,47 +514,8 @@ impl<T: BufRead> Scanner<T> {
             }
         }
 
-        let span = self.create_span(start_index, start_index + 2);
-        Err(Box::new(crate::Error::UnclosedComment { span }))
-    }
-
-    pub fn next_token(&mut self) -> crate::Result<Option<(crate::Span, Token)>> {
-        if let Some(ch) = self.next_non_space_char()? {
-            if ch.is_ascii_digit() {
-                self.put_back(ch);
-                self.scan_integer_literal()
-            }
-            else if ch == '_' || ch.is_ascii_alphanumeric() {
-                self.put_back(ch);
-                self.scan_word_literal()
-            }
-            else {
-                if ch == '/' {
-                    match self.next_char()? {
-                        Some('/') => {
-                            self.skip_line_comment()?;
-                            return self.next_token();
-                        },
-                        Some('*') => {
-                            self.skip_block_comment()?;
-                            return self.next_token();
-                        },
-                        Some(next_ch) => self.put_back(next_ch),
-                        None => {},
-                    }
-                }
-                else if ch == '"' {
-                    return self.scan_string_literal();
-                }
-                else if ch == '\'' {
-                    return self.scan_character_literal();
-                }
-                self.put_back(ch);
-                self.scan_symbolic_literal()
-            }
-        }
-        else {
-            Ok(None)
-        }
+        Err(Box::new(crate::Error::UnclosedComment {
+            span: self.create_span(start_index, start_index + 2),
+        }))
     }
 }

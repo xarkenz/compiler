@@ -64,6 +64,8 @@ pub enum TypeRepr {
         size: usize,
         signed: bool,
     },
+    Float32,
+    Float64,
     Pointer {
         pointee_type: TypeHandle,
         semantics: PointerSemantics,
@@ -99,6 +101,8 @@ pub(super) const PRIMITIVE_TYPES: &[(&str, TypeRepr)] = &[
     ("u32", TypeRepr::Integer { size: 4, signed: false }),
     ("i64", TypeRepr::Integer { size: 8, signed: true }),
     ("u64", TypeRepr::Integer { size: 8, signed: false }),
+    ("f32", TypeRepr::Float32),
+    ("f64", TypeRepr::Float64),
 ];
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -130,6 +134,8 @@ impl TypeHandle {
     pub const U32: Self = Self::new(9);
     pub const I64: Self = Self::new(10);
     pub const U64: Self = Self::new(11);
+    pub const F32: Self = Self::new(12);
+    pub const F64: Self = Self::new(13);
 
     pub fn primitive(type_name: &str) -> Option<PrimitiveType> {
         PRIMITIVE_TYPES.iter().enumerate().find_map(|(registry_index, &(name, _))| {
