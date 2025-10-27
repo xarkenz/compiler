@@ -602,7 +602,7 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_cmp_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
         match lhs.get_type().repr(context) {
-            TypeRepr::Integer { .. } => emit!(
+            TypeRepr::Integer { .. } | TypeRepr::Pointer { .. } => emit!(
                 self,
                 "\t{} = icmp eq {} {}, {}\n",
                 result.llvm_syntax(),
@@ -624,7 +624,7 @@ impl<W: Write> Emitter<W> {
 
     pub fn emit_cmp_not_equal(&mut self, result: &Register, lhs: &Value, rhs: &Value, context: &GlobalContext) -> crate::Result<()> {
         match lhs.get_type().repr(context) {
-            TypeRepr::Integer { .. } => emit!(
+            TypeRepr::Integer { .. } | TypeRepr::Pointer { .. } => emit!(
                 self,
                 "\t{} = icmp ne {} {}, {}\n",
                 result.llvm_syntax(),
@@ -654,7 +654,7 @@ impl<W: Write> Emitter<W> {
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
             ),
-            TypeRepr::Integer { signed: false, .. } => emit!(
+            TypeRepr::Integer { signed: false, .. } | TypeRepr::Pointer { .. } => emit!(
                 self,
                 "\t{} = icmp ult {} {}, {}\n",
                 result.llvm_syntax(),
@@ -684,7 +684,7 @@ impl<W: Write> Emitter<W> {
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
             ),
-            TypeRepr::Integer { signed: false, .. } => emit!(
+            TypeRepr::Integer { signed: false, .. } | TypeRepr::Pointer { .. } => emit!(
                 self,
                 "\t{} = icmp ule {} {}, {}\n",
                 result.llvm_syntax(),
@@ -714,7 +714,7 @@ impl<W: Write> Emitter<W> {
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
             ),
-            TypeRepr::Integer { signed: false, .. } => emit!(
+            TypeRepr::Integer { signed: false, .. } | TypeRepr::Pointer { .. } => emit!(
                 self,
                 "\t{} = icmp ugt {} {}, {}\n",
                 result.llvm_syntax(),
@@ -744,7 +744,7 @@ impl<W: Write> Emitter<W> {
                 lhs.llvm_syntax(context),
                 rhs.llvm_syntax(context),
             ),
-            TypeRepr::Integer { signed: false, .. } => emit!(
+            TypeRepr::Integer { signed: false, .. } | TypeRepr::Pointer { .. } => emit!(
                 self,
                 "\t{} = icmp uge {} {}, {}\n",
                 result.llvm_syntax(),

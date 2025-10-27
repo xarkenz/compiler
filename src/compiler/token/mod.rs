@@ -1,104 +1,16 @@
+use crate::sema::{FloatType, IntegerType, PrimitiveType, StringValue};
+
 pub mod scan;
-
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub enum IntegerSuffix {
-    I8,
-    U8,
-    I16,
-    U16,
-    I32,
-    U32,
-    I64,
-    U64,
-}
-
-impl IntegerSuffix {
-    pub fn find(syntax: &str) -> Option<Self> {
-        match syntax {
-            "i8" => Some(Self::I8),
-            "u8" => Some(Self::U8),
-            "i16" => Some(Self::I16),
-            "u16" => Some(Self::U16),
-            "i32" => Some(Self::I32),
-            "u32" => Some(Self::U32),
-            "i64" => Some(Self::I64),
-            "u64" => Some(Self::U64),
-            _ => None
-        }
-    }
-
-    pub fn as_type(&self) -> crate::sema::TypeHandle {
-        use crate::sema::TypeHandle;
-        match self {
-            Self::I8 => TypeHandle::I8,
-            Self::U8 => TypeHandle::U8,
-            Self::I16 => TypeHandle::I16,
-            Self::U16 => TypeHandle::U16,
-            Self::I32 => TypeHandle::I32,
-            Self::U32 => TypeHandle::U32,
-            Self::I64 => TypeHandle::I64,
-            Self::U64 => TypeHandle::U64,
-        }
-    }
-}
-
-impl std::fmt::Display for IntegerSuffix {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::I8 => write!(f, "i8"),
-            Self::U8 => write!(f, "u8"),
-            Self::I16 => write!(f, "i16"),
-            Self::U16 => write!(f, "u16"),
-            Self::I32 => write!(f, "i32"),
-            Self::U32 => write!(f, "u32"),
-            Self::I64 => write!(f, "i64"),
-            Self::U64 => write!(f, "u64"),
-        }
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub enum FloatSuffix {
-    F32,
-    F64,
-}
-
-impl FloatSuffix {
-    pub fn find(syntax: &str) -> Option<Self> {
-        match syntax {
-            "f32" => Some(Self::F32),
-            "f64" => Some(Self::F64),
-            _ => None
-        }
-    }
-
-    pub fn as_type(&self) -> crate::sema::TypeHandle {
-        use crate::sema::TypeHandle;
-        match self {
-            Self::F32 => TypeHandle::F32,
-            Self::F64 => TypeHandle::F64,
-        }
-    }
-}
-
-impl std::fmt::Display for FloatSuffix {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::F32 => write!(f, "f32"),
-            Self::F64 => write!(f, "f64"),
-        }
-    }
-}
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Literal {
     Name(String),
-    Integer(i128, Option<IntegerSuffix>),
-    Float(f64, Option<FloatSuffix>),
+    Integer(i128, Option<IntegerType>),
+    Float(f64, Option<FloatType>),
     Boolean(bool),
     NullPointer,
-    String(crate::sema::StringValue),
-    PrimitiveType(crate::sema::PrimitiveType),
+    String(StringValue),
+    PrimitiveType(PrimitiveType),
 }
 
 impl std::fmt::Display for Literal {

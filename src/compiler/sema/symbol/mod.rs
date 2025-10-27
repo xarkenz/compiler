@@ -67,7 +67,7 @@ pub enum PathBaseType {
     },
     Array {
         item_type: AbsolutePath,
-        length: Option<usize>,
+        length: Option<u64>,
     },
     Function {
         parameter_types: Vec<AbsolutePath>,

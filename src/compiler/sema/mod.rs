@@ -12,19 +12,19 @@ pub use local::*;
 pub use symbol::*;
 pub use types::*;
 pub use value::*;
+use crate::target::TargetInfo;
 
 struct TypeEntry {
     path: AbsolutePath,
     repr: TypeRepr,
     namespace: NamespaceHandle,
-    alignment: Option<Option<usize>>,
-    size: Option<Option<usize>>,
+    alignment: Option<Option<u64>>,
+    size: Option<Option<u64>>,
     llvm_syntax: Option<String>,
 }
 
 pub struct GlobalContext {
-    /// The size of a pointer in bytes.
-    pointer_size: usize,
+    target: TargetInfo,
     /// Table of all namespaces in existence.
     namespace_registry: Vec<NamespaceInfo>,
     /// The hierarchy of modules currently being analyzed.
@@ -39,28 +39,22 @@ pub struct GlobalContext {
     /// Find `*T`, `*mut T`, or `*own T`.
     pointer_types: HashMap<(TypeHandle, PointerSemantics), TypeHandle>,
     /// Find `[T; N]` or `[T]`.
-    array_types: HashMap<(TypeHandle, Option<usize>), TypeHandle>,
+    array_types: HashMap<(TypeHandle, Option<u64>), TypeHandle>,
     /// Find a function type by signature.
     function_types: HashMap<FunctionSignature, TypeHandle>,
     /// Flag for whether the fill phase has been completed. If so, all type properties are known.
     fill_phase_complete: bool,
 }
 
-impl Default for GlobalContext {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl GlobalContext {
-    pub fn new() -> Self {
+    pub fn new(target: TargetInfo) -> Self {
         let mut context = Self {
-            pointer_size: size_of::<&()>(),
+            target,
             namespace_registry: vec![NamespaceInfo::new(AbsolutePath::at_root())],
             module_stack: vec![NamespaceHandle::ROOT],
             type_registry: Vec::with_capacity(PRIMITIVE_TYPES.len()),
             current_self_type: None,
-            path_base_types: HashMap::new(),
+            path_base_types: HashMap::with_capacity(PRIMITIVE_TYPES.len()),
             pointer_types: HashMap::new(),
             array_types: HashMap::new(),
             function_types: HashMap::new(),
@@ -74,7 +68,7 @@ impl GlobalContext {
             });
             let handle = context.create_type(
                 AbsolutePath::at_base_type(Box::new(base_type.clone())),
-                repr.clone(),
+                repr.resolve_primitive_type(context.target().pointer_size()),
             );
             context.path_base_types.insert(base_type, handle);
         }
@@ -82,8 +76,8 @@ impl GlobalContext {
         context
     }
 
-    pub fn pointer_size(&self) -> usize {
-        self.pointer_size
+    pub fn target(&self) -> &TargetInfo {
+        &self.target
     }
 
     pub fn current_module(&self) -> NamespaceHandle {
@@ -122,12 +116,12 @@ impl GlobalContext {
         self.type_entry(handle).namespace
     }
 
-    pub fn type_alignment(&self, handle: TypeHandle) -> Option<usize> {
+    pub fn type_alignment(&self, handle: TypeHandle) -> Option<u64> {
         self.type_entry(handle).alignment
             .expect("type alignment cannot be known before fill phase is completed")
     }
 
-    pub fn type_size(&self, handle: TypeHandle) -> Option<usize> {
+    pub fn type_size(&self, handle: TypeHandle) -> Option<u64> {
         self.type_entry(handle).size
             .expect("type size cannot be known before fill phase is completed")
     }
@@ -268,7 +262,22 @@ impl GlobalContext {
                 let base_type = PathBaseType::Array {
                     item_type: self.type_path_for_type_node(item_type)?,
                     length: match length {
-                        Some(node) => Some(node.as_constant_usize()?),
+                        Some(node) => {
+                            // Must be an integer literal (for now)
+                            if let &Node::Literal(Literal::Integer(raw, _)) = node.as_ref() {
+                                // Must be an acceptable usize value
+                                let Some(value) = IntegerValue::from_unknown_type(raw, TypeHandle::USIZE, self.target()) else {
+                                    return Err(Box::new(crate::Error::IncompatibleValueType {
+                                        value: raw.to_string(),
+                                        type_name: self.type_path(TypeHandle::USIZE).to_string(),
+                                    }));
+                                };
+                                Some(value.raw() as u64)
+                            }
+                            else {
+                                return Err(Box::new(crate::Error::NonConstantArrayLength {}));
+                            }
+                        },
                         None => None,
                     },
                 };
@@ -459,7 +468,7 @@ impl GlobalContext {
         }
     }
 
-    pub fn get_array_type(&mut self, item_type: TypeHandle, length: Option<usize>) -> TypeHandle {
+    pub fn get_array_type(&mut self, item_type: TypeHandle, length: Option<u64>) -> TypeHandle {
         if let Some(handle) = self.array_types.get(&(item_type, length)) {
             *handle
         }
@@ -822,7 +831,7 @@ impl GlobalContext {
         entry.llvm_syntax = llvm_syntax;
     }
 
-    fn calculate_alignment(&self, repr: &TypeRepr) -> Option<usize> {
+    fn calculate_alignment(&self, repr: &TypeRepr) -> Option<u64> {
         match *repr {
             TypeRepr::Unresolved => None,
             TypeRepr::Meta => None,
@@ -830,10 +839,11 @@ impl GlobalContext {
             TypeRepr::Void => None,
             TypeRepr::Boolean => Some(1),
             TypeRepr::Integer { size, .. } => Some(size),
+            TypeRepr::PointerSizedInteger { .. } => panic!("unresolved pointer sized integer"),
             TypeRepr::Float32 => Some(4),
             TypeRepr::Float64 => Some(8),
-            TypeRepr::Pointer { .. } => Some(self.pointer_size),
-            TypeRepr::Function { .. } => Some(self.pointer_size),
+            TypeRepr::Pointer { .. } => Some(self.target().pointer_size()),
+            TypeRepr::Function { .. } => Some(self.target().pointer_size()),
             TypeRepr::Array { item_type, .. } => self.type_alignment(item_type),
             TypeRepr::Structure { ref members, .. } => members.iter()
                 .map(|member| self.type_alignment(member.member_type))
@@ -842,7 +852,7 @@ impl GlobalContext {
         }
     }
 
-    fn calculate_size(&self, repr: &TypeRepr) -> Option<usize> {
+    fn calculate_size(&self, repr: &TypeRepr) -> Option<u64> {
         match *repr {
             TypeRepr::Unresolved => None,
             TypeRepr::Meta => None,
@@ -850,10 +860,11 @@ impl GlobalContext {
             TypeRepr::Void => Some(0),
             TypeRepr::Boolean => Some(1),
             TypeRepr::Integer { size, .. } => Some(size),
+            TypeRepr::PointerSizedInteger { .. } => panic!("unresolved pointer sized integer"),
             TypeRepr::Float32 => Some(4),
             TypeRepr::Float64 => Some(8),
-            TypeRepr::Pointer { .. } => Some(self.pointer_size),
-            TypeRepr::Function { .. } => Some(self.pointer_size),
+            TypeRepr::Pointer { .. } => Some(self.target().pointer_size()),
+            TypeRepr::Function { .. } => Some(self.target().pointer_size()),
             TypeRepr::Array { item_type, length } => {
                 let length = length?;
                 let item_size = self.type_size(item_type)?;
@@ -891,6 +902,7 @@ impl GlobalContext {
             TypeRepr::Void => "void".to_string(),
             TypeRepr::Boolean => "i1".to_string(),
             TypeRepr::Integer { size, .. } => format!("i{}", size * 8),
+            TypeRepr::PointerSizedInteger { .. } => panic!("unresolved pointer sized integer"),
             TypeRepr::Float32 => "float".to_string(),
             TypeRepr::Float64 => "double".to_string(),
             TypeRepr::Pointer { pointee_type, .. } => {

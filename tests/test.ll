@@ -44,7 +44,7 @@ define void @"<u8>::swap"(i8* %0, i8* %1) {
 	ret void
 }
 
-define i64 @"<u64>::max"(i64 %0, i64 %1) {
+define i64 @"<usize>::max"(i64 %0, i64 %1) {
 .block.0:
 	%self = alloca i64
 	store i64 %0, i64* %self
@@ -129,7 +129,7 @@ define void @"::String::grow_by"(%"type.::String"* %0, i64 %1) {
 	%9 = load i64, i64* %8
 	%10 = mul nuw i64 %9, 2
 	%11 = load i64, i64* %required_capacity
-	%12 = call i64(i64, i64) @"<u64>::max"(i64 %10, i64 %11)
+	%12 = call i64(i64, i64) @"<usize>::max"(i64 %10, i64 %11)
 	%capacity = alloca i64
 	store i64 %12, i64* %capacity
 	%13 = load i64, i64* %capacity
@@ -640,18 +640,17 @@ define i32 @main() {
 	%6 = call i32(i8*, ...) @printf(i8* bitcast ([4 x i8]* @.const.15 to i8*), i8* %5)
 	%7 = load %"type.::String", %"type.::String"* %string
 	call void(%"type.::String") @"::String::del"(%"type.::String" %7)
-	%8 = sub nsw i32 0, 12345
-	%9 = sext i32 %8 to i64
-	%10 = call %"type.::String"(i64) @"<i64>::to_string"(i64 %9)
+	%8 = sub nsw i64 0, 12345
+	%9 = call %"type.::String"(i64) @"<i64>::to_string"(i64 %8)
 	%number_string = alloca %"type.::String"
-	store %"type.::String" %10, %"type.::String"* %number_string
+	store %"type.::String" %9, %"type.::String"* %number_string
 	call void(%"type.::String"*, i8) @"::String::push"(%"type.::String"* %number_string, i8 0)
-	%11 = getelementptr inbounds %"type.::String", %"type.::String"* %number_string, i32 0, i32 0
-	%12 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %11, i32 0, i32 0
-	%13 = load i8*, i8** %12
-	%14 = call i32(i8*, ...) @printf(i8* bitcast ([22 x i8]* @.const.16 to i8*), i8* %13)
-	%15 = load %"type.::String", %"type.::String"* %number_string
-	call void(%"type.::String") @"::String::del"(%"type.::String" %15)
+	%10 = getelementptr inbounds %"type.::String", %"type.::String"* %number_string, i32 0, i32 0
+	%11 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %10, i32 0, i32 0
+	%12 = load i8*, i8** %11
+	%13 = call i32(i8*, ...) @printf(i8* bitcast ([22 x i8]* @.const.16 to i8*), i8* %12)
+	%14 = load %"type.::String", %"type.::String"* %number_string
+	call void(%"type.::String") @"::String::del"(%"type.::String" %14)
 	ret i32 0
 }
 

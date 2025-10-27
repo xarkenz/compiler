@@ -255,19 +255,19 @@ impl<T: BufRead> Scanner<T> {
         ))
     }
 
-    fn scan_integer_suffix(&mut self) -> crate::Result<IntegerSuffix> {
+    fn scan_integer_suffix(&mut self) -> crate::Result<IntegerType> {
         let (span, content) = self.scan_alphanumeric_word()?;
 
-        IntegerSuffix::find(&content)
+        IntegerType::from_name(&content)
             .ok_or_else(|| Box::new(crate::Error::InvalidLiteralSuffix {
                 span,
             }))
     }
 
-    fn scan_float_suffix(&mut self) -> crate::Result<FloatSuffix> {
+    fn scan_float_suffix(&mut self) -> crate::Result<FloatType> {
         let (span, content) = self.scan_alphanumeric_word()?;
 
-        FloatSuffix::find(&content)
+        FloatType::from_name(&content)
             .ok_or_else(|| Box::new(crate::Error::InvalidLiteralSuffix {
                 span,
             }))
@@ -287,7 +287,7 @@ impl<T: BufRead> Scanner<T> {
                 "true" => Literal::Boolean(true),
                 "false" => Literal::Boolean(false),
                 "null" => Literal::NullPointer,
-                _ => match crate::sema::TypeHandle::primitive(&content) {
+                _ => match PrimitiveType::from_name(&content) {
                     Some(primitive_type) => Literal::PrimitiveType(primitive_type),
                     None => Literal::Name(content),
                 }
@@ -419,7 +419,7 @@ impl<T: BufRead> Scanner<T> {
                 bytes.push(0);
                 return Ok((
                     self.create_span(start_index, self.next_index),
-                    Token::Literal(Literal::String(crate::sema::StringValue::new(bytes))),
+                    Token::Literal(Literal::String(StringValue::new(bytes))),
                 ));
             }
             else {

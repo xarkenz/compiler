@@ -458,17 +458,6 @@ impl Node {
         }
     }
 
-    pub fn as_constant_usize(&self) -> crate::Result<usize> {
-        // Must be an integer literal
-        if let &Self::Literal(Literal::Integer(value, _)) = self {
-            // Must be an acceptable usize value
-            if let Ok(value) = usize::try_from(value) {
-                return Ok(value);
-            }
-        }
-        Err(Box::new(crate::Error::NonConstantArrayLength {}))
-    }
-
     pub fn requires_semicolon(&self) -> bool {
         match self {
             Self::Scope { .. } |

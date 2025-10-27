@@ -6,9 +6,9 @@ foreign function feof(file: *mut CFile) -> i32;
 foreign function fgets(buffer: *mut [u8], limit: i32, file: *mut CFile) -> *mut [u8];
 foreign function printf(format: *[u8], ..) -> u32;
 
-foreign function malloc(size_bytes: u64) -> *mut void;
+foreign function malloc(size_bytes: usize) -> *mut void;
 foreign function free(alloc: *mut void);
-foreign function memcpy(dest: *mut void, src: *void, byte_count: u64) -> *mut void;
+foreign function memcpy(dest: *mut void, src: *void, byte_count: usize) -> *mut void;
 
 foreign function strlen(str: *[u8]) -> u64;
 foreign function isdigit(char: i32) -> i32;
@@ -21,7 +21,7 @@ implement u8 {
     }
 }
 
-implement u64 {
+implement usize {
     function max(self: Self, other: Self) -> Self {
         if (self > other) {
             self
@@ -33,17 +33,17 @@ implement u64 {
 
 struct Str {
     ptr: *[u8],
-    length: u64,
+    length: usize,
 }
 
 struct MutStr {
     ptr: *mut [u8],
-    length: u64,
+    length: usize,
 }
 
 struct String {
     str: MutStr,
-    capacity: u64,
+    capacity: usize,
 }
 
 implement String {
@@ -68,9 +68,9 @@ implement String {
         }
     }
 
-    function grow_by(mut self: *mut Self, additional: u64) {
+    function grow_by(mut self: *mut Self, additional: usize) {
         let required_capacity = self.capacity + additional;
-        let capacity = u64::max(self.capacity * 2, required_capacity);
+        let capacity = usize::max(self.capacity * 2, required_capacity);
         let mut ptr = malloc(sizeof(u8) * capacity) as *mut [u8];
 
         memcpy(ptr as *mut void, self.str.ptr as *void, self.str.length);
@@ -89,7 +89,7 @@ implement String {
         self.str.length += 1;
     }
 
-    function insert(mut self: *mut Self, mut index: u64, mut ch: u8) {
+    function insert(mut self: *mut Self, mut index: usize, mut ch: u8) {
         if (self.str.length == self.capacity) {
             self.grow_by(1);
         }
@@ -170,10 +170,10 @@ struct Node {
     next: *mut Self,
 }
 
-function omg_linked_list(values: *[*[u8]], value_count: u64) {
+function omg_linked_list(values: *[*[u8]], value_count: usize) {
     let mut head: *mut Node = null;
 
-    let mut index: u64 = 0;
+    let mut index = 0_usize;
     while (index < value_count) {
         let mut node = malloc(sizeof(Node)) as *mut Node;
         *node = Node {
@@ -278,7 +278,7 @@ foreign function main() -> i32 {
     printf("%s\n", str.ptr);
     string.del();
 
-    let mut number_string = -12345_i64.to_string();
+    let mut number_string = (-12345_i64).to_string();
     number_string.push('\0');
     printf("i64::to_string: \"%s\"\n", number_string.str.ptr);
     number_string.del();

@@ -379,10 +379,10 @@ impl<W: Write> Generator<W> {
             }
             token::Literal::Integer(value, suffix) => {
                 let value_type = match suffix {
-                    Some(suffix) => suffix.as_type(),
+                    Some(suffix) => suffix.as_handle(),
                     None => expected_type.unwrap_or(TypeHandle::I32),
                 };
-                let Some(value) = IntegerValue::new(value, value_type.repr(&self.context)) else {
+                let Some(value) = IntegerValue::from_unknown_type(value, value_type, self.context.target()) else {
                     return Err(Box::new(crate::Error::IncompatibleValueType {
                         value: value.to_string(),
                         type_name: value_type.path(&self.context).to_string(),
@@ -393,10 +393,10 @@ impl<W: Write> Generator<W> {
             }
             token::Literal::Float(value, suffix) => {
                 let value_type = match suffix {
-                    Some(suffix) => suffix.as_type(),
+                    Some(suffix) => suffix.as_handle(),
                     None => expected_type.unwrap_or(TypeHandle::F64),
                 };
-                let Some(value) = FloatValue::new(value, value_type.repr(&self.context)) else {
+                let Some(value) = FloatValue::from_unknown_type(value, value_type, self.context.target()) else {
                     return Err(Box::new(crate::Error::IncompatibleValueType {
                         value: value.to_string(),
                         type_name: value_type.path(&self.context).to_string(),
@@ -415,7 +415,7 @@ impl<W: Write> Generator<W> {
             }
             token::Literal::String(ref value) => {
                 let constant = Constant::String {
-                    array_type: self.context.get_array_type(TypeHandle::U8, Some(value.len())),
+                    array_type: self.context.get_array_type(TypeHandle::U8, Some(value.len() as u64)),
                     value: value.clone(),
                 };
                 let pointer = self.new_anonymous_constant(constant.get_type());
@@ -472,8 +472,8 @@ impl<W: Write> Generator<W> {
         for (index, item) in non_constant_items {
             let item_pointer_type = self.context.get_pointer_type(item.get_type(), PointerSemantics::Mutable);
             let item_pointer = local_context.new_anonymous_register(item_pointer_type);
-            let zero = Value::from(IntegerValue::Signed32(0));
-            let index = Value::from(IntegerValue::Unsigned64(index as u64));
+            let zero = Value::from(IntegerValue::new(IntegerType::I32, 0));
+            let index = Value::from(IntegerValue::new(IntegerType::Usize, index as i128));
 
             self.emitter.emit_get_element_pointer(&item_pointer, &array_pointer, &[zero, index], &self.context)?;
             self.emitter.emit_store(&item, &item_pointer.into(), &self.context)?;
@@ -553,8 +553,8 @@ impl<W: Write> Generator<W> {
         for (index, member) in non_constant_members {
             let member_pointer_type = self.context.get_pointer_type(member.get_type(), PointerSemantics::Mutable);
             let member_pointer = local_context.new_anonymous_register(member_pointer_type);
-            let zero = Value::from(IntegerValue::Signed32(0));
-            let index = Value::from(IntegerValue::Signed32(index as i32));
+            let zero = Value::from(IntegerValue::new(IntegerType::I32, 0));
+            let index = Value::from(IntegerValue::new(IntegerType::I32, index as i128));
 
             self.emitter.emit_get_element_pointer(&member_pointer, &structure_pointer, &[zero, index], &self.context)?;
             self.emitter.emit_store(&member, &member_pointer.into(), &self.context)?;
@@ -651,7 +651,7 @@ impl<W: Write> Generator<W> {
                     }));
                 };
 
-                Value::Constant(Constant::Integer(IntegerValue::Unsigned64(size as u64)))
+                Value::from(IntegerValue::new(IntegerType::Usize, size as i128))
             }
             ast::UnaryOperation::GetAlign => {
                 let ast::Node::Type(type_node) = operand else {
@@ -666,7 +666,7 @@ impl<W: Write> Generator<W> {
                     }));
                 };
 
-                Value::Constant(Constant::Integer(IntegerValue::Unsigned64(alignment as u64)))
+                Value::from(IntegerValue::new(IntegerType::Usize, alignment as i128))
             }
         };
 
@@ -1008,7 +1008,7 @@ impl<W: Write> Generator<W> {
                     let element_pointer_type = self.context.get_pointer_type(item_type, semantics);
                     let element_pointer = local_context.new_anonymous_register(element_pointer_type);
                     let indices = match length {
-                        Some(..) => vec![Value::from(IntegerValue::Signed32(0)), rhs],
+                        Some(..) => vec![Value::from(IntegerValue::new(IntegerType::I32, 0)), rhs],
                         None => vec![rhs],
                     };
 
@@ -1033,7 +1033,7 @@ impl<W: Write> Generator<W> {
                         let element_pointer_type = self.context.get_pointer_type(item_type, semantics);
                         let element_pointer = local_context.new_anonymous_register(element_pointer_type);
                         let indices = match length {
-                            Some(..) => vec![Value::from(IntegerValue::Signed32(0)), rhs],
+                            Some(..) => vec![Value::from(IntegerValue::new(IntegerType::I32, 0)), rhs],
                             None => vec![rhs],
                         };
 
@@ -1056,7 +1056,7 @@ impl<W: Write> Generator<W> {
                         let element_pointer_type = self.context.get_pointer_type(item_type, semantics);
                         let element_pointer = local_context.new_anonymous_register(element_pointer_type);
                         let indices = match length {
-                            Some(_) => vec![Value::from(IntegerValue::Signed32(0)), rhs],
+                            Some(_) => vec![Value::from(IntegerValue::new(IntegerType::I32, 0)), rhs],
                             None => vec![rhs],
                         };
 
@@ -1103,7 +1103,7 @@ impl<W: Write> Generator<W> {
                         panic!("bad pointer for indirect");
                     };
                     let indices = match length {
-                        Some(_) => vec![Constant::from(IntegerValue::Signed32(0)), rhs],
+                        Some(_) => vec![Constant::from(IntegerValue::new(IntegerType::I32, 0)), rhs],
                         None => vec![rhs],
                     };
 
@@ -1126,7 +1126,7 @@ impl<W: Write> Generator<W> {
                     &TypeRepr::Array { item_type, length } => {
                         // const *[T; N], const *[T]
                         let indices = match length {
-                            Some(_) => vec![Constant::from(IntegerValue::Signed32(0)), rhs],
+                            Some(_) => vec![Constant::from(IntegerValue::new(IntegerType::I32, 0)), rhs],
                             None => vec![rhs],
                         };
 
@@ -1179,8 +1179,8 @@ impl<W: Write> Generator<W> {
                     let member_pointer_type = self.context.get_pointer_type(member_type, semantics);
                     let member_pointer = local_context.new_anonymous_register(member_pointer_type);
                     let indices = &[
-                        Value::from(IntegerValue::Signed32(0)),
-                        Value::from(IntegerValue::Signed32(member_index as i32)),
+                        Value::from(IntegerValue::new(IntegerType::I32, 0)),
+                        Value::from(IntegerValue::new(IntegerType::I32, member_index as i128)),
                     ];
 
                     self.emitter.emit_get_element_pointer(&member_pointer, &pointer, indices, &self.context)?;
@@ -1698,10 +1698,10 @@ impl<W: Write> Generator<W> {
                     }
                     token::Literal::Integer(value, suffix) => {
                         let value_type = match suffix {
-                            Some(suffix) => suffix.as_type(),
+                            Some(suffix) => suffix.as_handle(),
                             None => expected_type.unwrap_or(TypeHandle::I32),
                         };
-                        let Some(value) = IntegerValue::new(value, value_type.repr(&self.context)) else {
+                        let Some(value) = IntegerValue::from_unknown_type(value, value_type, self.context.target()) else {
                             return Err(Box::new(crate::Error::IncompatibleValueType {
                                 value: value.to_string(),
                                 type_name: value_type.path(&self.context).to_string(),
@@ -1712,10 +1712,10 @@ impl<W: Write> Generator<W> {
                     }
                     token::Literal::Float(value, suffix) => {
                         let value_type = match suffix {
-                            Some(suffix) => suffix.as_type(),
+                            Some(suffix) => suffix.as_handle(),
                             None => expected_type.unwrap_or(TypeHandle::F64),
                         };
-                        let Some(value) = FloatValue::new(value, value_type.repr(&self.context)) else {
+                        let Some(value) = FloatValue::from_unknown_type(value, value_type, self.context.target()) else {
                             return Err(Box::new(crate::Error::IncompatibleValueType {
                                 value: value.to_string(),
                                 type_name: value_type.path(&self.context).to_string(),
@@ -1734,7 +1734,7 @@ impl<W: Write> Generator<W> {
                     }
                     token::Literal::String(ref value) => {
                         let constant = Constant::String {
-                            array_type: self.context.get_array_type(TypeHandle::U8, Some(value.len())),
+                            array_type: self.context.get_array_type(TypeHandle::U8, Some(value.len() as u64)),
                             value: value.clone(),
                         };
                         let (pointer, constant) = new_intermediate_constant(constant, &mut self.context);
@@ -1849,9 +1849,9 @@ impl<W: Write> Generator<W> {
                     let target_type = self.context.interpret_type_node(type_node)?;
 
                     if let Constant::Integer(integer) = value {
-                        let converted_integer = IntegerValue::new(integer.expanded_value(), target_type.repr(&self.context))
+                        let converted_integer = IntegerValue::from_unknown_type(integer.raw(), target_type, self.context.target())
                             .ok_or_else(|| Box::new(crate::Error::InconvertibleTypes {
-                                original_type: integer.get_type().path(&self.context).to_string(),
+                                original_type: integer.integer_type().as_handle().path(&self.context).to_string(),
                                 target_type: target_type.path(&self.context).to_string(),
                             }))?;
 

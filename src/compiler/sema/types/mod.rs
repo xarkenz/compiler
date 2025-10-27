@@ -55,35 +55,71 @@ impl FunctionSignature {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum TypeRepr {
+    /// A placeholder representation for types that are known to be defined, but where the exact
+    /// details are not yet known. This representation is used during the outline phase to
+    /// establish a handle for a type before its definition is processed in the fill phase.
     Unresolved,
+    /// The representation for the `<meta>` primitive type, which is not directly available to the
+    /// programmer, but holds values for modules and types themselves.
     Meta,
+    /// The representation for the `never` primitive type, which indicates that control flow will
+    /// diverge before the value would be encountered during runtime.
     Never,
+    /// The representation for the `void` primitive type, which is effectively "nothing."
     Void,
+    /// The representation for the `bool` primitive type, which holds a boolean value.
     Boolean,
+    /// The representation for the `iX` and `uX` primitive types, which hold `X`-bit integer values
+    /// that are signed and unsigned, respectively. `size` is in *bytes*, not bits.
     Integer {
-        size: usize,
+        size: u64,
         signed: bool,
     },
+    /// A placeholder representation for the `isize` and `usize` types which is replaced with the
+    /// proper [`TypeRepr::Integer`] representation once pointer size information is known.
+    PointerSizedInteger {
+        signed: bool,
+    },
+    /// The representation for the `f32` primitive type, which holds a 32-bit floating-point value.
     Float32,
+    /// The representation for the `f64` primitive type, which holds a 64-bit floating-point value.
     Float64,
+    /// The representation for pointer types of the form `*T` and `*mut T`.
     Pointer {
         pointee_type: TypeHandle,
         semantics: PointerSemantics,
     },
+    /// The representation for array types of the form `[T; N]` and `[T]`.
     Array {
         item_type: TypeHandle,
-        length: Option<usize>,
+        length: Option<u64>,
     },
+    /// The representation for structure types whose member types are known.
     Structure {
         name: String,
         members: Box<[StructureMember]>,
     },
+    /// The representation for structure types whose layout details are unknown (opaque).
     ForeignStructure {
         name: String,
     },
+    /// The representation for function types, which are defined by their
+    /// [signature](FunctionSignature).
     Function {
         signature: FunctionSignature,
     },
+}
+
+impl TypeRepr {
+    pub fn resolve_primitive_type(&self, pointer_size: u64) -> Self {
+        match self {
+            &Self::PointerSizedInteger { signed } => Self::Integer {
+                size: pointer_size,
+                signed,
+            },
+            other_repr => other_repr.clone(),
+        }
+    }
 }
 
 /// Order of elements is important! If anything is changed here, `TypeHandle::*` may need to be
@@ -101,6 +137,8 @@ pub(super) const PRIMITIVE_TYPES: &[(&str, TypeRepr)] = &[
     ("u32", TypeRepr::Integer { size: 4, signed: false }),
     ("i64", TypeRepr::Integer { size: 8, signed: true }),
     ("u64", TypeRepr::Integer { size: 8, signed: false }),
+    ("isize", TypeRepr::PointerSizedInteger { signed: true }),
+    ("usize", TypeRepr::PointerSizedInteger { signed: false }),
     ("f32", TypeRepr::Float32),
     ("f64", TypeRepr::Float64),
 ];
@@ -109,6 +147,20 @@ pub(super) const PRIMITIVE_TYPES: &[(&str, TypeRepr)] = &[
 pub struct PrimitiveType {
     pub handle: TypeHandle,
     pub name: &'static str,
+}
+
+impl PrimitiveType {
+    pub fn from_name(type_name: &str) -> Option<PrimitiveType> {
+        PRIMITIVE_TYPES
+            .iter()
+            .enumerate()
+            .find_map(|(registry_index, &(name, _))| {
+                (name == type_name).then(|| PrimitiveType {
+                    handle: TypeHandle::new(registry_index),
+                    name,
+                })
+            })
+    }
 }
 
 impl std::fmt::Display for PrimitiveType {
@@ -134,24 +186,17 @@ impl TypeHandle {
     pub const U32: Self = Self::new(9);
     pub const I64: Self = Self::new(10);
     pub const U64: Self = Self::new(11);
-    pub const F32: Self = Self::new(12);
-    pub const F64: Self = Self::new(13);
-
-    pub fn primitive(type_name: &str) -> Option<PrimitiveType> {
-        PRIMITIVE_TYPES.iter().enumerate().find_map(|(registry_index, &(name, _))| {
-            (name == type_name).then_some(PrimitiveType {
-                handle: TypeHandle::new(registry_index),
-                name,
-            })
-        })
-    }
+    pub const ISIZE: Self = Self::new(12);
+    pub const USIZE: Self = Self::new(13);
+    pub const F32: Self = Self::new(14);
+    pub const F64: Self = Self::new(15);
 
     pub const fn new(registry_index: usize) -> Self {
-        Self(unsafe { NonZeroUsize::new_unchecked(registry_index + 1) })
+        Self(NonZeroUsize::new(registry_index.wrapping_add(1)).unwrap())
     }
 
     pub const fn registry_index(self) -> usize {
-        self.0.get() - 1
+        self.0.get().wrapping_sub(1)
     }
 
     pub fn repr(self, context: &GlobalContext) -> &TypeRepr {
