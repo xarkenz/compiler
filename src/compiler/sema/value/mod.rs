@@ -1,145 +1,10 @@
 use super::*;
 
-use std::fmt;
+mod float;
+mod integer;
 
-#[derive(Clone, PartialEq, Debug)]
-pub enum IntegerValue {
-    Signed8(i8),
-    Unsigned8(u8),
-    Signed16(i16),
-    Unsigned16(u16),
-    Signed32(i32),
-    Unsigned32(u32),
-    Signed64(i64),
-    Unsigned64(u64),
-}
-
-impl IntegerValue {
-    pub fn new(raw: i128, type_info: &TypeRepr) -> Option<Self> {
-        match type_info {
-            TypeRepr::Integer { size: 1, signed: true } => Some(Self::Signed8(raw as i8)),
-            TypeRepr::Integer { size: 1, signed: false } => Some(Self::Unsigned8(raw as u8)),
-            TypeRepr::Integer { size: 2, signed: true } => Some(Self::Signed16(raw as i16)),
-            TypeRepr::Integer { size: 2, signed: false } => Some(Self::Unsigned16(raw as u16)),
-            TypeRepr::Integer { size: 4, signed: true } => Some(Self::Signed32(raw as i32)),
-            TypeRepr::Integer { size: 4, signed: false } => Some(Self::Unsigned32(raw as u32)),
-            TypeRepr::Integer { size: 8, signed: true } => Some(Self::Signed64(raw as i64)),
-            TypeRepr::Integer { size: 8, signed: false } => Some(Self::Unsigned64(raw as u64)),
-            _ => None
-        }
-    }
-
-    pub fn size(&self) -> usize {
-        match self {
-            Self::Signed8(..) | Self::Unsigned8(..) => 1,
-            Self::Signed16(..) | Self::Unsigned16(..) => 2,
-            Self::Signed32(..) | Self::Unsigned32(..) => 4,
-            Self::Signed64(..) | Self::Unsigned64(..) => 8,
-        }
-    }
-
-    pub fn is_signed(&self) -> bool {
-        match self {
-            Self::Signed8(..) | Self::Signed16(..) | Self::Signed32(..) | Self::Signed64(..) => true,
-            Self::Unsigned8(..) | Self::Unsigned16(..) | Self::Unsigned32(..) | Self::Unsigned64(..) => false,
-        }
-    }
-
-    pub fn expanded_value(&self) -> i128 {
-        match *self {
-            Self::Signed8(value) => value as i128,
-            Self::Unsigned8(value) => value as i128,
-            Self::Signed16(value) => value as i128,
-            Self::Unsigned16(value) => value as i128,
-            Self::Signed32(value) => value as i128,
-            Self::Unsigned32(value) => value as i128,
-            Self::Signed64(value) => value as i128,
-            Self::Unsigned64(value) => value as i128,
-        }
-    }
-
-    pub fn get_type(&self) -> TypeHandle {
-        match self {
-            Self::Signed8(..) => TypeHandle::I8,
-            Self::Unsigned8(..) => TypeHandle::U8,
-            Self::Signed16(..) => TypeHandle::I16,
-            Self::Unsigned16(..) => TypeHandle::U16,
-            Self::Signed32(..) => TypeHandle::I32,
-            Self::Unsigned32(..) => TypeHandle::U32,
-            Self::Signed64(..) => TypeHandle::I64,
-            Self::Unsigned64(..) => TypeHandle::U64,
-        }
-    }
-}
-
-impl fmt::Display for IntegerValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Signed8(value) => write!(f, "{value}"),
-            Self::Unsigned8(value) => write!(f, "{value}"),
-            Self::Signed16(value) => write!(f, "{value}"),
-            Self::Unsigned16(value) => write!(f, "{value}"),
-            Self::Signed32(value) => write!(f, "{value}"),
-            Self::Unsigned32(value) => write!(f, "{value}"),
-            Self::Signed64(value) => write!(f, "{value}"),
-            Self::Unsigned64(value) => write!(f, "{value}"),
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum FloatValue {
-    Float32(f32),
-    Float64(f64),
-}
-
-impl FloatValue {
-    pub fn new(raw: f64, type_info: &TypeRepr) -> Option<Self> {
-        match type_info {
-            TypeRepr::Float32 => Some(Self::Float32(raw as f32)),
-            TypeRepr::Float64 => Some(Self::Float64(raw)),
-            _ => None
-        }
-    }
-
-    pub fn size(&self) -> usize {
-        match self {
-            Self::Float32(..) => 4,
-            Self::Float64(..) => 8,
-        }
-    }
-
-    pub fn expanded_value(&self) -> f64 {
-        match *self {
-            Self::Float32(value) => value as f64,
-            Self::Float64(value) => value,
-        }
-    }
-
-    pub fn get_type(&self) -> TypeHandle {
-        match self {
-            Self::Float32(..) => TypeHandle::F32,
-            Self::Float64(..) => TypeHandle::F64,
-        }
-    }
-
-    pub fn llvm_syntax(&self) -> String {
-        // Convert to hexadecimal representation for purposes of keeping exact value
-        match *self {
-            Self::Float32(value) => format!("0x{:016X}", (value as f64).to_bits()),
-            Self::Float64(value) => format!("0x{:016X}", value.to_bits()),
-        }
-    }
-}
-
-impl fmt::Display for FloatValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Float32(value) => write!(f, "{value}"),
-            Self::Float64(value) => write!(f, "{value}"),
-        }
-    }
-}
+pub use float::*;
+pub use integer::*;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct StringValue {
@@ -164,10 +29,14 @@ impl StringValue {
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
+
+    pub fn llvm_syntax(&self) -> String {
+        self.to_string()
+    }
 }
 
-impl fmt::Display for StringValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for StringValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "c\"")?;
         for &byte in self.bytes() {
             if byte != b'"' && (byte == b' ' || byte.is_ascii_graphic()) {
@@ -252,7 +121,7 @@ impl Ord for Register {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum ConversionOperation {
     Truncate,
     ZeroExtend,
@@ -392,7 +261,8 @@ pub enum Constant {
         pointee_type: TypeHandle,
         pointer: Box<Constant>,
     },
-    BitwiseCast {
+    Convert {
+        operation: ConversionOperation,
         result_type: TypeHandle,
         value: Box<Constant>,
     },
@@ -443,7 +313,7 @@ impl Constant {
             Self::Structure { struct_type, .. } => struct_type,
             Self::Register(ref register) => register.get_type(),
             Self::Indirect { pointee_type, .. } => pointee_type,
-            Self::BitwiseCast { result_type, .. } => result_type,
+            Self::Convert { result_type, .. } => result_type,
             Self::GetElementPointer { result_type, .. } => result_type,
             Self::Type(..) | Self::Module(..) => TypeHandle::META,
         }
@@ -451,14 +321,30 @@ impl Constant {
 
     pub fn llvm_syntax(&self, context: &GlobalContext) -> String {
         match self {
-            Self::Undefined(..) => "undef".to_owned(),
-            Self::Poison(..) => "poison".to_owned(),
-            Self::ZeroInitializer(..) => "zeroinitializer".to_owned(),
-            Self::NullPointer(..) => "null".to_owned(),
-            Self::Boolean(value) => format!("{value}"),
-            Self::Integer(value) => format!("{value}"),
-            Self::Float(value) => value.llvm_syntax(),
-            Self::String { value, .. } => format!("{value}"),
+            Self::Undefined(..) => {
+                "undef".to_string()
+            }
+            Self::Poison(..) => {
+                "poison".to_string()
+            }
+            Self::ZeroInitializer(..) => {
+                "zeroinitializer".to_string()
+            }
+            Self::NullPointer(..) => {
+                "null".to_string()
+            }
+            Self::Boolean(value) => {
+                value.to_string()
+            }
+            Self::Integer(value) => {
+                value.llvm_syntax()
+            }
+            Self::Float(value) => {
+                value.llvm_syntax()
+            }
+            Self::String { value, .. } => {
+                value.llvm_syntax()
+            }
             Self::Array { items, .. } => {
                 let mut items_iter = items.iter();
                 if let Some(item) = items_iter.next() {
@@ -476,13 +362,13 @@ impl Constant {
                     syntax
                 }
                 else {
-                    "[]".to_owned()
+                    "[]".to_string()
                 }
             }
             Self::Structure { members, .. } => {
                 let mut members_iter = members.iter();
                 if let Some(member) = members_iter.next() {
-                    let mut syntax = "{ ".to_owned();
+                    let mut syntax = String::from("{ ");
                     syntax.push_str(context.type_llvm_syntax(member.get_type()));
                     syntax.push(' ');
                     syntax.push_str(&member.llvm_syntax(context));
@@ -496,16 +382,20 @@ impl Constant {
                     syntax
                 }
                 else {
-                    "{}".into()
+                    "{}".to_string()
                 }
             }
-            Self::Register(register) => register.llvm_syntax(),
-            Self::Indirect { pointer, .. } => format!("<ERROR indirect constant: {}>", pointer.llvm_syntax(context)),
-            Self::BitwiseCast { value, result_type: to_type } => {
+            Self::Register(register) => {
+                register.llvm_syntax()
+            }
+            Self::Indirect { pointer, .. } => {
+                format!("<ERROR indirect constant: {}>", pointer.llvm_syntax(context))
+            }
+            Self::Convert { operation, value, result_type: to_type } => {
                 let value_type = value.get_type();
                 let value_syntax = value.llvm_syntax(context);
                 format!(
-                    "bitcast ({} {value_syntax} to {})",
+                    "{operation} ({} {value_syntax} to {})",
                     context.type_llvm_syntax(value_type),
                     context.type_llvm_syntax(*to_type),
                 )
@@ -526,7 +416,9 @@ impl Constant {
                 syntax.push(')');
                 syntax
             }
-            Self::Type(..) | Self::Module(..) => "<ERROR meta constant>".to_owned(),
+            Self::Type(..) | Self::Module(..) => {
+                "<ERROR meta constant>".to_string()
+            }
         }
     }
 }

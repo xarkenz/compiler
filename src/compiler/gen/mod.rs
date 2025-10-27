@@ -250,7 +250,8 @@ impl<W: Write> Generator<W> {
         // TODO: should from_mutable be true here?
         else if self.context.can_coerce_type(got_type, target_type, true) {
             if let Value::Constant(constant) = value {
-                Ok(Value::Constant(Constant::BitwiseCast {
+                Ok(Value::Constant(Constant::Convert {
+                    operation: ConversionOperation::BitwiseCast,
                     value: Box::new(constant),
                     result_type: target_type,
                 }))
@@ -258,7 +259,12 @@ impl<W: Write> Generator<W> {
             else {
                 let value = self.coerce_to_rvalue(value, local_context)?;
                 let result = local_context.new_anonymous_register(target_type);
-                self.emitter.emit_conversion(ConversionOperation::BitwiseCast, &result, &value, &self.context)?;
+                self.emitter.emit_conversion(
+                    ConversionOperation::BitwiseCast,
+                    &result,
+                    &value,
+                    &self.context,
+                )?;
 
                 Ok(Value::Register(result))
             }
@@ -279,7 +285,8 @@ impl<W: Write> Generator<W> {
         }
         // TODO: should from_mutable be true here?
         else if self.context.can_coerce_type(got_type, target_type, true) {
-            Ok(Constant::BitwiseCast {
+            Ok(Constant::Convert {
+                operation: ConversionOperation::BitwiseCast,
                 value: Box::new(constant),
                 result_type: target_type,
             })
@@ -521,10 +528,11 @@ impl<W: Write> Generator<W> {
         }
 
         if !initializer_members.is_empty() {
-            let member_names = Vec::from_iter(initializer_members.iter().map(|(name, _)| name.clone()));
-
             return Err(Box::new(crate::Error::ExtraStructMembers {
-                member_names,
+                member_names: initializer_members
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect(),
                 type_name: type_name.clone(),
             }));
         }
@@ -1802,10 +1810,11 @@ impl<W: Write> Generator<W> {
                     }
 
                     if !initializer_members.is_empty() {
-                        let member_names = Vec::from_iter(initializer_members.iter().map(|(name, _)| name.clone()));
-
                         return Err(Box::new(crate::Error::ExtraStructMembers {
-                            member_names,
+                            member_names: initializer_members
+                                .iter()
+                                .map(|(name, _)| name.clone())
+                                .collect(),
                             type_name: type_name.clone(),
                         }));
                     }

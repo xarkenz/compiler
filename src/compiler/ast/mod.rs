@@ -41,7 +41,7 @@ impl Precedence {
 
 impl PartialOrd for Precedence {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        // Compare the internal values, then reverse the ordering because
+        // Compare the internal value, then reverse the ordering because
         // the lowest internal value represents the highest precedence
         (*self as isize).partial_cmp(&(*other as isize))
             .map(std::cmp::Ordering::reverse)

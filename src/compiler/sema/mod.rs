@@ -3,15 +3,15 @@ use crate::token::Literal;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 
-mod local_ctx;
-mod symbols;
+mod local;
+mod symbol;
 mod types;
-mod values;
+mod value;
 
-pub use local_ctx::*;
-pub use symbols::*;
+pub use local::*;
+pub use symbol::*;
 pub use types::*;
-pub use values::*;
+pub use value::*;
 
 struct TypeEntry {
     path: AbsolutePath,
