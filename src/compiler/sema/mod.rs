@@ -20,7 +20,7 @@ struct TypeEntry {
     namespace: NamespaceHandle,
     alignment: Option<Option<u64>>,
     size: Option<Option<u64>>,
-    llvm_syntax: Option<String>,
+    llvm_syntax: Option<Box<str>>,
 }
 
 pub struct GlobalContext {
@@ -31,16 +31,11 @@ pub struct GlobalContext {
     module_stack: Vec<NamespaceHandle>,
     /// Table of all types in existence.
     type_registry: Vec<TypeEntry>,
-    /// The type `Self` currently represents, or `None` if not in an `implement` block or `struct`
-    /// definition.
     current_self_type: Option<TypeHandle>,
-    /// Find a type by absolute path.
     path_base_types: HashMap<PathBaseType, TypeHandle>,
-    /// Find `*T`, `*mut T`, or `*own T`.
     pointer_types: HashMap<(TypeHandle, PointerSemantics), TypeHandle>,
-    /// Find `[T; N]` or `[T]`.
     array_types: HashMap<(TypeHandle, Option<u64>), TypeHandle>,
-    /// Find a function type by signature.
+    tuple_types: HashMap<Box<[TypeHandle]>, TypeHandle>,
     function_types: HashMap<FunctionSignature, TypeHandle>,
     /// Flag for whether the fill phase has been completed. If so, all type properties are known.
     fill_phase_complete: bool,
@@ -57,6 +52,7 @@ impl GlobalContext {
             path_base_types: HashMap::with_capacity(PRIMITIVE_TYPES.len()),
             pointer_types: HashMap::new(),
             array_types: HashMap::new(),
+            tuple_types: HashMap::new(),
             function_types: HashMap::new(),
             fill_phase_complete: false,
         };
@@ -84,6 +80,8 @@ impl GlobalContext {
         *self.module_stack.last().unwrap()
     }
 
+    /// The type `Self` currently represents, or `None` if not in an `implement` block or `struct`
+    /// definition.
     pub fn current_self_type(&self) -> Option<TypeHandle> {
         self.current_self_type
     }
@@ -212,10 +210,10 @@ impl GlobalContext {
         for segment in segments {
             match segment {
                 PathSegment::Name(name) => {
-                    path = path.into_child(name);
+                    path = path.into_child(name.clone());
                 }
                 PathSegment::RootModule => {
-                    path = AbsolutePath::from_root(SimplePath::empty());
+                    path = AbsolutePath::at_root();
                 }
                 PathSegment::SuperModule => {
                     let Some(parent) = path.parent() else {
@@ -235,7 +233,7 @@ impl GlobalContext {
                     path = self.type_path(self_type).clone();
                 }
                 PathSegment::PrimitiveType(primitive_type) => {
-                    path = AbsolutePath::from_base_type(Box::new(PathBaseType::Primitive(*primitive_type)), SimplePath::empty());
+                    path = AbsolutePath::at_base_type(Box::new(PathBaseType::Primitive(*primitive_type)));
                 }
                 PathSegment::Type(type_node) => {
                     path = self.type_path_for_type_node(type_node)?;
@@ -256,7 +254,8 @@ impl GlobalContext {
                     pointee_type: self.type_path_for_type_node(pointee_type)?,
                     semantics: *semantics,
                 };
-                Ok(AbsolutePath::from_base_type(Box::new(base_type), SimplePath::empty()))
+
+                Ok(AbsolutePath::at_base_type(Box::new(base_type)))
             }
             TypeNode::Array { item_type, length } => {
                 let base_type = PathBaseType::Array {
@@ -281,16 +280,28 @@ impl GlobalContext {
                         None => None,
                     },
                 };
-                Ok(AbsolutePath::from_base_type(Box::new(base_type), SimplePath::empty()))
+
+                Ok(AbsolutePath::at_base_type(Box::new(base_type)))
+            }
+            TypeNode::Tuple { item_types } => {
+                let base_type = PathBaseType::Tuple {
+                    item_types: Result::from_iter(item_types
+                        .iter()
+                        .map(|item_type| self.type_path_for_type_node(item_type)))?,
+                };
+
+                Ok(AbsolutePath::at_base_type(Box::new(base_type)))
             }
             TypeNode::Function { parameter_types, is_variadic, return_type } => {
                 let base_type = PathBaseType::Function {
-                    parameter_types: Result::from_iter(parameter_types.iter()
-                        .map(|type_node| self.type_path_for_type_node(type_node)))?,
+                    parameter_types: Result::from_iter(parameter_types
+                        .iter()
+                        .map(|parameter_type| self.type_path_for_type_node(parameter_type)))?,
                     is_variadic: *is_variadic,
                     return_type: self.type_path_for_type_node(return_type)?,
                 };
-                Ok(AbsolutePath::from_base_type(Box::new(base_type), SimplePath::empty()))
+
+                Ok(AbsolutePath::at_base_type(Box::new(base_type)))
             }
         }
     }
@@ -304,11 +315,11 @@ impl GlobalContext {
                 self.get_absolute_path(segments)
             }
             Node::Literal(Literal::Name(name)) => {
-                Ok(self.current_module_info().path().child(name))
+                Ok(self.current_module_info().path().child(name.clone()))
             }
             Node::Literal(Literal::PrimitiveType(primitive_type)) => {
                 let base_type = PathBaseType::Primitive(*primitive_type);
-                Ok(AbsolutePath::from_base_type(Box::new(base_type), SimplePath::empty()))
+                Ok(AbsolutePath::at_base_type(Box::new(base_type)))
             }
             _ => {
                 Err(Box::new(crate::Error::UnexpectedExpression {}))
@@ -326,8 +337,8 @@ impl GlobalContext {
         self.get_path_type(&type_path)
     }
 
-    pub fn outline_structure_type(&mut self, name: String) -> crate::Result<TypeHandle> {
-        let path = self.current_module_info().path().child(&name);
+    pub fn outline_structure_type(&mut self, name: Box<str>) -> crate::Result<TypeHandle> {
+        let path = self.current_module_info().path().child(name.clone());
         let handle = self.create_type(path, TypeRepr::Unresolved);
 
         self.current_module_info_mut().define(&name, Symbol::Type(handle))?;
@@ -400,7 +411,7 @@ impl GlobalContext {
         for segment in path.simple().segments() {
             let Some(namespace) = value.as_namespace(self) else {
                 return Err(Box::new(crate::Error::ExpectedNamespace {
-                    name: segment.clone(),
+                    name: segment.to_string(),
                 }));
             };
             value = self.get_symbol_value(namespace, segment)?;
@@ -409,12 +420,14 @@ impl GlobalContext {
         Ok(value)
     }
 
+    /// Get the type handle correponding to the given path.
     pub fn get_path_type(&mut self, path: &AbsolutePath) -> crate::Result<TypeHandle> {
         self.get_path_value(path)?.as_type().ok_or_else(|| Box::new(crate::Error::NonTypeSymbol {
             name: path.to_string(),
         }))
     }
 
+    /// Get the type handle for a base type of a path.
     pub fn get_path_base_type(&mut self, base_type: &PathBaseType) -> crate::Result<TypeHandle> {
         if let Some(handle) = self.path_base_types.get(base_type) {
             Ok(*handle)
@@ -434,6 +447,12 @@ impl GlobalContext {
                     let item_type = self.get_path_type(&item_type)?;
                     self.get_array_type(item_type, *length)
                 }
+                PathBaseType::Tuple { item_types } => {
+                    let item_types: Vec<TypeHandle> = Result::from_iter(item_types
+                        .iter()
+                        .map(|item_type| self.get_path_type(item_type)))?;
+                    self.get_tuple_type(&item_types)
+                }
                 PathBaseType::Function { parameter_types, is_variadic, return_type } => {
                     let parameter_types = Result::from_iter(parameter_types
                         .iter()
@@ -448,12 +467,13 @@ impl GlobalContext {
         }
     }
 
+    /// Get `*T` or `*mut T` from `T` and the pointer semantics.
     pub fn get_pointer_type(&mut self, pointee_type: TypeHandle, semantics: PointerSemantics) -> TypeHandle {
         if let Some(handle) = self.pointer_types.get(&(pointee_type, semantics)) {
             *handle
         }
         else {
-            let info = TypeRepr::Pointer {
+            let repr = TypeRepr::Pointer {
                 pointee_type,
                 semantics,
             };
@@ -462,18 +482,19 @@ impl GlobalContext {
                 semantics,
             }));
 
-            let handle = self.create_type(path, info);
+            let handle = self.create_type(path, repr);
             self.pointer_types.insert((pointee_type, semantics), handle);
             handle
         }
     }
 
+    /// Get `[T; N]` or `[T]` from `T` and an optional array length.
     pub fn get_array_type(&mut self, item_type: TypeHandle, length: Option<u64>) -> TypeHandle {
         if let Some(handle) = self.array_types.get(&(item_type, length)) {
             *handle
         }
         else {
-            let info = TypeRepr::Array {
+            let repr = TypeRepr::Array {
                 item_type,
                 length,
             };
@@ -482,18 +503,40 @@ impl GlobalContext {
                 length,
             }));
 
-            let handle = self.create_type(path, info);
+            let handle = self.create_type(path, repr);
             self.array_types.insert((item_type, length), handle);
             handle
         }
     }
 
+    pub fn get_tuple_type(&mut self, item_types: &[TypeHandle]) -> TypeHandle {
+        if let Some(handle) = self.tuple_types.get(item_types) {
+            *handle
+        }
+        else {
+            let repr = TypeRepr::Tuple {
+                item_types: item_types.into(),
+            };
+            let path = AbsolutePath::at_base_type(Box::new(PathBaseType::Tuple {
+                item_types: item_types
+                    .iter()
+                    .map(|&item_type| self.type_path(item_type).clone())
+                    .collect(),
+            }));
+
+            let handle = self.create_type(path, repr);
+            self.tuple_types.insert(item_types.into(), handle);
+            handle
+        }
+    }
+
+    /// Get a function type from its signature.
     pub fn get_function_type(&mut self, signature: &FunctionSignature) -> TypeHandle {
         if let Some(handle) = self.function_types.get(signature) {
             *handle
         }
         else {
-            let info = TypeRepr::Function {
+            let repr = TypeRepr::Function {
                 signature: signature.clone(),
             };
             let path = AbsolutePath::at_base_type(Box::new(PathBaseType::Function {
@@ -505,7 +548,7 @@ impl GlobalContext {
                 return_type: self.type_path(signature.return_type()).clone(),
             }));
 
-            let handle = self.create_type(path, info);
+            let handle = self.create_type(path, repr);
             self.function_types.insert(signature.clone(), handle);
             handle
         }
@@ -571,7 +614,7 @@ impl GlobalContext {
             Node::Let { ref name, ref value_type, is_mutable, ref mut global_register, .. } => {
                 let Some(value_type) = value_type else {
                     return Err(Box::new(crate::Error::MustSpecifyTypeForGlobal {
-                        name: self.current_namespace_info().path().child(name).to_string(),
+                        name: self.current_namespace_info().path().child(name.clone()).to_string(),
                     }));
                 };
                 let value_type = self.interpret_type_node(value_type)?;
@@ -592,9 +635,9 @@ impl GlobalContext {
                 let function_type = self.get_function_type(&signature);
 
                 let identifier = if is_foreign {
-                    name.clone()
+                    name.to_string()
                 } else {
-                    self.current_namespace_info().path().child(name).to_string()
+                    self.current_namespace_info().path().child(name.clone()).to_string()
                 };
                 let register = Register::new_global(identifier, function_type);
 
@@ -737,6 +780,17 @@ impl GlobalContext {
                     dependency_stack,
                 )?;
             }
+            TypeRepr::Tuple { ref item_types } => {
+                for &item_type in item_types {
+                    self.calculate_type_properties(
+                        item_type,
+                        get_alignment || get_size,
+                        get_size,
+                        get_llvm_syntax,
+                        dependency_stack,
+                    )?;
+                }
+            }
             TypeRepr::Structure { ref members, .. } => {
                 for member in members {
                     self.calculate_type_properties(
@@ -845,9 +899,16 @@ impl GlobalContext {
             TypeRepr::Pointer { .. } => Some(self.target().pointer_size()),
             TypeRepr::Function { .. } => Some(self.target().pointer_size()),
             TypeRepr::Array { item_type, .. } => self.type_alignment(item_type),
-            TypeRepr::Structure { ref members, .. } => members.iter()
+            TypeRepr::Tuple { ref item_types } => item_types
+                .iter()
+                .map(|&item_type| self.type_alignment(item_type))
+                .max()
+                .unwrap_or(Some(1)),
+            TypeRepr::Structure { ref members, .. } => members
+                .iter()
                 .map(|member| self.type_alignment(member.member_type))
-                .max().unwrap_or(Some(1)),
+                .max()
+                .unwrap_or(Some(1)),
             TypeRepr::ForeignStructure { .. } => None,
         }
     }
@@ -870,53 +931,85 @@ impl GlobalContext {
                 let item_size = self.type_size(item_type)?;
                 Some(length * item_size)
             }
+            TypeRepr::Tuple { ref item_types } => {
+                self.calculate_structure_size(item_types
+                    .iter()
+                    .cloned())
+            }
             TypeRepr::Structure { ref members, .. } => {
-                let mut current_size = 0;
-                let mut max_alignment = 1;
-
-                for member in members {
-                    let alignment = self.type_alignment(member.member_type).unwrap_or(0);
-                    max_alignment = max_alignment.max(alignment);
-
-                    // Calculate padding
-                    let intermediate_size = current_size + alignment - 1;
-                    let padded_size = intermediate_size - intermediate_size % alignment;
-                    current_size = padded_size + self.type_size(member.member_type)?;
-                }
-
-                // Pad for the largest member alignment
-                let intermediate_size = current_size + max_alignment - 1;
-                let padded_size = intermediate_size - intermediate_size % max_alignment;
-
-                Some(padded_size)
+                self.calculate_structure_size(members
+                    .iter()
+                    .map(|member| member.member_type))
             }
             TypeRepr::ForeignStructure { .. } => None,
         }
     }
 
-    fn generate_type_llvm_syntax(&self, identifier: &str, repr: &TypeRepr) -> String {
+    fn calculate_structure_size(&self, member_types: impl IntoIterator<Item = TypeHandle>) -> Option<u64> {
+        let mut current_size = 0;
+        let mut max_alignment = 1;
+
+        for member_type in member_types {
+            let alignment = self.type_alignment(member_type).unwrap_or(0);
+            max_alignment = max_alignment.max(alignment);
+
+            // Calculate padding
+            let intermediate_size = current_size + alignment - 1;
+            let padded_size = intermediate_size - intermediate_size % alignment;
+            current_size = padded_size + self.type_size(member_type)?;
+        }
+
+        // Pad for the largest member alignment
+        let intermediate_size = current_size + max_alignment - 1;
+        let padded_size = intermediate_size - intermediate_size % max_alignment;
+
+        Some(padded_size)
+    }
+
+    fn generate_type_llvm_syntax(&self, identifier: &str, repr: &TypeRepr) -> Box<str> {
         match *repr {
-            TypeRepr::Unresolved => "<ERROR unresolved type>".to_string(),
-            TypeRepr::Meta => "<ERROR meta type>".to_string(),
-            TypeRepr::Never => "void".to_string(),
-            TypeRepr::Void => "void".to_string(),
-            TypeRepr::Boolean => "i1".to_string(),
-            TypeRepr::Integer { size, .. } => format!("i{}", size * 8),
-            TypeRepr::PointerSizedInteger { .. } => panic!("unresolved pointer sized integer"),
-            TypeRepr::Float32 => "float".to_string(),
-            TypeRepr::Float64 => "double".to_string(),
+            TypeRepr::Unresolved => "<ERROR unresolved type>".into(),
+            TypeRepr::Meta => "<ERROR meta type>".into(),
+            TypeRepr::Never => "void".into(),
+            TypeRepr::Void => "void".into(),
+            TypeRepr::Boolean => "i1".into(),
+            TypeRepr::Integer { size, .. } => {
+                format!("i{}", size * 8).into_boxed_str()
+            }
+            TypeRepr::PointerSizedInteger { .. } => {
+                panic!("unresolved pointer sized integer")
+            }
+            TypeRepr::Float32 => "float".into(),
+            TypeRepr::Float64 => "double".into(),
             TypeRepr::Pointer { pointee_type, .. } => {
                 match self.type_llvm_syntax(pointee_type) {
-                    "void" => "{}*".to_string(),
-                    pointee_syntax => format!("{pointee_syntax}*")
+                    "void" => "{}*".into(),
+                    pointee_syntax => format!("{pointee_syntax}*").into_boxed_str()
                 }
             }
             TypeRepr::Array { item_type, length } => match length {
-                Some(length) => format!("[{} x {}]", length, self.type_llvm_syntax(item_type)),
-                None => self.type_llvm_syntax(item_type).to_string(),
+                Some(length) => {
+                    format!("[{} x {}]", length, self.type_llvm_syntax(item_type)).into_boxed_str()
+                }
+                None => {
+                    self.type_llvm_syntax(item_type).into()
+                }
+            }
+            TypeRepr::Tuple { ref item_types } => match *item_types.as_ref() {
+                [] => "{}".into(),
+                [first_item_type, ref item_types @ ..] => {
+                    let mut syntax = format!("{{ {}", self.type_llvm_syntax(first_item_type));
+                    for &item_type in item_types {
+                        syntax.push_str(", ");
+                        syntax.push_str(self.type_llvm_syntax(item_type));
+                    }
+                    syntax.push_str(" }");
+
+                    syntax.into_boxed_str()
+                }
             }
             TypeRepr::Structure { .. } | TypeRepr::ForeignStructure { .. } => {
-                format!("%\"type.{identifier}\"")
+                format!("%\"type.{identifier}\"").into_boxed_str()
             }
             TypeRepr::Function { ref signature } => {
                 let mut syntax = format!("{}(", self.type_llvm_syntax(signature.return_type()));
@@ -935,7 +1028,8 @@ impl GlobalContext {
                     syntax.push_str("...");
                 }
                 syntax.push_str(")*");
-                syntax
+
+                syntax.into_boxed_str()
             }
         }
     }

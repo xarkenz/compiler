@@ -128,6 +128,9 @@ impl<W: Write> Generator<W> {
             ast::Node::ArrayLiteral { items } => {
                 self.generate_array_literal(items, local_context, expected_type)?
             }
+            ast::Node::TupleLiteral { items } => {
+                self.generate_tuple_literal(items, local_context, expected_type)?
+            }
             ast::Node::StructureLiteral { structure_type: type_name, members } => {
                 self.generate_structure_literal(type_name, members, local_context)?
             }
@@ -370,7 +373,7 @@ impl<W: Write> Generator<W> {
                         .map_err(|mut error| {
                             if let crate::Error::UndefinedGlobalSymbol { .. } = error.as_ref() {
                                 *error = crate::Error::UndefinedSymbol {
-                                    name: name.clone(),
+                                    name: name.to_string(),
                                 };
                             }
                             error
@@ -442,19 +445,22 @@ impl<W: Write> Generator<W> {
 
         let mut non_constant_items = Vec::new();
 
-        let constant_items: Vec<Constant> = crate::Result::from_iter(items.iter().enumerate().map(|(index, item)| {
-            let item_value = self.generate_local_node(item, local_context, Some(item_type))?;
+        let constant_items: Vec<Constant> = crate::Result::from_iter(items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                let item_value = self.generate_local_node(item, local_context, Some(item_type))?;
 
-            if let Value::Constant(item_constant) = item_value {
-                Ok(item_constant)
-            }
-            else {
-                let item_value = self.coerce_to_rvalue(item_value, local_context)?;
-                non_constant_items.push((index, item_value));
+                if let Value::Constant(item_constant) = item_value {
+                    Ok(item_constant)
+                }
+                else {
+                    let item_value = self.coerce_to_rvalue(item_value, local_context)?;
+                    non_constant_items.push((index, item_value));
 
-                Ok(Constant::Undefined(item_type))
-            }
-        }))?;
+                    Ok(Constant::Undefined(item_type))
+                }
+            }))?;
 
         let array_pointer_type = self.context.get_pointer_type(array_type, PointerSemantics::Immutable);
         let array_pointer = local_context.new_anonymous_register(array_pointer_type);
@@ -485,11 +491,78 @@ impl<W: Write> Generator<W> {
         })
     }
 
-    fn generate_structure_literal(&mut self, type_name: &ast::Node, initializer_members: &[(String, Box<ast::Node>)], local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_tuple_literal(&mut self, items: &[Box<ast::Node>], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+        let Some(tuple_type) = expected_type else {
+            return Err(Box::new(crate::Error::UnknownTupleType {}));
+        };
+        let TypeRepr::Tuple { item_types } = tuple_type.repr(&self.context).clone() else {
+            return Err(Box::new(crate::Error::UnknownTupleType {}));
+        };
+        if items.len() != item_types.len() {
+            // TODO: better error
+            return Err(Box::new(crate::Error::UnknownTupleType {}));
+        }
+
+        let mut non_constant_items = Vec::new();
+
+        let constant_items: Vec<Constant> = crate::Result::from_iter(items
+            .iter()
+            .zip(&item_types)
+            .enumerate()
+            .map(|(index, (item, &item_type))| {
+                let item_value = self.generate_local_node(item, local_context, Some(item_type))?;
+
+                if let Value::Constant(item_constant) = item_value {
+                    Ok(item_constant)
+                }
+                else {
+                    let item_value = self.coerce_to_rvalue(item_value, local_context)?;
+                    non_constant_items.push((index, item_value));
+
+                    Ok(Constant::Undefined(item_type))
+                }
+            }))?;
+
+        let tuple_pointer_type = self.context.get_pointer_type(tuple_type, PointerSemantics::Immutable);
+        let tuple_pointer = local_context.new_anonymous_register(tuple_pointer_type);
+
+        self.emitter.emit_local_allocation(&tuple_pointer, &self.context)?;
+
+        let tuple_pointer = Value::Register(tuple_pointer);
+
+        // Store the constant items, if any
+        if non_constant_items.len() < items.len() {
+            let initial_value = Value::Constant(Constant::Tuple {
+                tuple_type,
+                items: constant_items,
+            });
+
+            self.emitter.emit_store(&initial_value, &tuple_pointer, &self.context)?;
+        }
+
+        for (index, item) in non_constant_items {
+            let item_pointer_type = self.context.get_pointer_type(item.get_type(), PointerSemantics::Mutable);
+            let item_pointer = local_context.new_anonymous_register(item_pointer_type);
+            let zero = Value::from(IntegerValue::new(IntegerType::I32, 0));
+            let index = Value::from(IntegerValue::new(IntegerType::I32, index as i128));
+
+            self.emitter.emit_get_element_pointer(&item_pointer, &tuple_pointer, &[zero, index], &self.context)?;
+            self.emitter.emit_store(&item, &item_pointer.into(), &self.context)?;
+        }
+
+        Ok(Value::Indirect {
+            pointer: Box::new(tuple_pointer),
+            pointee_type: tuple_type,
+        })
+    }
+
+    fn generate_structure_literal(&mut self, type_name: &ast::Node, initializer_members: &[(Box<str>, Box<ast::Node>)], local_context: &mut LocalContext) -> crate::Result<Value> {
         let struct_type = self.context.interpret_node_as_type(type_name)?;
 
         let TypeRepr::Structure { name: type_name, members } = struct_type.repr(&self.context).clone() else {
-            return Err(Box::new(crate::Error::NonStructType { type_name: type_name.to_string() }));
+            return Err(Box::new(crate::Error::NonStructType {
+                type_name: type_name.to_string(),
+            }));
         };
 
         let mut initializer_members = initializer_members.to_vec();
@@ -514,7 +587,7 @@ impl<W: Write> Generator<W> {
                 }
             }
             else {
-                missing_member_names.push(member.name.clone());
+                missing_member_names.push(member.name.to_string());
 
                 Ok(Constant::Undefined(member.member_type))
             }
@@ -523,7 +596,7 @@ impl<W: Write> Generator<W> {
         if !missing_member_names.is_empty() {
             return Err(Box::new(crate::Error::MissingStructMembers {
                 member_names: missing_member_names,
-                type_name: type_name.clone(),
+                type_name: type_name.to_string(),
             }))
         }
 
@@ -531,24 +604,28 @@ impl<W: Write> Generator<W> {
             return Err(Box::new(crate::Error::ExtraStructMembers {
                 member_names: initializer_members
                     .iter()
-                    .map(|(name, _)| name.clone())
+                    .map(|(name, _)| name.to_string())
                     .collect(),
-                type_name: type_name.clone(),
+                type_name: type_name.to_string(),
             }));
         }
 
         let structure_pointer_type = self.context.get_pointer_type(struct_type, PointerSemantics::Immutable);
         let structure_pointer = local_context.new_anonymous_register(structure_pointer_type);
-        let initial_value = Value::Constant(Constant::Structure {
-            struct_type,
-            members: constant_members,
-        });
 
         self.emitter.emit_local_allocation(&structure_pointer, &self.context)?;
 
         let structure_pointer = Value::Register(structure_pointer);
 
-        self.emitter.emit_store(&initial_value, &structure_pointer, &self.context)?;
+        // Store the constant members, if any
+        if non_constant_members.len() < members.len() {
+            let initial_value = Value::Constant(Constant::Structure {
+                struct_type,
+                members: constant_members,
+            });
+
+            self.emitter.emit_store(&initial_value, &structure_pointer, &self.context)?;
+        }
 
         for (index, member) in non_constant_members {
             let member_pointer_type = self.context.get_pointer_type(member.get_type(), PointerSemantics::Mutable);
@@ -1154,28 +1231,58 @@ impl<W: Write> Generator<W> {
 
     fn generate_member_access(&mut self, lhs: Value, member_name: &ast::Node, local_context: &mut LocalContext) -> crate::Result<Value> {
         let lhs_type = lhs.get_type();
-        let member_name = member_name.as_name()?;
 
         let cannot_access_error = |context: &GlobalContext| {
-            Box::new(crate::Error::ExpectedStruct {
+            Box::new(crate::Error::InvalidMemberAccess {
                 type_name: lhs_type.path(context).to_string(),
             })
         };
 
         match lhs {
             Value::Indirect { pointer, pointee_type } => match pointee_type.repr(&self.context).clone() {
-                TypeRepr::Structure { members, .. } => {
+                TypeRepr::Tuple { item_types } => {
+                    let item_index = member_name.as_integer_name()?;
                     let &TypeRepr::Pointer { semantics, .. } = pointer.get_type().repr(&self.context) else {
                         panic!("indirect value pointer is not a pointer type")
                     };
 
-                    let Some(member_index) = members.iter().position(|member| member.name == member_name) else {
-                        return Err(Box::new(crate::Error::UndefinedStructMember {
+                    let item_type = item_types
+                        .get(item_index as usize)
+                        .copied()
+                        .ok_or_else(|| Box::new(crate::Error::UndefinedMember {
+                            member_name: item_index.to_string(),
+                            type_name: lhs_type.path(&self.context).to_string(),
+                        }))?;
+                    let item_pointer_type = self.context.get_pointer_type(item_type, semantics);
+                    let item_pointer = local_context.new_anonymous_register(item_pointer_type);
+                    let indices = &[
+                        Value::from(IntegerValue::new(IntegerType::I32, 0)),
+                        Value::from(IntegerValue::new(IntegerType::I32, item_index as i128)),
+                    ];
+
+                    self.emitter.emit_get_element_pointer(&item_pointer, &pointer, indices, &self.context)?;
+
+                    Ok(Value::Indirect {
+                        pointer: Box::new(Value::Register(item_pointer)),
+                        pointee_type: item_type,
+                    })
+                }
+                TypeRepr::Structure { members, .. } => {
+                    let member_name = member_name.as_name()?;
+                    let &TypeRepr::Pointer { semantics, .. } = pointer.get_type().repr(&self.context) else {
+                        panic!("indirect value pointer is not a pointer type")
+                    };
+
+                    let (member_index, member_type) = members
+                        .iter()
+                        .enumerate()
+                        .find_map(|(index, member)| {
+                            (member.name.as_ref() == member_name).then_some((index, member.member_type))
+                        })
+                        .ok_or_else(|| Box::new(crate::Error::UndefinedMember {
                             member_name: member_name.to_string(),
                             type_name: lhs_type.path(&self.context).to_string(),
-                        }));
-                    };
-                    let member_type = members[member_index].member_type;
+                        }))?;
                     let member_pointer_type = self.context.get_pointer_type(member_type, semantics);
                     let member_pointer = local_context.new_anonymous_register(member_pointer_type);
                     let indices = &[
@@ -1571,7 +1678,7 @@ impl<W: Write> Generator<W> {
 
                 let semantics = PointerSemantics::from_flag(*is_mutable);
                 let pointer_type = self.context.get_pointer_type(parameter_type, semantics);
-                let pointer = local_context.define_indirect_symbol(name.into(), pointer_type, parameter_type);
+                let pointer = local_context.define_indirect_symbol(name.clone(), pointer_type, parameter_type);
 
                 (input_register, pointer)
             })
@@ -1680,7 +1787,7 @@ impl<W: Write> Generator<W> {
                                 .map_err(|mut error| {
                                     if let crate::Error::UndefinedGlobalSymbol { .. } = error.as_ref() {
                                         *error = crate::Error::UndefinedSymbol {
-                                            name: name.clone(),
+                                            name: name.to_string(),
                                         };
                                     }
                                     error
@@ -1692,7 +1799,7 @@ impl<W: Write> Generator<W> {
                         }
                         else {
                             return Err(Box::new(crate::Error::NonConstantSymbol {
-                                name: name.clone(),
+                                name: name.to_string(),
                             }));
                         }
                     }
@@ -1782,7 +1889,7 @@ impl<W: Write> Generator<W> {
                 let struct_type = self.context.interpret_node_as_type(structure_type)?;
 
                 if let TypeRepr::Structure { name: type_name, members } = struct_type.repr(&self.context).clone() {
-                    let mut initializer_members = initializer_members.clone();
+                    let mut initializer_members = initializer_members.to_vec();
                     let mut missing_member_names = Vec::new();
 
                     let members: Vec<Constant> = crate::Result::from_iter(members.iter().map(|member| {
@@ -1796,7 +1903,7 @@ impl<W: Write> Generator<W> {
                             Ok(member_value)
                         }
                         else {
-                            missing_member_names.push(member.name.clone());
+                            missing_member_names.push(member.name.to_string());
 
                             Ok(Constant::Undefined(member.member_type))
                         }
@@ -1805,7 +1912,7 @@ impl<W: Write> Generator<W> {
                     if !missing_member_names.is_empty() {
                         return Err(Box::new(crate::Error::MissingStructMembers {
                             member_names: missing_member_names,
-                            type_name: type_name.clone(),
+                            type_name: type_name.to_string(),
                         }))
                     }
 
@@ -1813,9 +1920,9 @@ impl<W: Write> Generator<W> {
                         return Err(Box::new(crate::Error::ExtraStructMembers {
                             member_names: initializer_members
                                 .iter()
-                                .map(|(name, _)| name.clone())
+                                .map(|(name, _)| name.to_string())
                                 .collect(),
-                            type_name: type_name.clone(),
+                            type_name: type_name.to_string(),
                         }));
                     }
 

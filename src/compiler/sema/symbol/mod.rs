@@ -2,11 +2,11 @@ use super::*;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct SimplePath {
-    segments: Vec<String>,
+    segments: Vec<Box<str>>,
 }
 
 impl SimplePath {
-    pub fn new(segments: Vec<String>) -> Self {
+    pub fn new(segments: Vec<Box<str>>) -> Self {
         Self {
             segments,
         }
@@ -16,7 +16,7 @@ impl SimplePath {
         Self::new(Vec::new())
     }
 
-    pub fn segments(&self) -> &[String] {
+    pub fn segments(&self) -> &[Box<str>] {
         &self.segments
     }
 
@@ -30,19 +30,19 @@ impl SimplePath {
         })
     }
 
-    pub fn child(&self, name: impl Into<String>) -> Self {
+    pub fn child(&self, name: impl Into<Box<str>>) -> Self {
         let mut segments = self.segments.clone();
         segments.push(name.into());
         Self::new(segments)
     }
 
-    pub fn into_child(mut self, name: impl Into<String>) -> Self {
+    pub fn into_child(mut self, name: impl Into<Box<str>>) -> Self {
         self.segments.push(name.into());
         self
     }
 
     pub fn tail_name(&self) -> Option<&str> {
-        self.segments().last().map(String::as_str)
+        self.segments().last().map(Box::as_ref)
     }
 }
 
@@ -69,8 +69,11 @@ pub enum PathBaseType {
         item_type: AbsolutePath,
         length: Option<u64>,
     },
+    Tuple {
+        item_types: Box<[AbsolutePath]>
+    },
     Function {
-        parameter_types: Vec<AbsolutePath>,
+        parameter_types: Box<[AbsolutePath]>,
         is_variadic: bool,
         return_type: AbsolutePath,
     },
@@ -91,6 +94,17 @@ impl std::fmt::Display for PathBaseType {
             }
             Self::Array { item_type, length: _none } => {
                 write!(f, "[{item_type}]")
+            }
+            Self::Tuple { item_types } => match item_types.as_ref() {
+                [] => write!(f, "()"),
+                [item_type] => write!(f, "({item_type},)"),
+                [item_type, item_types @ ..] => {
+                    write!(f, "({item_type}")?;
+                    for item_type in item_types {
+                        write!(f, ", {item_type}")?;
+                    }
+                    write!(f, ")")
+                }
             }
             Self::Function { parameter_types, is_variadic, return_type } => {
                 write!(f, "function(")?;
@@ -160,14 +174,14 @@ impl AbsolutePath {
         })
     }
 
-    pub fn child(&self, name: impl Into<String>) -> Self {
+    pub fn child(&self, name: impl Into<Box<str>>) -> Self {
         Self::new(
             self.base_type().map(|base_type| Box::new(base_type.clone())),
             self.simple().child(name),
         )
     }
 
-    pub fn into_child(mut self, name: impl Into<String>) -> Self {
+    pub fn into_child(mut self, name: impl Into<Box<str>>) -> Self {
         self.simple = self.simple.into_child(name);
         self
     }
@@ -225,7 +239,7 @@ impl NamespaceHandle {
 #[derive(Clone, Debug)]
 pub struct NamespaceInfo {
     path: AbsolutePath,
-    symbols: HashMap<String, Symbol>,
+    symbols: HashMap<Box<str>, Symbol>,
     glob_imports: Vec<AbsolutePath>,
 }
 

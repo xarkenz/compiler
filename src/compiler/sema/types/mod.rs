@@ -19,7 +19,7 @@ impl PointerSemantics {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct StructureMember {
-    pub name: String,
+    pub name: Box<str>,
     pub member_type: TypeHandle,
 }
 
@@ -94,14 +94,18 @@ pub enum TypeRepr {
         item_type: TypeHandle,
         length: Option<u64>,
     },
+    /// The representation for tuple types.
+    Tuple {
+        item_types: Box<[TypeHandle]>,
+    },
     /// The representation for structure types whose member types are known.
     Structure {
-        name: String,
+        name: Box<str>,
         members: Box<[StructureMember]>,
     },
     /// The representation for structure types whose layout details are unknown (opaque).
     ForeignStructure {
-        name: String,
+        name: Box<str>,
     },
     /// The representation for function types, which are defined by their
     /// [signature](FunctionSignature).

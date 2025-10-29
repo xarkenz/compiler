@@ -67,7 +67,46 @@ define i64 @"<usize>::max"(i64 %0, i64 %1) {
 
 %"type.::Str" = type { i8*, i64 }
 
+define { i8*, i64 } @"::Str::raw_parts"(%"type.::Str"* %0) {
+.block.0:
+	%self = alloca %"type.::Str"*
+	store %"type.::Str"* %0, %"type.::Str"** %self
+	%1 = load %"type.::Str"*, %"type.::Str"** %self
+	%2 = getelementptr inbounds %"type.::Str", %"type.::Str"* %1, i32 0, i32 0
+	%3 = load i8*, i8** %2
+	%4 = load %"type.::Str"*, %"type.::Str"** %self
+	%5 = getelementptr inbounds %"type.::Str", %"type.::Str"* %4, i32 0, i32 1
+	%6 = load i64, i64* %5
+	%7 = alloca { i8*, i64 }
+	%8 = getelementptr inbounds { i8*, i64 }, { i8*, i64 }* %7, i32 0, i32 0
+	store i8* %3, i8** %8
+	%9 = getelementptr inbounds { i8*, i64 }, { i8*, i64 }* %7, i32 0, i32 1
+	store i64 %6, i64* %9
+	%10 = load { i8*, i64 }, { i8*, i64 }* %7
+	ret { i8*, i64 } %10
+}
+
 %"type.::MutStr" = type { i8*, i64 }
+
+define %"type.::Str" @"::MutStr::as_str"(%"type.::MutStr"* %0) {
+.block.0:
+	%self = alloca %"type.::MutStr"*
+	store %"type.::MutStr"* %0, %"type.::MutStr"** %self
+	%1 = load %"type.::MutStr"*, %"type.::MutStr"** %self
+	%2 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %1, i32 0, i32 0
+	%3 = load i8*, i8** %2
+	%4 = bitcast i8* %3 to i8*
+	%5 = load %"type.::MutStr"*, %"type.::MutStr"** %self
+	%6 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %5, i32 0, i32 1
+	%7 = load i64, i64* %6
+	%8 = alloca %"type.::Str"
+	%9 = getelementptr inbounds %"type.::Str", %"type.::Str"* %8, i32 0, i32 0
+	store i8* %4, i8** %9
+	%10 = getelementptr inbounds %"type.::Str", %"type.::Str"* %8, i32 0, i32 1
+	store i64 %7, i64* %10
+	%11 = load %"type.::Str", %"type.::Str"* %8
+	ret %"type.::Str" %11
+}
 
 %"type.::String" = type { %"type.::MutStr", i64 }
 
@@ -94,21 +133,8 @@ define %"type.::Str" @"::String::as_str"(%"type.::String"* %0) {
 	store %"type.::String"* %0, %"type.::String"** %self
 	%1 = load %"type.::String"*, %"type.::String"** %self
 	%2 = getelementptr inbounds %"type.::String", %"type.::String"* %1, i32 0, i32 0
-	%3 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %2, i32 0, i32 0
-	%4 = load i8*, i8** %3
-	%5 = bitcast i8* %4 to i8*
-	%6 = load %"type.::String"*, %"type.::String"** %self
-	%7 = getelementptr inbounds %"type.::String", %"type.::String"* %6, i32 0, i32 0
-	%8 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %7, i32 0, i32 1
-	%9 = load i64, i64* %8
-	%10 = alloca %"type.::Str"
-	store %"type.::Str" { i8* undef, i64 undef }, %"type.::Str"* %10
-	%11 = getelementptr inbounds %"type.::Str", %"type.::Str"* %10, i32 0, i32 0
-	store i8* %5, i8** %11
-	%12 = getelementptr inbounds %"type.::Str", %"type.::Str"* %10, i32 0, i32 1
-	store i64 %9, i64* %12
-	%13 = load %"type.::Str", %"type.::Str"* %10
-	ret %"type.::Str" %13
+	%3 = call %"type.::Str"(%"type.::MutStr"*) @"::MutStr::as_str"(%"type.::MutStr"* %2)
+	ret %"type.::Str" %3
 }
 
 define void @"::String::grow_by"(%"type.::String"* %0, i64 %1) {
@@ -453,7 +479,6 @@ define void @"::omg_linked_list"(i8** %0, i64 %1) {
 	%11 = load i8*, i8** %10
 	%12 = load %"type.::Node"*, %"type.::Node"** %head
 	%13 = alloca %"type.::Node"
-	store %"type.::Node" { i8* undef, %"type.::Node"* undef }, %"type.::Node"* %13
 	%14 = getelementptr inbounds %"type.::Node", %"type.::Node"* %13, i32 0, i32 0
 	store i8* %11, i8** %14
 	%15 = getelementptr inbounds %"type.::Node", %"type.::Node"* %13, i32 0, i32 1

@@ -58,7 +58,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
     }
 
     pub fn get_token(&self) -> crate::Result<&Token> {
-        self.current_token().ok_or_else(|| Box::new(crate::Error::ExpectedToken { span: self.current_span() }))
+        self.current_token().ok_or_else(|| Box::new(crate::Error::ExpectedToken {
+            span: self.current_span(),
+        }))
     }
 
     pub fn expect_token<'b>(&self, allowed: &'b [Token]) -> crate::Result<&'b Token> {
@@ -72,14 +74,16 @@ impl<'a, T: BufRead> Parser<'a, T> {
             }))
     }
 
-    pub fn expect_identifier(&self) -> crate::Result<String> {
+    pub fn expect_identifier(&self) -> crate::Result<Box<str>> {
         match self.get_token()? {
             Token::Literal(Literal::Name(name)) => Ok(name.clone()),
-            _ => Err(Box::new(crate::Error::ExpectedIdentifier { span: self.current_span() }))
+            _ => Err(Box::new(crate::Error::ExpectedIdentifier {
+                span: self.current_span(),
+            }))
         }
     }
 
-    pub fn parse_path(&mut self, first_segment: Option<PathSegment>, allow_glob: bool) -> crate::Result<(Vec<PathSegment>, bool)> {
+    pub fn parse_path(&mut self, first_segment: Option<PathSegment>, allow_glob: bool) -> crate::Result<(Box<[PathSegment]>, bool)> {
         let mut segments = Vec::from_iter(first_segment);
         let mut is_glob = false;
 
@@ -130,7 +134,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
             self.scan_token()?;
         }
 
-        Ok((segments, is_glob))
+        Ok((segments.into_boxed_slice(), is_glob))
     }
 
     pub fn parse_operand(&mut self, allowed_ends: &[Token], strict_ends: bool) -> crate::Result<Box<Node>> {
@@ -158,16 +162,8 @@ impl<'a, T: BufRead> Parser<'a, T> {
         }
         else {
             let mut operand = match token {
-                Token::ParenLeft => {
-                    self.scan_token()?;
-                    let content = self.parse_expression(None, &[Token::ParenRight], true)?;
-                    self.scan_token()?;
-
-                    Box::new(Node::Grouping {
-                        content,
-                    })
-                }
                 Token::Literal(literal) => {
+                    // Token literal
                     let literal = literal.clone();
                     let literal_span = self.current_span();
                     self.scan_token()?;
@@ -191,6 +187,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     }
                 }
                 Token::SquareLeft => {
+                    // Array literal
                     self.scan_token()?;
                     let mut items = Vec::new();
                     while !matches!(self.current_token(), Some(Token::SquareRight)) {
@@ -204,19 +201,62 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.scan_token()?;
 
                     Box::new(Node::ArrayLiteral {
-                        items,
+                        items: items.into_boxed_slice(),
                     })
                 }
+                Token::ParenLeft => {
+                    self.scan_token()?;
+                    if let Some(Token::ParenRight) = self.current_token() {
+                        // Unit type
+                        self.scan_token()?;
+
+                        Box::new(Node::TupleLiteral {
+                            items: Box::new([]),
+                        })
+                    }
+                    else {
+                        let first_item = self.parse_expression(None, &[Token::Comma, Token::ParenRight], true)?;
+                        if let Some(Token::Comma) = self.current_token() {
+                            // Tuple literal
+                            self.scan_token()?;
+                            let mut items = vec![first_item];
+                            while !matches!(self.current_token(), Some(Token::ParenRight)) {
+                                let item = self.parse_expression(None, &[Token::Comma, Token::ParenRight], true)?;
+                                items.push(item);
+
+                                if let Some(Token::Comma) = self.current_token() {
+                                    self.scan_token()?;
+                                }
+                            }
+                            self.scan_token()?;
+
+                            Box::new(Node::TupleLiteral {
+                                items: items.into_boxed_slice(),
+                            })
+                        }
+                        else {
+                            // Grouping parentheses
+                            self.scan_token()?;
+
+                            Box::new(Node::Grouping {
+                                content: first_item,
+                            })
+                        }
+                    }
+                }
                 Token::Colon2 | Token::Super | Token::Module | Token::SelfType | Token::AngleLeft => {
+                    // Path literal
                     Box::new(Node::Path {
                         segments: self.parse_path(None, false)?.0,
                     })
                 }
                 Token::CurlyLeft => {
+                    // Scope expression
                     self.scan_token()?;
                     self.parse_scope()?
                 }
                 Token::If => {
+                    // Conditional expression
                     self.scan_token()?;
                     self.expect_token(&[Token::ParenLeft])?;
                     self.scan_token()?;
@@ -247,6 +287,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     }));
                 }
                 Token::While => {
+                    // While loop expression
                     self.scan_token()?;
                     self.expect_token(&[Token::ParenLeft])?;
                     self.scan_token()?;
@@ -260,14 +301,17 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     })
                 }
                 Token::Break => {
+                    // Break expression
                     self.scan_token()?;
                     Box::new(Node::Break)
                 }
                 Token::Continue => {
+                    // Continue expression
                     self.scan_token()?;
                     Box::new(Node::Continue)
                 }
                 Token::Return => {
+                    // Return expression
                     self.scan_token()?;
                     let value = if allowed_ends.contains(self.get_token()?) {
                         None
@@ -286,6 +330,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 }
             };
 
+            // Greedily parse postfix operators, if any
             while let Some(operation) = UnaryOperation::from_postfix_token(self.get_token()?) {
                 operand = Box::new(Node::Unary {
                     operation,
@@ -334,7 +379,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
         };
 
         Ok(Box::new(Node::Scope {
-            statements,
+            statements: statements.into_boxed_slice(),
             tail,
         }))
     }
@@ -408,7 +453,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
                 lhs = Box::new(Node::Call {
                     callee: lhs,
-                    arguments,
+                    arguments: arguments.into_boxed_slice(),
                 });
             }
             else if let Token::CurlyLeft = token {
@@ -439,7 +484,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
                 lhs = Box::new(Node::StructureLiteral {
                     structure_type: lhs,
-                    members,
+                    members: members.into_boxed_slice(),
                 });
             }
             else {
@@ -505,6 +550,47 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     length,
                 })
             }
+            Token::ParenLeft => {
+                self.scan_token()?;
+                let result;
+                if let Some(Token::ParenRight) = self.current_token() {
+                    // Unit type
+                    result = TypeNode::Tuple {
+                        item_types: Box::new([]),
+                    };
+                }
+                else {
+                    let first_item_type = self.parse_type(Some(&[Token::Comma, Token::ParenRight]))?;
+                    if let Some(Token::Comma) = self.current_token() {
+                        // Tuple type
+                        self.scan_token()?;
+
+                        let mut item_types = vec![first_item_type];
+                        while !matches!(self.current_token(), Some(Token::ParenRight)) {
+                            item_types.push(self.parse_type(Some(&[Token::Comma, Token::ParenRight]))?);
+
+                            if let Some(Token::Comma) = self.current_token() {
+                                self.scan_token()?;
+                            }
+                        }
+                        self.scan_token()?;
+
+                        result = TypeNode::Tuple {
+                            item_types: item_types.into_boxed_slice(),
+                        };
+                    }
+                    else {
+                        // Grouping parentheses
+                        result = first_item_type;
+                    }
+                }
+
+                if let Some(allowed_ends) = allowed_ends {
+                    self.expect_token(allowed_ends)?;
+                }
+
+                Ok(result)
+            }
             Token::Function => {
                 self.scan_token()?;
                 self.expect_token(&[Token::ParenLeft])?;
@@ -536,10 +622,10 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 }
                 else {
                     return_type = Box::new(TypeNode::Path {
-                        segments: vec![PathSegment::PrimitiveType(crate::sema::PrimitiveType {
+                        segments: Box::new([PathSegment::PrimitiveType(crate::sema::PrimitiveType {
                             name: "void",
                             handle: crate::sema::TypeHandle::VOID
-                        })],
+                        })]),
                     });
 
                     if let Some(allowed_ends) = allowed_ends {
@@ -548,7 +634,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 }
 
                 Ok(TypeNode::Function {
-                    parameter_types,
+                    parameter_types: parameter_types.into_boxed_slice(),
                     is_variadic: is_varargs,
                     return_type,
                 })
@@ -686,10 +772,10 @@ impl<'a, T: BufRead> Parser<'a, T> {
             }
         } else {
             TypeNode::Path {
-                segments: vec![PathSegment::PrimitiveType(PrimitiveType {
+                segments: Box::new([PathSegment::PrimitiveType(PrimitiveType {
                     name: "void",
                     handle: TypeHandle::VOID
-                })],
+                })]),
             }
         };
 
@@ -704,7 +790,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
         Ok(Box::new(Node::Function {
             name,
             is_foreign,
-            parameters,
+            parameters: parameters.into_boxed_slice(),
             is_variadic,
             return_type,
             body,
@@ -759,7 +845,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
         Ok(Box::new(Node::Structure {
             name,
             is_foreign,
-            members,
+            members: members.map(Vec::into_boxed_slice),
             self_type,
         }))
     }
@@ -820,7 +906,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
                 Ok(Some(Box::new(Node::Implement {
                     self_type,
-                    statements,
+                    statements: statements.into_boxed_slice(),
                 })))
             }
             Some(Token::Module) if !is_implementation => {
@@ -864,7 +950,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
                 Ok(Some(Box::new(Node::Module {
                     name,
-                    statements,
+                    statements: statements.into_boxed_slice(),
                     namespace,
                 })))
             }
@@ -897,7 +983,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
                     let path = global_context.get_absolute_path(&segments)?;
                     let import_name = match alias.as_ref() {
-                        Some(alias) => alias.as_str(),
+                        Some(alias) => alias.as_ref(),
                         None => match path.tail_name() {
                             Some(name) => name,
                             None => {

@@ -251,13 +251,20 @@ impl BinaryOperation {
 
 #[derive(Clone, Debug)]
 pub enum PathSegment {
-    Name(String),
+    Name(Box<str>),
     RootModule,
     SuperModule,
     SelfModule,
     SelfType,
     PrimitiveType(crate::sema::PrimitiveType),
     Type(Box<TypeNode>),
+}
+
+impl PathSegment {
+    pub fn path_to_string(segments: &[PathSegment]) -> String {
+        let segments: Vec<String> = segments.iter().map(PathSegment::to_string).collect();
+        segments.join("::")
+    }
 }
 
 impl std::fmt::Display for PathSegment {
@@ -274,17 +281,10 @@ impl std::fmt::Display for PathSegment {
     }
 }
 
-impl PathSegment {
-    pub fn path_to_string(segments: &[PathSegment]) -> String {
-        let segments: Vec<String> = segments.iter().map(PathSegment::to_string).collect();
-        segments.join("::")
-    }
-}
-
 #[derive(Clone, Debug)]
 pub enum TypeNode {
     Path {
-        segments: Vec<PathSegment>,
+        segments: Box<[PathSegment]>,
     },
     Pointer {
         pointee_type: Box<TypeNode>,
@@ -294,8 +294,11 @@ pub enum TypeNode {
         item_type: Box<TypeNode>,
         length: Option<Box<Node>>,
     },
+    Tuple {
+        item_types: Box<[TypeNode]>,
+    },
     Function {
-        parameter_types: Vec<TypeNode>,
+        parameter_types: Box<[TypeNode]>,
         is_variadic: bool,
         return_type: Box<TypeNode>,
     },
@@ -316,6 +319,17 @@ impl std::fmt::Display for TypeNode {
             }
             Self::Array { item_type, length: _none } => {
                 write!(f, "[{item_type}]")
+            }
+            Self::Tuple { item_types } => match item_types.as_ref() {
+                [] => write!(f, "()"),
+                [item_type] => write!(f, "({item_type},)"),
+                [item_type, item_types @ ..] => {
+                    write!(f, "({item_type}")?;
+                    for item_type in item_types {
+                        write!(f, ", {item_type}")?;
+                    }
+                    write!(f, ")")
+                }
             }
             Self::Function { parameter_types, is_variadic, return_type } => {
                 write!(f, "function(")?;
@@ -340,14 +354,14 @@ impl std::fmt::Display for TypeNode {
 
 #[derive(Clone, Debug)]
 pub struct FunctionParameterNode {
-    pub name: String,
+    pub name: Box<str>,
     pub type_node: TypeNode,
     pub is_mutable: bool,
 }
 
 #[derive(Clone, Debug)]
 pub struct StructureMemberNode {
-    pub name: String,
+    pub name: Box<str>,
     pub type_node: TypeNode,
 }
 
@@ -356,7 +370,7 @@ pub enum Node {
     Literal(Literal),
     Type(TypeNode),
     Path {
-        segments: Vec<PathSegment>,
+        segments: Box<[PathSegment]>,
     },
     Unary {
         operation: UnaryOperation,
@@ -369,20 +383,23 @@ pub enum Node {
     },
     Call {
         callee: Box<Node>,
-        arguments: Vec<Box<Node>>,
+        arguments: Box<[Box<Node>]>,
     },
     ArrayLiteral {
-        items: Vec<Box<Node>>,
+        items: Box<[Box<Node>]>,
+    },
+    TupleLiteral {
+        items: Box<[Box<Node>]>,
     },
     StructureLiteral {
         structure_type: Box<Node>,
-        members: Vec<(String, Box<Node>)>,
+        members: Box<[(Box<str>, Box<Node>)]>,
     },
     Grouping {
         content: Box<Node>,
     },
     Scope {
-        statements: Vec<Box<Node>>,
+        statements: Box<[Box<Node>]>,
         tail: Option<Box<Node>>,
     },
     Conditional {
@@ -400,48 +417,48 @@ pub enum Node {
         value: Option<Box<Node>>,
     },
     Let {
-        name: String,
+        name: Box<str>,
         value_type: Option<TypeNode>,
         is_mutable: bool,
         value: Option<Box<Node>>,
         global_register: Option<Register>,
     },
     Constant {
-        name: String,
+        name: Box<str>,
         value_type: TypeNode,
         value: Box<Node>,
         global_register: Option<Register>,
     },
     Function {
-        name: String,
+        name: Box<str>,
         is_foreign: bool,
-        parameters: Vec<FunctionParameterNode>,
+        parameters: Box<[FunctionParameterNode]>,
         is_variadic: bool,
         return_type: TypeNode,
         body: Option<Box<Node>>,
         global_register: Option<Register>,
     },
     Structure {
-        name: String,
+        name: Box<str>,
         is_foreign: bool,
-        members: Option<Vec<StructureMemberNode>>,
+        members: Option<Box<[StructureMemberNode]>>,
         self_type: TypeHandle,
     },
     Implement {
         self_type: TypeNode,
-        statements: Vec<Box<Node>>,
+        statements: Box<[Box<Node>]>,
     },
     Module {
-        name: String,
-        statements: Vec<Box<Node>>,
+        name: Box<str>,
+        statements: Box<[Box<Node>]>,
         namespace: NamespaceHandle,
     },
     Import {
-        segments: Vec<PathSegment>,
-        alias: Option<String>,
+        segments: Box<[PathSegment]>,
+        alias: Option<Box<str>>,
     },
     GlobImport {
-        segments: Vec<PathSegment>,
+        segments: Box<[PathSegment]>,
     },
 }
 
@@ -450,6 +467,19 @@ impl Node {
         match self {
             Self::Literal(Literal::Name(name)) => {
                 Ok(name)
+            }
+            _ => {
+                todo!("need to integrate `Span` into AST")
+                // Err(Box::new(crate::Error::ExpectedIdentifier { span: ??? }))
+            }
+        }
+    }
+
+    pub fn as_integer_name(&self) -> crate::Result<i32> {
+        match self {
+            &Self::Literal(Literal::Integer(value, None))
+            if value >= 0 && value <= i32::MAX as i128 => {
+                Ok(value as i32)
             }
             _ => {
                 todo!("need to integrate `Span` into AST")
@@ -524,6 +554,17 @@ impl std::fmt::Display for Node {
                     }
                 }
                 write!(f, "]")
+            }
+            Self::TupleLiteral { items } => match items.as_ref() {
+                [] => write!(f, "()"),
+                [item] => write!(f, "({item},)"),
+                [item, items @ ..] => {
+                    write!(f, "({item}")?;
+                    for item in items {
+                        write!(f, ", {item}")?;
+                    }
+                    write!(f, ")")
+                }
             }
             Self::StructureLiteral { structure_type, members } => {
                 write!(f, "({structure_type} {{")?;

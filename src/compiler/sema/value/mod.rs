@@ -8,11 +8,11 @@ pub use integer::*;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct StringValue {
-    bytes: Vec<u8>,
+    bytes: Box<[u8]>,
 }
 
 impl StringValue {
-    pub fn new(bytes: Vec<u8>) -> Self {
+    pub fn new(bytes: Box<[u8]>) -> Self {
         Self {
             bytes,
         }
@@ -50,25 +50,38 @@ impl std::fmt::Display for StringValue {
     }
 }
 
+fn quote_identifier_if_needed(mut identifier: String) -> Box<str> {
+    let needs_quotes = identifier.contains(|ch| {
+        !matches!(ch, '0'..='9' | 'A'..='Z' | 'a'..='z' | '-' | '_' | '.' | '$')
+    });
+
+    if needs_quotes {
+        identifier.insert(0, '"');
+        identifier.push('"');
+    }
+
+    identifier.into_boxed_str()
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Register {
-    identifier: String,
+    identifier: Box<str>,
     value_type: TypeHandle,
     is_global: bool,
 }
 
 impl Register {
-    pub fn new_global(identifier: String, value_type: TypeHandle) -> Self {
+    pub fn new_global(raw_identifier: String, value_type: TypeHandle) -> Self {
         Self {
-            identifier: Self::quote_identifier_if_needed(identifier),
+            identifier: quote_identifier_if_needed(raw_identifier),
             value_type,
             is_global: true,
         }
     }
 
-    pub fn new_local(identifier: String, value_type: TypeHandle) -> Self {
+    pub fn new_local(raw_identifier: String, value_type: TypeHandle) -> Self {
         Self {
-            identifier: Self::quote_identifier_if_needed(identifier),
+            identifier: quote_identifier_if_needed(raw_identifier),
             value_type,
             is_global: false,
         }
@@ -94,19 +107,6 @@ impl Register {
             format!("%{}", self.identifier())
         }
     }
-
-    fn quote_identifier_if_needed(mut identifier: String) -> String {
-        let needs_quotes = identifier.contains(|ch| !matches!(ch,
-            '0'..='9' | 'A'..='Z' | 'a'..='z' | '-' | '_' | '.' | '$'
-        ));
-
-        if needs_quotes {
-            identifier.insert(0, '"');
-            identifier.push('"');
-        }
-
-        identifier
-    }
 }
 
 impl PartialOrd for Register {
@@ -118,6 +118,27 @@ impl PartialOrd for Register {
 impl Ord for Register {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.identifier().cmp(other.identifier())
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct Label {
+    identifier: Box<str>,
+}
+
+impl Label {
+    pub fn new(raw_identifier: String) -> Self {
+        Self {
+            identifier: quote_identifier_if_needed(raw_identifier),
+        }
+    }
+
+    pub fn identifier(&self) -> &str {
+        &self.identifier
+    }
+
+    pub fn llvm_syntax(&self) -> String {
+        format!("%{}", self.identifier())
     }
 }
 
@@ -250,6 +271,10 @@ pub enum Constant {
     },
     Array {
         array_type: TypeHandle,
+        items: Vec<Self>,
+    },
+    Tuple {
+        tuple_type: TypeHandle,
         items: Vec<Constant>,
     },
     Structure {
@@ -310,6 +335,7 @@ impl Constant {
             Self::Float(ref float) => float.float_type().as_handle(),
             Self::String { array_type, .. } => array_type,
             Self::Array { array_type, .. } => array_type,
+            Self::Tuple { tuple_type, .. } => tuple_type,
             Self::Structure { struct_type, .. } => struct_type,
             Self::Register(ref register) => register.get_type(),
             Self::Indirect { pointee_type, .. } => pointee_type,
@@ -346,44 +372,13 @@ impl Constant {
                 value.llvm_syntax()
             }
             Self::Array { items, .. } => {
-                let mut items_iter = items.iter();
-                if let Some(item) = items_iter.next() {
-                    let mut syntax = String::from("[ ");
-                    syntax.push_str(context.type_llvm_syntax(item.get_type()));
-                    syntax.push(' ');
-                    syntax.push_str(&item.llvm_syntax(context));
-                    for item in items_iter {
-                        syntax.push_str(", ");
-                        syntax.push_str(context.type_llvm_syntax(item.get_type()));
-                        syntax.push(' ');
-                        syntax.push_str(&item.llvm_syntax(context));
-                    }
-                    syntax.push_str(" ]");
-                    syntax
-                }
-                else {
-                    "[]".to_string()
-                }
+                Self::array_llvm_syntax(items, context)
+            }
+            Self::Tuple { items, .. } => {
+                Self::structure_llvm_syntax(items, context)
             }
             Self::Structure { members, .. } => {
-                let mut members_iter = members.iter();
-                if let Some(member) = members_iter.next() {
-                    let mut syntax = String::from("{ ");
-                    syntax.push_str(context.type_llvm_syntax(member.get_type()));
-                    syntax.push(' ');
-                    syntax.push_str(&member.llvm_syntax(context));
-                    for member in members_iter {
-                        syntax.push_str(", ");
-                        syntax.push_str(context.type_llvm_syntax(member.get_type()));
-                        syntax.push(' ');
-                        syntax.push_str(&member.llvm_syntax(context));
-                    }
-                    syntax.push_str(" }");
-                    syntax
-                }
-                else {
-                    "{}".to_string()
-                }
+                Self::structure_llvm_syntax(members, context)
             }
             Self::Register(register) => {
                 register.llvm_syntax()
@@ -419,6 +414,48 @@ impl Constant {
             Self::Type(..) | Self::Module(..) => {
                 "<ERROR meta constant>".to_string()
             }
+        }
+    }
+    
+    fn array_llvm_syntax<'a>(items: impl IntoIterator<Item = &'a Self>, context: &GlobalContext) -> String {
+        let mut items = items.into_iter();
+        if let Some(item) = items.next() {
+            let mut syntax = String::from("[ ");
+            syntax.push_str(context.type_llvm_syntax(item.get_type()));
+            syntax.push(' ');
+            syntax.push_str(&item.llvm_syntax(context));
+            for item in items {
+                syntax.push_str(", ");
+                syntax.push_str(context.type_llvm_syntax(item.get_type()));
+                syntax.push(' ');
+                syntax.push_str(&item.llvm_syntax(context));
+            }
+            syntax.push_str(" ]");
+            syntax
+        }
+        else {
+            "[]".to_string()
+        }
+    }
+
+    fn structure_llvm_syntax<'a>(members: impl IntoIterator<Item = &'a Self>, context: &GlobalContext) -> String {
+        let mut members = members.into_iter();
+        if let Some(member) = members.next() {
+            let mut syntax = String::from("{ ");
+            syntax.push_str(context.type_llvm_syntax(member.get_type()));
+            syntax.push(' ');
+            syntax.push_str(&member.llvm_syntax(context));
+            for member in members {
+                syntax.push_str(", ");
+                syntax.push_str(context.type_llvm_syntax(member.get_type()));
+                syntax.push(' ');
+                syntax.push_str(&member.llvm_syntax(context));
+            }
+            syntax.push_str(" }");
+            syntax
+        }
+        else {
+            "{}".to_string()
         }
     }
 }
@@ -571,26 +608,5 @@ impl From<Constant> for Value {
 impl From<Register> for Value {
     fn from(register: Register) -> Self {
         Self::Register(register)
-    }
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub struct Label {
-    identifier: String,
-}
-
-impl Label {
-    pub fn new(identifier: String) -> Self {
-        Self {
-            identifier,
-        }
-    }
-
-    pub fn identifier(&self) -> &str {
-        &self.identifier
-    }
-
-    pub fn llvm_syntax(&self) -> String {
-        format!("%{}", self.identifier())
     }
 }

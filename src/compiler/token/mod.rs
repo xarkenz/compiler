@@ -4,7 +4,7 @@ pub mod scan;
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Literal {
-    Name(String),
+    Name(Box<str>),
     Integer(i128, Option<IntegerType>),
     Float(f64, Option<FloatType>),
     Boolean(bool),

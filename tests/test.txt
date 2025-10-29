@@ -25,7 +25,8 @@ implement usize {
     function max(self: Self, other: Self) -> Self {
         if (self > other) {
             self
-        } else {
+        }
+        else {
             other
         }
     }
@@ -36,9 +37,24 @@ struct Str {
     length: usize,
 }
 
+implement Str {
+    function raw_parts(self: *Self) -> (*[u8], usize) {
+        (self.ptr, self.length)
+    }
+}
+
 struct MutStr {
     ptr: *mut [u8],
     length: usize,
+}
+
+implement MutStr {
+    function as_str(self: *Self) -> Str {
+        Str {
+            ptr: self.ptr,
+            length: self.length,
+        }
+    }
 }
 
 struct String {
@@ -62,10 +78,7 @@ implement String {
     }
 
     function as_str(self: *Self) -> Str {
-        Str {
-            ptr: self.str.ptr,
-            length: self.str.length,
-        }
+        self.str.as_str()
     }
 
     function grow_by(mut self: *mut Self, additional: usize) {

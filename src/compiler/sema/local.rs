@@ -6,8 +6,8 @@ pub struct LocalContext {
     return_type: TypeHandle,
     break_stack: Vec<Label>,
     continue_stack: Vec<Label>,
-    symbol_versions: HashMap<String, usize>,
-    scope_stack: Vec<HashMap<String, Value>>,
+    symbol_versions: HashMap<Box<str>, usize>,
+    scope_stack: Vec<HashMap<Box<str>, Value>>,
     current_block_label: Label,
     next_anonymous_register_id: usize,
     next_basic_block_id: usize,
@@ -75,7 +75,7 @@ impl LocalContext {
             .find_map(|scope| scope.get(name))
     }
 
-    pub fn define_indirect_symbol(&mut self, name: String, pointer_type: TypeHandle, pointee_type: TypeHandle) -> Register {
+    pub fn define_indirect_symbol(&mut self, name: Box<str>, pointer_type: TypeHandle, pointee_type: TypeHandle) -> Register {
         let version = *self.symbol_versions.entry(name.clone())
             .and_modify(|version| *version += 1)
             .or_insert(0);
@@ -94,7 +94,7 @@ impl LocalContext {
         register
     }
 
-    pub fn define_indirect_constant_symbol(&mut self, name: String, pointer_type: TypeHandle, pointee_type: TypeHandle) -> Register {
+    pub fn define_indirect_constant_symbol(&mut self, name: Box<str>, pointer_type: TypeHandle, pointee_type: TypeHandle) -> Register {
         let version = *self.symbol_versions.entry(name.clone())
             .and_modify(|version| *version += 1)
             .or_insert(0);
@@ -113,7 +113,7 @@ impl LocalContext {
         register
     }
 
-    pub fn define_symbol(&mut self, name: String, value: Value) {
+    pub fn define_symbol(&mut self, name: Box<str>, value: Value) {
         self.scope_stack.last_mut().unwrap().insert(name, value);
     }
 

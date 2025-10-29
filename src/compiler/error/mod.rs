@@ -216,6 +216,8 @@ pub enum Error {
     },
     UnknownArrayType {
     },
+    UnknownTupleType {
+    },
     NoSuchMethod {
         type_name: String,
         method_name: String,
@@ -236,7 +238,7 @@ pub enum Error {
         member_names: Vec<String>,
         type_name: String,
     },
-    UndefinedStructMember {
+    UndefinedMember {
         member_name: String,
         type_name: String,
     },
@@ -249,7 +251,7 @@ pub enum Error {
     ExpectedArray {
         type_name: String,
     },
-    ExpectedStruct {
+    InvalidMemberAccess {
         type_name: String,
     },
     ExpectedFunction {
@@ -386,6 +388,7 @@ impl std::fmt::Display for Error {
             Self::NonConstantSymbol { name } => write!(f, "'{name}' is not constant and cannot be used in a constant expression"),
             Self::IncompatibleValueType { value, type_name } => write!(f, "'{value}' cannot be used as a value of type '{type_name}'"),
             Self::UnknownArrayType {} => write!(f, "unable to infer array type"),
+            Self::UnknownTupleType {} => write!(f, "unable to infer tuple type"),
             Self::NoSuchMethod { type_name, method_name } => write!(f, "{type_name} has no method '{method_name}' (to call a member, wrap it in parentheses)"),
             Self::InvalidStructIdentifier {} => write!(f, "invalid syntax for struct type"),
             Self::NonStructSymbol { name } => write!(f, "cannot use '{name}' as a struct type"),
@@ -404,11 +407,11 @@ impl std::fmt::Display for Error {
                 }
                 Ok(())
             }
-            Self::UndefinedStructMember { member_name, type_name } => write!(f, "member '{member_name}' does not exist in struct '{type_name}'"),
+            Self::UndefinedMember { member_name, type_name } => write!(f, "type '{type_name}' has no member '{member_name}'"),
             Self::ExpectedPointer { type_name } => write!(f, "expected a pointer, got value of type '{type_name}'"),
             Self::ExpectedInteger { type_name } => write!(f, "expected an integer, got value of type '{type_name}'"),
-            Self::ExpectedArray { type_name } => write!(f, "expected an array or pointer to array, got value of type '{type_name}'"),
-            Self::ExpectedStruct { type_name } => write!(f, "expected a struct, got value of type '{type_name}'"),
+            Self::ExpectedArray { type_name } => write!(f, "expected an array, got value of type '{type_name}'"),
+            Self::InvalidMemberAccess { type_name } => write!(f, "expected a struct or tuple, got value of type '{type_name}'"),
             Self::ExpectedFunction { type_name } => write!(f, "expected a function, got value of type '{type_name}'"),
             Self::MissingFunctionArguments { expected_count, got_count } => write!(f, "too few arguments (expected {expected_count}, got {got_count})"),
             Self::ExtraFunctionArguments { expected_count, got_count } => write!(f, "too many arguments (expected {expected_count}, got {got_count})"),

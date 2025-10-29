@@ -289,7 +289,7 @@ impl<T: BufRead> Scanner<T> {
                 "null" => Literal::NullPointer,
                 _ => match PrimitiveType::from_name(&content) {
                     Some(primitive_type) => Literal::PrimitiveType(primitive_type),
-                    None => Literal::Name(content),
+                    None => Literal::Name(content.into_boxed_str()),
                 }
             };
 
@@ -419,7 +419,7 @@ impl<T: BufRead> Scanner<T> {
                 bytes.push(0);
                 return Ok((
                     self.create_span(start_index, self.next_index),
-                    Token::Literal(Literal::String(StringValue::new(bytes))),
+                    Token::Literal(Literal::String(StringValue::new(bytes.into_boxed_slice()))),
                 ));
             }
             else {
