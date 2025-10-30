@@ -2,10 +2,7 @@
 
 A compiler for the self-invented Cupric programming language, which is something of a hybrid between C and Rust.
 Currently, the output of the compiler is LLVM IR, which can be further compiled into an executable with another program
-such as `clang` or `llc`.
-
-*Note: The tentative file extension for Cupric source files is `.cu`, but that extension is also used for Cuda files,
-hence why Cuda is erroneously listed as a language on this project.*
+such as `clang` or `llc`. Cupric source files use the `.cupr` file extension.
 
 ## Command Line Usage
 

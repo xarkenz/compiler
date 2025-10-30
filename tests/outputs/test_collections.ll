@@ -1,5 +1,5 @@
 ; file_id = 0
-source_filename = "tests/sources/test_collections.cu"
+source_filename = "tests/sources/test_collections.cupr"
 
 declare {}* @malloc(i64)
 

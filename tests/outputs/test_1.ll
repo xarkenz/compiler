@@ -1,5 +1,5 @@
 ; file_id = 0
-source_filename = "tests/sources/test_1.cu"
+source_filename = "tests/sources/test_1.cupr"
 
 %"type.::CFile" = type opaque
 

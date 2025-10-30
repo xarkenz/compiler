@@ -3,7 +3,7 @@ mod common;
 #[test]
 fn hello() {
     common::test_compile(
-        ["hello.cu"],
+        ["hello.cupr"],
         "hello.ll",
     );
 }
@@ -11,7 +11,7 @@ fn hello() {
 #[test]
 fn test_1() {
     common::test_compile(
-        ["test_1.cu"],
+        ["test_1.cupr"],
         "test_1.ll",
     );
 }
@@ -19,7 +19,7 @@ fn test_1() {
 #[test]
 fn test_2() {
     common::test_compile(
-        ["test_2.cu"],
+        ["test_2.cupr"],
         "test_2.ll",
     );
 }
@@ -27,7 +27,7 @@ fn test_2() {
 #[test]
 fn test_3() {
     common::test_compile(
-        ["test_3.cu"],
+        ["test_3.cupr"],
         "test_3.ll",
     );
 }
@@ -35,7 +35,7 @@ fn test_3() {
 #[test]
 fn test_unix() {
     common::test_compile(
-        ["test_unix.cu"],
+        ["test_unix.cupr"],
         "test_unix.ll",
     );
 }
@@ -43,7 +43,7 @@ fn test_unix() {
 #[test]
 fn test_collections() {
     common::test_compile(
-        ["test_collections.cu"],
+        ["test_collections.cupr"],
         "test_collections.ll",
     );
 }

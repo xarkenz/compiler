@@ -1,5 +1,5 @@
 ; file_id = 0
-source_filename = "tests/sources/test_2.cu"
+source_filename = "tests/sources/test_2.cupr"
 
 declare i32 @printf(i8*, ...)
 

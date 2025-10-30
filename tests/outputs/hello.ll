@@ -1,5 +1,5 @@
 ; file_id = 0
-source_filename = "tests/sources/hello.cu"
+source_filename = "tests/sources/hello.cupr"
 
 declare i32 @puts(i8*)
 
