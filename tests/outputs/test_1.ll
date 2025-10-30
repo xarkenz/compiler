@@ -1,5 +1,5 @@
 ; file_id = 0
-source_filename = "tests/test.txt"
+source_filename = "tests/sources/test_1.cu"
 
 %"type.::CFile" = type opaque
 
@@ -35,12 +35,11 @@ define void @"<u8>::swap"(i8* %0, i8* %1) {
 	store i8 %3, i8* %temp
 	%4 = load i8*, i8** %self
 	%5 = load i8*, i8** %other
-	%6 = bitcast i8* %5 to i8*
-	%7 = load i8, i8* %6
-	store i8 %7, i8* %4
-	%8 = load i8*, i8** %other
-	%9 = load i8, i8* %temp
-	store i8 %9, i8* %8
+	%6 = load i8, i8* %5
+	store i8 %6, i8* %4
+	%7 = load i8*, i8** %other
+	%8 = load i8, i8* %temp
+	store i8 %8, i8* %7
 	ret void
 }
 
@@ -95,17 +94,16 @@ define %"type.::Str" @"::MutStr::as_str"(%"type.::MutStr"* %0) {
 	%1 = load %"type.::MutStr"*, %"type.::MutStr"** %self
 	%2 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %1, i32 0, i32 0
 	%3 = load i8*, i8** %2
-	%4 = bitcast i8* %3 to i8*
-	%5 = load %"type.::MutStr"*, %"type.::MutStr"** %self
-	%6 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %5, i32 0, i32 1
-	%7 = load i64, i64* %6
-	%8 = alloca %"type.::Str"
-	%9 = getelementptr inbounds %"type.::Str", %"type.::Str"* %8, i32 0, i32 0
-	store i8* %4, i8** %9
-	%10 = getelementptr inbounds %"type.::Str", %"type.::Str"* %8, i32 0, i32 1
-	store i64 %7, i64* %10
-	%11 = load %"type.::Str", %"type.::Str"* %8
-	ret %"type.::Str" %11
+	%4 = load %"type.::MutStr"*, %"type.::MutStr"** %self
+	%5 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %4, i32 0, i32 1
+	%6 = load i64, i64* %5
+	%7 = alloca %"type.::Str"
+	%8 = getelementptr inbounds %"type.::Str", %"type.::Str"* %7, i32 0, i32 0
+	store i8* %3, i8** %8
+	%9 = getelementptr inbounds %"type.::Str", %"type.::Str"* %7, i32 0, i32 1
+	store i64 %6, i64* %9
+	%10 = load %"type.::Str", %"type.::Str"* %7
+	ret %"type.::Str" %10
 }
 
 %"type.::String" = type { %"type.::MutStr", i64 }
@@ -656,26 +654,25 @@ define i32 @main() {
 	call void(%"type.::String"*, i8) @"::String::push"(%"type.::String"* %string, i8 100)
 	call void(%"type.::String"*, i8) @"::String::push"(%"type.::String"* %string, i8 33)
 	call void(%"type.::String"*, i8) @"::String::push"(%"type.::String"* %string, i8 0)
-	%2 = bitcast %"type.::String"* %string to %"type.::String"*
-	%3 = call %"type.::Str"(%"type.::String"*) @"::String::as_str"(%"type.::String"* %2)
+	%2 = call %"type.::Str"(%"type.::String"*) @"::String::as_str"(%"type.::String"* %string)
 	%str = alloca %"type.::Str"
-	store %"type.::Str" %3, %"type.::Str"* %str
-	%4 = getelementptr inbounds %"type.::Str", %"type.::Str"* %str, i32 0, i32 0
-	%5 = load i8*, i8** %4
-	%6 = call i32(i8*, ...) @printf(i8* bitcast ([4 x i8]* @.const.15 to i8*), i8* %5)
-	%7 = load %"type.::String", %"type.::String"* %string
-	call void(%"type.::String") @"::String::del"(%"type.::String" %7)
-	%8 = sub nsw i64 0, 12345
-	%9 = call %"type.::String"(i64) @"<i64>::to_string"(i64 %8)
+	store %"type.::Str" %2, %"type.::Str"* %str
+	%3 = getelementptr inbounds %"type.::Str", %"type.::Str"* %str, i32 0, i32 0
+	%4 = load i8*, i8** %3
+	%5 = call i32(i8*, ...) @printf(i8* bitcast ([4 x i8]* @.const.15 to i8*), i8* %4)
+	%6 = load %"type.::String", %"type.::String"* %string
+	call void(%"type.::String") @"::String::del"(%"type.::String" %6)
+	%7 = sub nsw i64 0, 12345
+	%8 = call %"type.::String"(i64) @"<i64>::to_string"(i64 %7)
 	%number_string = alloca %"type.::String"
-	store %"type.::String" %9, %"type.::String"* %number_string
+	store %"type.::String" %8, %"type.::String"* %number_string
 	call void(%"type.::String"*, i8) @"::String::push"(%"type.::String"* %number_string, i8 0)
-	%10 = getelementptr inbounds %"type.::String", %"type.::String"* %number_string, i32 0, i32 0
-	%11 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %10, i32 0, i32 0
-	%12 = load i8*, i8** %11
-	%13 = call i32(i8*, ...) @printf(i8* bitcast ([22 x i8]* @.const.16 to i8*), i8* %12)
-	%14 = load %"type.::String", %"type.::String"* %number_string
-	call void(%"type.::String") @"::String::del"(%"type.::String" %14)
+	%9 = getelementptr inbounds %"type.::String", %"type.::String"* %number_string, i32 0, i32 0
+	%10 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %9, i32 0, i32 0
+	%11 = load i8*, i8** %10
+	%12 = call i32(i8*, ...) @printf(i8* bitcast ([22 x i8]* @.const.16 to i8*), i8* %11)
+	%13 = load %"type.::String", %"type.::String"* %number_string
+	call void(%"type.::String") @"::String::del"(%"type.::String" %13)
 	ret i32 0
 }
 

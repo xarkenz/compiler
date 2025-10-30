@@ -1,12 +1,9 @@
+pub mod ast;
 pub mod cli;
 pub mod error;
-pub mod token;
-pub mod ast;
-pub mod sema;
 pub mod gen;
+pub mod sema;
+pub mod target;
+pub mod token;
 
 pub use error::*;
-
-#[cfg(test)]
-mod tests;
-mod target;

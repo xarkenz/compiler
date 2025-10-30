@@ -245,3 +245,173 @@ impl TypeHandle {
         }
     }
 }
+
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub enum ConversionOperation {
+    Truncate,
+    ZeroExtend,
+    SignExtend,
+    FloatTruncate,
+    FloatExtend,
+    FloatToUnsigned,
+    FloatToSigned,
+    UnsignedToFloat,
+    SignedToFloat,
+    PointerToInteger,
+    IntegerToPointer,
+    BitwiseCast,
+}
+
+impl std::fmt::Display for ConversionOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Truncate => write!(f, "trunc"),
+            Self::ZeroExtend => write!(f, "zext"),
+            Self::SignExtend => write!(f, "sext"),
+            Self::FloatTruncate => write!(f, "fptrunc"),
+            Self::FloatExtend => write!(f, "fpext"),
+            Self::FloatToUnsigned => write!(f, "fptoui"),
+            Self::FloatToSigned => write!(f, "fptosi"),
+            Self::UnsignedToFloat => write!(f, "uitofp"),
+            Self::SignedToFloat => write!(f, "sitofp"),
+            Self::PointerToInteger => write!(f, "ptrtoint"),
+            Self::IntegerToPointer => write!(f, "inttoptr"),
+            Self::BitwiseCast => write!(f, "bitcast"),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct Conversion {
+    pub operation_needed: Option<ConversionOperation>,
+    pub implicit_allowed: bool,
+}
+
+impl Conversion {
+    pub fn try_implicit(context: &GlobalContext, from_type: TypeHandle, to_type: TypeHandle, from_mutable: bool) -> Option<Self> {
+        if from_type == TypeHandle::NEVER || from_type == to_type {
+            return Some(Self {
+                operation_needed: None,
+                implicit_allowed: true,
+            });
+        }
+
+        match (from_type.repr(context), to_type.repr(context)) {
+            (
+                &TypeRepr::Pointer { pointee_type: from_pointee, semantics: from_semantics },
+                &TypeRepr::Pointer { pointee_type: to_pointee, semantics: to_semantics },
+            ) => {
+                use PointerSemantics::*;
+                match (from_semantics, to_semantics) {
+                    (Immutable | ImmutableSymbol, Immutable | ImmutableSymbol) => {
+                        Self::try_implicit(context, from_pointee, to_pointee, false)
+                    }
+                    (Mutable, Immutable | ImmutableSymbol) => {
+                        Self::try_implicit(context, from_pointee, to_pointee, true)
+                    }
+                    (Mutable, Mutable) if from_mutable => {
+                        Self::try_implicit(context, from_pointee, to_pointee, true)
+                    }
+                    _ => None
+                }
+            }
+            (
+                &TypeRepr::Array { item_type: from_item, length: Some(from_length) },
+                &TypeRepr::Array { item_type: to_item, length: Some(to_length) },
+            ) => {
+                if from_length != to_length {
+                    return None;
+                }
+                Self::try_implicit(context, from_item, to_item, from_mutable)
+            }
+            (
+                &TypeRepr::Array { item_type: from_item, length: from_length },
+                &TypeRepr::Array { item_type: to_item, length: None },
+            ) => {
+                Self::try_implicit(context, from_item, to_item, from_mutable)
+                    .map(|mut conversion| {
+                        if from_length.is_some() {
+                            conversion.operation_needed = Some(ConversionOperation::BitwiseCast);
+                        }
+                        conversion
+                    })
+            }
+            _ => None
+        }
+    }
+
+    pub fn try_explicit(context: &GlobalContext, from_type: TypeHandle, to_type: TypeHandle, from_mutable: bool) -> Option<Self> {
+        if let Some(conversion) = Self::try_implicit(context, from_type, to_type, from_mutable) {
+            return Some(conversion);
+        }
+
+        let operation_needed = match (from_type.repr(context), to_type.repr(context)) {
+            (
+                &TypeRepr::Integer { size: from_size, signed: from_signed },
+                &TypeRepr::Integer { size: to_size, .. },
+            ) => {
+                use std::cmp::Ordering::*;
+                match from_size.cmp(&to_size) {
+                    Greater => Some(ConversionOperation::Truncate),
+                    Less if from_signed => Some(ConversionOperation::SignExtend),
+                    Less => Some(ConversionOperation::ZeroExtend),
+                    Equal => None,
+                }
+            }
+            (TypeRepr::Boolean, TypeRepr::Integer { .. }) => {
+                Some(ConversionOperation::ZeroExtend)
+            }
+            (TypeRepr::Float64, TypeRepr::Float32) => {
+                Some(ConversionOperation::FloatTruncate)
+            }
+            (TypeRepr::Float32, TypeRepr::Float64) => {
+                Some(ConversionOperation::FloatExtend)
+            }
+            (
+                TypeRepr::Float32 | TypeRepr::Float64,
+                &TypeRepr::Integer { signed, .. },
+            ) => {
+                match signed {
+                    true => Some(ConversionOperation::SignedToFloat),
+                    false => Some(ConversionOperation::UnsignedToFloat),
+                }
+            }
+            (
+                &TypeRepr::Integer { signed, .. },
+                TypeRepr::Float32 | TypeRepr::Float64,
+            ) => {
+                match signed {
+                    true => Some(ConversionOperation::FloatToSigned),
+                    false => Some(ConversionOperation::FloatToUnsigned),
+                }
+            }
+            (TypeRepr::Boolean, TypeRepr::Float32 | TypeRepr::Float64) => {
+                Some(ConversionOperation::UnsignedToFloat)
+            }
+            (
+                TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
+                TypeRepr::Integer { .. },
+            ) => {
+                Some(ConversionOperation::PointerToInteger)
+            }
+            (
+                TypeRepr::Integer { .. },
+                TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
+            ) => {
+                Some(ConversionOperation::IntegerToPointer)
+            }
+            (
+                TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
+                TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
+            ) => {
+                Some(ConversionOperation::BitwiseCast)
+            }
+            _ => return None
+        };
+
+        Some(Self {
+            operation_needed,
+            implicit_allowed: false,
+        })
+    }
+}

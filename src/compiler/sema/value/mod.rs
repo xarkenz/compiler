@@ -146,120 +146,6 @@ impl Label {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub enum ConversionOperation {
-    Truncate,
-    ZeroExtend,
-    SignExtend,
-    FloatTruncate,
-    FloatExtend,
-    FloatToUnsigned,
-    FloatToSigned,
-    UnsignedToFloat,
-    SignedToFloat,
-    PointerToInteger,
-    IntegerToPointer,
-    BitwiseCast,
-}
-
-impl ConversionOperation {
-    pub fn from_type_reprs(from_type: &TypeRepr, to_type: &TypeRepr) -> Option<Self> {
-        match (from_type, to_type) {
-            (
-                &TypeRepr::Integer { size: from_size, signed: from_signed },
-                &TypeRepr::Integer { size: to_size, .. },
-            ) => {
-                if from_size > to_size {
-                    Some(Self::Truncate)
-                }
-                else if from_size < to_size {
-                    if from_signed {
-                        Some(Self::SignExtend)
-                    }
-                    else {
-                        Some(Self::ZeroExtend)
-                    }
-                }
-                else {
-                    None
-                }
-            }
-            (TypeRepr::Boolean, TypeRepr::Integer { .. }) => {
-                Some(Self::ZeroExtend)
-            }
-            (TypeRepr::Float64, TypeRepr::Float32) => {
-                Some(Self::FloatTruncate)
-            }
-            (TypeRepr::Float32, TypeRepr::Float64) => {
-                Some(Self::FloatExtend)
-            }
-            (
-                TypeRepr::Float32 | TypeRepr::Float64,
-                &TypeRepr::Integer { signed, .. },
-            ) => {
-                if signed {
-                    Some(Self::FloatToSigned)
-                }
-                else {
-                    Some(Self::FloatToUnsigned)
-                }
-            }
-            (
-                &TypeRepr::Integer { signed, .. },
-                TypeRepr::Float32 | TypeRepr::Float64,
-            ) => {
-                if signed {
-                    Some(Self::SignedToFloat)
-                }
-                else {
-                    Some(Self::UnsignedToFloat)
-                }
-            }
-            (TypeRepr::Boolean, TypeRepr::Float32 | TypeRepr::Float64) => {
-                Some(Self::UnsignedToFloat)
-            }
-            (
-                TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
-                TypeRepr::Integer { .. },
-            ) => {
-                Some(Self::PointerToInteger)
-            }
-            (
-                TypeRepr::Integer { .. },
-                TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
-            ) => {
-                Some(Self::IntegerToPointer)
-            }
-            (
-                TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
-                TypeRepr::Pointer { .. } | TypeRepr::Function { .. },
-            ) => {
-                Some(Self::BitwiseCast)
-            }
-            _ => None
-        }
-    }
-}
-
-impl std::fmt::Display for ConversionOperation {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::Truncate => write!(f, "trunc"),
-            Self::ZeroExtend => write!(f, "zext"),
-            Self::SignExtend => write!(f, "sext"),
-            Self::FloatTruncate => write!(f, "fptrunc"),
-            Self::FloatExtend => write!(f, "fpext"),
-            Self::FloatToUnsigned => write!(f, "fptoui"),
-            Self::FloatToSigned => write!(f, "fptosi"),
-            Self::UnsignedToFloat => write!(f, "uitofp"),
-            Self::SignedToFloat => write!(f, "sitofp"),
-            Self::PointerToInteger => write!(f, "ptrtoint"),
-            Self::IntegerToPointer => write!(f, "inttoptr"),
-            Self::BitwiseCast => write!(f, "bitcast"),
-        }
-    }
-}
-
 #[derive(Clone, PartialEq, Debug)]
 pub enum Constant {
     Undefined(TypeHandle),
@@ -346,6 +232,31 @@ impl Constant {
             Self::Convert { result_type, .. } => result_type,
             Self::GetElementPointer { result_type, .. } => result_type,
             Self::Type(..) | Self::Module(..) => TypeHandle::META,
+        }
+    }
+
+    pub fn set_type(&mut self, handle: TypeHandle) {
+        match self {
+            Self::Undefined(value_type) => *value_type = handle,
+            Self::Poison(value_type) => *value_type = handle,
+            Self::ZeroInitializer(value_type) => *value_type = handle,
+            Self::NullPointer(value_type) => *value_type = handle,
+            Self::Integer(integer) => {
+                integer.set_integer_type(IntegerType::from_handle(handle)
+                    .expect("failed to set integer type"));
+            }
+            Self::Float(float) => {
+                float.set_float_type(FloatType::from_handle(handle)
+                    .expect("failed to set integer type"));
+            }
+            Self::String { array_type, .. } => *array_type = handle,
+            Self::Array { array_type, .. } => *array_type = handle,
+            Self::Tuple { tuple_type, .. } => *tuple_type = handle,
+            Self::Structure { struct_type, .. } => *struct_type = handle,
+            Self::Register(register) => register.set_type(handle),
+            Self::Convert { result_type, .. } => *result_type = handle,
+            Self::GetElementPointer { result_type, .. } => *result_type = handle,
+            _ => {}
         }
     }
 
@@ -520,7 +431,6 @@ impl From<Register> for Constant {
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Value {
-    Unresolved(TypeHandle),
     Never,
     Break,
     Continue,
@@ -567,7 +477,6 @@ impl Value {
 
     pub fn get_type(&self) -> TypeHandle {
         match *self {
-            Self::Unresolved(handle) => handle,
             Self::Never | Self::Break | Self::Continue => TypeHandle::NEVER,
             Self::Void => TypeHandle::VOID,
             Self::Constant(ref constant) => constant.get_type(),
@@ -575,6 +484,14 @@ impl Value {
             Self::Indirect { pointee_type, .. } => pointee_type,
             Self::BoundFunction { ref function_value, .. } => function_value.get_type(),
             Self::Type(..) | Self::Module(..) => TypeHandle::META,
+        }
+    }
+
+    pub fn set_type(&mut self, handle: TypeHandle) {
+        match self {
+            Self::Constant(constant) => constant.set_type(handle),
+            Self::Register(register) => register.set_type(handle),
+            _ => {}
         }
     }
 
@@ -618,14 +535,13 @@ impl Value {
 
     pub fn llvm_syntax(&self, context: &GlobalContext) -> String {
         match self {
-            Self::Unresolved(..) => "<ERROR unresolved value>".to_owned(),
-            Self::Never | Self::Break | Self::Continue => "<ERROR never value>".to_owned(),
-            Self::Void => "<ERROR void value>".to_owned(),
+            Self::Never | Self::Break | Self::Continue => "<ERROR never value>".into(),
+            Self::Void => "<ERROR void value>".into(),
             Self::Constant(constant) => constant.llvm_syntax(context),
             Self::Register(register) => register.llvm_syntax(),
             Self::Indirect { pointer, .. } => format!("<ERROR indirect value: {}>", pointer.llvm_syntax(context)),
             Self::BoundFunction { function_value, .. } => function_value.llvm_syntax(context),
-            Self::Type(..) | Self::Module(..) => "<ERROR meta value>".to_owned(),
+            Self::Type(..) | Self::Module(..) => "<ERROR meta value>".into(),
         }
     }
 }

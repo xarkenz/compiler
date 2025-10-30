@@ -1,5 +1,5 @@
 ; file_id = 0
-source_filename = "tests/collections.txt"
+source_filename = "tests/sources/test_collections.cu"
 
 declare {}* @malloc(i64)
 
@@ -122,7 +122,6 @@ define void @"::LinkedList::push_front"(%"type.::LinkedList"* %0, {}* %1) {
 	%7 = getelementptr inbounds %"type.::LinkedList", %"type.::LinkedList"* %6, i32 0, i32 0
 	%8 = load %"type.::LinkedListNode"*, %"type.::LinkedListNode"** %7
 	%9 = alloca %"type.::LinkedListNode"
-	store %"type.::LinkedListNode" { {}* undef, %"type.::LinkedListNode"* undef }, %"type.::LinkedListNode"* %9
 	%10 = getelementptr inbounds %"type.::LinkedListNode", %"type.::LinkedListNode"* %9, i32 0, i32 0
 	store {}* %5, {}** %10
 	%11 = getelementptr inbounds %"type.::LinkedListNode", %"type.::LinkedListNode"* %9, i32 0, i32 1
@@ -225,16 +224,14 @@ define void @"::AVLTreeNode::recompute_height"(%"type.::AVLTreeNode"* %0) {
 	%3 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
 	%4 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %3, i32 0, i32 1
 	%5 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %4
-	%6 = bitcast %"type.::AVLTreeNode"* %5 to %"type.::AVLTreeNode"*
-	%7 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %6)
-	%8 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
-	%9 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %8, i32 0, i32 2
-	%10 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %9
-	%11 = bitcast %"type.::AVLTreeNode"* %10 to %"type.::AVLTreeNode"*
-	%12 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %11)
-	%13 = call i32(i32, i32) @"<i32>::max"(i32 %7, i32 %12)
-	%14 = add nsw i32 1, %13
-	store i32 %14, i32* %2
+	%6 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %5)
+	%7 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
+	%8 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %7, i32 0, i32 2
+	%9 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %8
+	%10 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %9)
+	%11 = call i32(i32, i32) @"<i32>::max"(i32 %6, i32 %10)
+	%12 = add nsw i32 1, %11
+	store i32 %12, i32* %2
 	ret void
 }
 
@@ -305,95 +302,89 @@ define %"type.::AVLTreeNode"* @"::AVLTreeNode::balance"(%"type.::AVLTreeNode"* %
 	%3 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
 	%4 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %3, i32 0, i32 1
 	%5 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %4
-	%6 = bitcast %"type.::AVLTreeNode"* %5 to %"type.::AVLTreeNode"*
-	%7 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %6)
-	%8 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
-	%9 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %8, i32 0, i32 2
-	%10 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %9
-	%11 = bitcast %"type.::AVLTreeNode"* %10 to %"type.::AVLTreeNode"*
-	%12 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %11)
-	%13 = sub nsw i32 %7, %12
+	%6 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %5)
+	%7 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
+	%8 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %7, i32 0, i32 2
+	%9 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %8
+	%10 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %9)
+	%11 = sub nsw i32 %6, %10
 	%imbalance = alloca i32
-	store i32 %13, i32* %imbalance
-	%14 = load i32, i32* %imbalance
-	%15 = icmp sgt i32 %14, 1
-	br i1 %15, label %.block.3, label %.block.4
+	store i32 %11, i32* %imbalance
+	%12 = load i32, i32* %imbalance
+	%13 = icmp sgt i32 %12, 1
+	br i1 %13, label %.block.3, label %.block.4
 .block.3:
-	%16 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
-	%17 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %16, i32 0, i32 1
+	%14 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
+	%15 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %14, i32 0, i32 1
+	%16 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %15
+	%17 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %16, i32 0, i32 2
 	%18 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %17
-	%19 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %18, i32 0, i32 2
-	%20 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %19
-	%21 = bitcast %"type.::AVLTreeNode"* %20 to %"type.::AVLTreeNode"*
-	%22 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %21)
-	%23 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
-	%24 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %23, i32 0, i32 1
-	%25 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %24
-	%26 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %25, i32 0, i32 1
-	%27 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %26
-	%28 = bitcast %"type.::AVLTreeNode"* %27 to %"type.::AVLTreeNode"*
-	%29 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %28)
-	%30 = icmp sgt i32 %22, %29
-	br i1 %30, label %.block.5, label %.block.6
+	%19 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %18)
+	%20 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
+	%21 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %20, i32 0, i32 1
+	%22 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %21
+	%23 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %22, i32 0, i32 1
+	%24 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %23
+	%25 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %24)
+	%26 = icmp sgt i32 %19, %25
+	br i1 %26, label %.block.5, label %.block.6
 .block.5:
-	%31 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
-	%32 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %31, i32 0, i32 1
-	%33 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
-	%34 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %33, i32 0, i32 1
-	%35 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %34
-	%36 = call %"type.::AVLTreeNode"*(%"type.::AVLTreeNode"*) @"::AVLTreeNode::rotate_left"(%"type.::AVLTreeNode"* %35)
-	store %"type.::AVLTreeNode"* %36, %"type.::AVLTreeNode"** %32
+	%27 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
+	%28 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %27, i32 0, i32 1
+	%29 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
+	%30 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %29, i32 0, i32 1
+	%31 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %30
+	%32 = call %"type.::AVLTreeNode"*(%"type.::AVLTreeNode"*) @"::AVLTreeNode::rotate_left"(%"type.::AVLTreeNode"* %31)
+	store %"type.::AVLTreeNode"* %32, %"type.::AVLTreeNode"** %28
 	br label %.block.6
 .block.6:
-	%37 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
-	%38 = call %"type.::AVLTreeNode"*(%"type.::AVLTreeNode"*) @"::AVLTreeNode::rotate_right"(%"type.::AVLTreeNode"* %37)
+	%33 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
+	%34 = call %"type.::AVLTreeNode"*(%"type.::AVLTreeNode"*) @"::AVLTreeNode::rotate_right"(%"type.::AVLTreeNode"* %33)
 	br label %.block.7
 .block.4:
-	%39 = load i32, i32* %imbalance
-	%40 = sub nsw i32 0, 1
-	%41 = icmp slt i32 %39, %40
-	br i1 %41, label %.block.8, label %.block.9
+	%35 = load i32, i32* %imbalance
+	%36 = sub nsw i32 0, 1
+	%37 = icmp slt i32 %35, %36
+	br i1 %37, label %.block.8, label %.block.9
 .block.8:
-	%42 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
-	%43 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %42, i32 0, i32 2
-	%44 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %43
-	%45 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %44, i32 0, i32 1
+	%38 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
+	%39 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %38, i32 0, i32 2
+	%40 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %39
+	%41 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %40, i32 0, i32 1
+	%42 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %41
+	%43 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %42)
+	%44 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
+	%45 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %44, i32 0, i32 2
 	%46 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %45
-	%47 = bitcast %"type.::AVLTreeNode"* %46 to %"type.::AVLTreeNode"*
-	%48 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %47)
-	%49 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
-	%50 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %49, i32 0, i32 2
-	%51 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %50
-	%52 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %51, i32 0, i32 2
-	%53 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %52
-	%54 = bitcast %"type.::AVLTreeNode"* %53 to %"type.::AVLTreeNode"*
-	%55 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %54)
-	%56 = icmp sgt i32 %48, %55
-	br i1 %56, label %.block.10, label %.block.11
+	%47 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %46, i32 0, i32 2
+	%48 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %47
+	%49 = call i32(%"type.::AVLTreeNode"*) @"::AVLTreeNode::get_height"(%"type.::AVLTreeNode"* %48)
+	%50 = icmp sgt i32 %43, %49
+	br i1 %50, label %.block.10, label %.block.11
 .block.10:
-	%57 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
-	%58 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %57, i32 0, i32 2
-	%59 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
-	%60 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %59, i32 0, i32 2
-	%61 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %60
-	%62 = call %"type.::AVLTreeNode"*(%"type.::AVLTreeNode"*) @"::AVLTreeNode::rotate_right"(%"type.::AVLTreeNode"* %61)
-	store %"type.::AVLTreeNode"* %62, %"type.::AVLTreeNode"** %58
+	%51 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
+	%52 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %51, i32 0, i32 2
+	%53 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
+	%54 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %53, i32 0, i32 2
+	%55 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %54
+	%56 = call %"type.::AVLTreeNode"*(%"type.::AVLTreeNode"*) @"::AVLTreeNode::rotate_right"(%"type.::AVLTreeNode"* %55)
+	store %"type.::AVLTreeNode"* %56, %"type.::AVLTreeNode"** %52
 	br label %.block.11
 .block.11:
-	%63 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
-	%64 = call %"type.::AVLTreeNode"*(%"type.::AVLTreeNode"*) @"::AVLTreeNode::rotate_left"(%"type.::AVLTreeNode"* %63)
+	%57 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
+	%58 = call %"type.::AVLTreeNode"*(%"type.::AVLTreeNode"*) @"::AVLTreeNode::rotate_left"(%"type.::AVLTreeNode"* %57)
 	br label %.block.12
 .block.9:
-	%65 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
-	call void(%"type.::AVLTreeNode"*) @"::AVLTreeNode::recompute_height"(%"type.::AVLTreeNode"* %65)
-	%66 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
+	%59 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
+	call void(%"type.::AVLTreeNode"*) @"::AVLTreeNode::recompute_height"(%"type.::AVLTreeNode"* %59)
+	%60 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %self
 	br label %.block.12
 .block.12:
-	%67 = phi %"type.::AVLTreeNode"* [ %64, %.block.11 ], [ %66, %.block.9 ]
+	%61 = phi %"type.::AVLTreeNode"* [ %58, %.block.11 ], [ %60, %.block.9 ]
 	br label %.block.7
 .block.7:
-	%68 = phi %"type.::AVLTreeNode"* [ %38, %.block.6 ], [ %67, %.block.12 ]
-	ret %"type.::AVLTreeNode"* %68
+	%62 = phi %"type.::AVLTreeNode"* [ %34, %.block.6 ], [ %61, %.block.12 ]
+	ret %"type.::AVLTreeNode"* %62
 }
 
 define void @"::AVLTreeNode::print"(%"type.::AVLTreeNode"* %0, void({}*)* %1) {
@@ -484,25 +475,23 @@ define {}* @"::AVLTree::get"(%"type.::AVLTree"* %0, {}* %1) {
 	%17 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %node
 	%18 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %17, i32 0, i32 1
 	%19 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %18
-	%20 = bitcast %"type.::AVLTreeNode"* %19 to %"type.::AVLTreeNode"*
-	store %"type.::AVLTreeNode"* %20, %"type.::AVLTreeNode"** %node
+	store %"type.::AVLTreeNode"* %19, %"type.::AVLTreeNode"** %node
 	br label %.block.6
 .block.5:
-	%21 = load i32, i32* %ordering
-	%22 = icmp sgt i32 %21, 0
-	br i1 %22, label %.block.7, label %.block.8
+	%20 = load i32, i32* %ordering
+	%21 = icmp sgt i32 %20, 0
+	br i1 %21, label %.block.7, label %.block.8
 .block.7:
-	%23 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %node
-	%24 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %23, i32 0, i32 2
-	%25 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %24
-	%26 = bitcast %"type.::AVLTreeNode"* %25 to %"type.::AVLTreeNode"*
-	store %"type.::AVLTreeNode"* %26, %"type.::AVLTreeNode"** %node
+	%22 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %node
+	%23 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %22, i32 0, i32 2
+	%24 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %23
+	store %"type.::AVLTreeNode"* %24, %"type.::AVLTreeNode"** %node
 	br label %.block.9
 .block.8:
-	%27 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %node
-	%28 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %27, i32 0, i32 0
-	%29 = load {}*, {}** %28
-	ret {}* %29
+	%25 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %node
+	%26 = getelementptr inbounds %"type.::AVLTreeNode", %"type.::AVLTreeNode"* %25, i32 0, i32 0
+	%27 = load {}*, {}** %26
+	ret {}* %27
 .block.9:
 	br label %.block.6
 .block.6:
@@ -709,7 +698,7 @@ define {}* @"::BTree::insert"(%"type.::BTree"* %0, {}* %1) {
 	ret {}* null
 }
 
-define void @"::max_percolate_dmut"({}** %0, i64 %1, i32({}*, {}*)* %2, i64 %3) {
+define void @"::max_percolate_down"({}** %0, i64 %1, i32({}*, {}*)* %2, i64 %3) {
 .block.0:
 	%array = alloca {}**
 	store {}** %0, {}*** %array
@@ -835,7 +824,7 @@ define void @"::heap_sort"({}** %0, i64 %1, i32({}*, {}*)* %2) {
 	%10 = load i64, i64* %length
 	%11 = load i32({}*, {}*)*, i32({}*, {}*)** %comparator
 	%12 = load i64, i64* %index
-	call void({}**, i64, i32({}*, {}*)*, i64) @"::max_percolate_dmut"({}** %9, i64 %10, i32({}*, {}*)* %11, i64 %12)
+	call void({}**, i64, i32({}*, {}*)*, i64) @"::max_percolate_down"({}** %9, i64 %10, i32({}*, {}*)* %11, i64 %12)
 	br label %.block.1
 .block.3:
 	%13 = load i64, i64* %length
@@ -869,7 +858,7 @@ define void @"::heap_sort"({}** %0, i64 %1, i32({}*, {}*)* %2) {
 	%31 = load {}**, {}*** %array
 	%32 = load i64, i64* %index
 	%33 = load i32({}*, {}*)*, i32({}*, {}*)** %comparator
-	call void({}**, i64, i32({}*, {}*)*, i64) @"::max_percolate_dmut"({}** %31, i64 %32, i32({}*, {}*)* %33, i64 0)
+	call void({}**, i64, i32({}*, {}*)*, i64) @"::max_percolate_down"({}** %31, i64 %32, i32({}*, {}*)* %33, i64 0)
 	br label %.block.4
 .block.6:
 	ret void
@@ -964,118 +953,112 @@ define i32 @main() {
 	%17 = call i32(i8*, ...) @printf(i8* bitcast ([9 x i8]* @.const.11 to i8*), i32 %16)
 	br label %.block.4
 .block.6:
-	%18 = bitcast i32(i32*, i32*)* @"<i32>::cmp" to i32({}*, {}*)*
-	%19 = call %"type.::AVLTree"(i32({}*, {}*)*) @"::AVLTree::new"(i32({}*, {}*)* %18)
+	%18 = call %"type.::AVLTree"(i32({}*, {}*)*) @"::AVLTree::new"(i32({}*, {}*)* bitcast (i32(i32*, i32*)* @"<i32>::cmp" to i32({}*, {}*)*))
 	%tree = alloca %"type.::AVLTree"
-	store %"type.::AVLTree" %19, %"type.::AVLTree"* %tree
+	store %"type.::AVLTree" %18, %"type.::AVLTree"* %tree
 	%i-1 = alloca i64
 	store i64 0, i64* %i-1
 	br label %.block.7
 .block.7:
-	%20 = load i64, i64* %i-1
-	%21 = icmp ult i64 %20, 7
-	br i1 %21, label %.block.8, label %.block.9
+	%19 = load i64, i64* %i-1
+	%20 = icmp ult i64 %19, 7
+	br i1 %20, label %.block.8, label %.block.9
 .block.8:
-	%22 = load i64, i64* %i-1
-	%23 = mul nuw i64 %22, 7
-	%24 = urem i64 %23, 10
+	%21 = load i64, i64* %i-1
+	%22 = mul nuw i64 %21, 7
+	%23 = urem i64 %22, 10
 	%idx = alloca i64
-	store i64 %24, i64* %idx
-	%25 = load i64, i64* %idx
-	%26 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i64 %25
-	%27 = load i32, i32* %26
-	%28 = call i32(i8*, ...) @printf(i8* bitcast ([12 x i8]* @.const.12 to i8*), i32 %27)
-	%29 = load i64, i64* %idx
-	%30 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i64 %29
-	%31 = bitcast i32* %30 to {}*
-	%32 = call {}*(%"type.::AVLTree"*, {}*) @"::AVLTree::insert"(%"type.::AVLTree"* %tree, {}* %31)
-	%33 = load i64, i64* %i-1
-	%34 = add nuw i64 %33, 1
-	store i64 %34, i64* %i-1
+	store i64 %23, i64* %idx
+	%24 = load i64, i64* %idx
+	%25 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i64 %24
+	%26 = load i32, i32* %25
+	%27 = call i32(i8*, ...) @printf(i8* bitcast ([12 x i8]* @.const.12 to i8*), i32 %26)
+	%28 = load i64, i64* %idx
+	%29 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i64 %28
+	%30 = bitcast i32* %29 to {}*
+	%31 = call {}*(%"type.::AVLTree"*, {}*) @"::AVLTree::insert"(%"type.::AVLTree"* %tree, {}* %30)
+	%32 = load i64, i64* %i-1
+	%33 = add nuw i64 %32, 1
+	store i64 %33, i64* %i-1
 	br label %.block.7
 .block.9:
 	%i-2 = alloca i64
 	store i64 0, i64* %i-2
 	br label %.block.10
 .block.10:
-	%35 = load i64, i64* %i-2
-	%36 = icmp ult i64 %35, 10
-	br i1 %36, label %.block.11, label %.block.12
+	%34 = load i64, i64* %i-2
+	%35 = icmp ult i64 %34, 10
+	br i1 %35, label %.block.11, label %.block.12
 .block.11:
-	%37 = bitcast %"type.::AVLTree"* %tree to %"type.::AVLTree"*
-	%38 = load i64, i64* %i-2
-	%39 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i64 %38
-	%40 = bitcast i32* %39 to {}*
-	%41 = call {}*(%"type.::AVLTree"*, {}*) @"::AVLTree::get"(%"type.::AVLTree"* %37, {}* %40)
+	%36 = load i64, i64* %i-2
+	%37 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i64 %36
+	%38 = bitcast i32* %37 to {}*
+	%39 = call {}*(%"type.::AVLTree"*, {}*) @"::AVLTree::get"(%"type.::AVLTree"* %tree, {}* %38)
 	%key = alloca {}*
-	store {}* %41, {}** %key
-	%42 = load {}*, {}** %key
-	%43 = icmp ne {}* %42, null
-	br i1 %43, label %.block.13, label %.block.14
+	store {}* %39, {}** %key
+	%40 = load {}*, {}** %key
+	%41 = icmp ne {}* %40, null
+	br i1 %41, label %.block.13, label %.block.14
 .block.13:
 	br label %.block.15
 .block.14:
 	br label %.block.15
 .block.15:
-	%44 = phi i8* [ bitcast ([4 x i8]* @.const.13 to i8*), %.block.13 ], [ bitcast ([3 x i8]* @.const.14 to i8*), %.block.14 ]
+	%42 = phi i8* [ bitcast ([4 x i8]* @.const.13 to i8*), %.block.13 ], [ bitcast ([3 x i8]* @.const.14 to i8*), %.block.14 ]
 	%is_contained = alloca i8*
-	store i8* %44, i8** %is_contained
-	%45 = load i64, i64* %i-2
-	%46 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i64 %45
-	%47 = load i32, i32* %46
-	%48 = load i8*, i8** %is_contained
-	%49 = call i32(i8*, ...) @printf(i8* bitcast ([17 x i8]* @.const.15 to i8*), i32 %47, i8* %48)
-	%50 = load i64, i64* %i-2
-	%51 = add nuw i64 %50, 1
-	store i64 %51, i64* %i-2
+	store i8* %42, i8** %is_contained
+	%43 = load i64, i64* %i-2
+	%44 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i64 %43
+	%45 = load i32, i32* %44
+	%46 = load i8*, i8** %is_contained
+	%47 = call i32(i8*, ...) @printf(i8* bitcast ([17 x i8]* @.const.15 to i8*), i32 %45, i8* %46)
+	%48 = load i64, i64* %i-2
+	%49 = add nuw i64 %48, 1
+	store i64 %49, i64* %i-2
 	br label %.block.10
 .block.12:
-	%52 = bitcast %"type.::AVLTree"* %tree to %"type.::AVLTree"*
-	%53 = bitcast void(i32*)* @"<i32>::print" to void({}*)*
-	call void(%"type.::AVLTree"*, void({}*)*) @"::AVLTree::print"(%"type.::AVLTree"* %52, void({}*)* %53)
-	%54 = bitcast i32(i32*, i32*)* @"<i32>::cmp" to i32({}*, {}*)*
-	%55 = call %"type.::BTree"(i64, i64, i32({}*, {}*)*) @"::BTree::new"(i64 3, i64 2, i32({}*, {}*)* %54)
+	call void(%"type.::AVLTree"*, void({}*)*) @"::AVLTree::print"(%"type.::AVLTree"* %tree, void({}*)* bitcast (void(i32*)* @"<i32>::print" to void({}*)*))
+	%50 = call %"type.::BTree"(i64, i64, i32({}*, {}*)*) @"::BTree::new"(i64 3, i64 2, i32({}*, {}*)* bitcast (i32(i32*, i32*)* @"<i32>::cmp" to i32({}*, {}*)*))
 	%b_tree = alloca %"type.::BTree"
-	store %"type.::BTree" %55, %"type.::BTree"* %b_tree
-	%56 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i32 0
-	%57 = bitcast i32* %56 to {}*
-	%58 = call {}*(%"type.::BTree"*, {}*) @"::BTree::insert"(%"type.::BTree"* %b_tree, {}* %57)
+	store %"type.::BTree" %50, %"type.::BTree"* %b_tree
+	%51 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i32 0
+	%52 = bitcast i32* %51 to {}*
+	%53 = call {}*(%"type.::BTree"*, {}*) @"::BTree::insert"(%"type.::BTree"* %b_tree, {}* %52)
 	%heap_sort_test = alloca [15 x i32*]
 	%index = alloca i64
 	store i64 0, i64* %index
 	br label %.block.16
 .block.16:
-	%59 = load i64, i64* %index
-	%60 = icmp ult i64 %59, 15
-	br i1 %60, label %.block.17, label %.block.18
+	%54 = load i64, i64* %index
+	%55 = icmp ult i64 %54, 15
+	br i1 %55, label %.block.17, label %.block.18
 .block.17:
-	%61 = load i64, i64* %index
-	%62 = add nuw i64 %61, 7
-	%63 = mul nuw i64 %62, 7
-	%64 = urem i64 %63, 15
-	%65 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i64 %64
+	%56 = load i64, i64* %index
+	%57 = add nuw i64 %56, 7
+	%58 = mul nuw i64 %57, 7
+	%59 = urem i64 %58, 15
+	%60 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i64 %59
 	%key-1 = alloca i32*
-	store i32* %65, i32** %key-1
-	%66 = load i64, i64* %index
-	%67 = getelementptr inbounds [15 x i32*], [15 x i32*]* %heap_sort_test, i32 0, i64 %66
-	%68 = load i32*, i32** %key-1
-	store i32* %68, i32** %67
-	%69 = load i64, i64* %index
-	%70 = add nuw i64 %69, 1
-	store i64 %70, i64* %index
+	store i32* %60, i32** %key-1
+	%61 = load i64, i64* %index
+	%62 = getelementptr inbounds [15 x i32*], [15 x i32*]* %heap_sort_test, i32 0, i64 %61
+	%63 = load i32*, i32** %key-1
+	store i32* %63, i32** %62
+	%64 = load i64, i64* %index
+	%65 = add nuw i64 %64, 1
+	store i64 %65, i64* %index
 	br label %.block.16
 .block.18:
-	%71 = call i32(i8*, ...) @printf(i8* bitcast ([11 x i8]* @.const.16 to i8*))
-	%72 = bitcast [15 x i32*]* %heap_sort_test to i32**
-	call void(i32**, i64) @"::print_i32_ptr_array"(i32** %72, i64 15)
-	%73 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.17 to i8*))
-	%74 = bitcast [15 x i32*]* %heap_sort_test to {}**
-	%75 = bitcast i32(i32*, i32*)* @"<i32>::cmp" to i32({}*, {}*)*
-	call void({}**, i64, i32({}*, {}*)*) @"::heap_sort"({}** %74, i64 15, i32({}*, {}*)* %75)
-	%76 = call i32(i8*, ...) @printf(i8* bitcast ([11 x i8]* @.const.18 to i8*))
-	%77 = bitcast [15 x i32*]* %heap_sort_test to i32**
-	call void(i32**, i64) @"::print_i32_ptr_array"(i32** %77, i64 15)
-	%78 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.19 to i8*))
+	%66 = call i32(i8*, ...) @printf(i8* bitcast ([11 x i8]* @.const.16 to i8*))
+	%67 = bitcast [15 x i32*]* %heap_sort_test to i32**
+	call void(i32**, i64) @"::print_i32_ptr_array"(i32** %67, i64 15)
+	%68 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.17 to i8*))
+	%69 = bitcast [15 x i32*]* %heap_sort_test to {}**
+	call void({}**, i64, i32({}*, {}*)*) @"::heap_sort"({}** %69, i64 15, i32({}*, {}*)* bitcast (i32(i32*, i32*)* @"<i32>::cmp" to i32({}*, {}*)*))
+	%70 = call i32(i8*, ...) @printf(i8* bitcast ([11 x i8]* @.const.18 to i8*))
+	%71 = bitcast [15 x i32*]* %heap_sort_test to i32**
+	call void(i32**, i64) @"::print_i32_ptr_array"(i32** %71, i64 15)
+	%72 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.19 to i8*))
 	ret i32 0
 }
 

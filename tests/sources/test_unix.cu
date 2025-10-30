@@ -10,18 +10,10 @@ foreign function fork() -> ProcessID;
 foreign function wait(status: *i32) -> ProcessID;
 
 foreign function main() -> i32 {
-    // Approach:
-    // - Parent prints statement 1
-    // - Fork child process, parent waits for child to finish
-    // - Child prints statement 2
-    // - Child prints statement 3
-    // - Child finishes, so parent resumes
-    // - Parent prints statement 4
-
     // Obtain the PID of the parent process (which is currently the only process)
     let parent_pid = getpid();
 
-    printf("1. Parent (P) is having ID %d\n", parent_pid);
+    printf("1. I am the parent with PID %d\n", parent_pid);
 
     // Fork this process (and obtain the PID of the child process in parent process)
     let child_pid = fork();
@@ -30,15 +22,15 @@ foreign function main() -> i32 {
         // This is the child process, so obtain the PID of this process
         let child_pid = getpid();
 
-        printf("2. Child is having ID %d\n", child_pid);
+        printf("2. I am the child with PID %d\n", child_pid);
 
-        printf("3. My Parent ID is %d\n", parent_pid);
+        printf("3. My parent has PID %d\n", parent_pid);
     }
     else {
         // This is the parent process, so wait until the child process finishes
         wait(null);
 
-        printf("4. ID of P's Child is %d\n", child_pid);
+        printf("4. My child has PID %d\n", child_pid);
     }
 
     0

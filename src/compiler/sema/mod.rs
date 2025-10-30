@@ -554,59 +554,12 @@ impl GlobalContext {
         }
     }
 
-    pub fn types_are_equivalent(&self, lhs_type: TypeHandle, rhs_type: TypeHandle) -> bool {
-        lhs_type == rhs_type
+    pub fn try_implicit_conversion(&self, from_type: TypeHandle, to_type: TypeHandle, from_mutable: bool) -> Option<Conversion> {
+        Conversion::try_implicit(self, from_type, to_type, from_mutable)
     }
 
-    pub fn can_coerce_type(&self, from_type: TypeHandle, to_type: TypeHandle, from_mutable: bool) -> bool {
-        from_type == to_type || match (self.type_repr(from_type), self.type_repr(to_type)) {
-            (
-                &TypeRepr::Pointer { pointee_type: from_pointee, semantics: from_semantics },
-                &TypeRepr::Pointer { pointee_type: to_pointee, semantics: to_semantics },
-            ) => {
-                use PointerSemantics::*;
-                match (from_semantics, to_semantics) {
-                    (Immutable | ImmutableSymbol, Immutable | ImmutableSymbol) => {
-                        self.can_coerce_type(from_pointee, to_pointee, false)
-                    }
-                    (Immutable | ImmutableSymbol, Mutable) => {
-                        false
-                    }
-                    (Mutable, Immutable | ImmutableSymbol) => {
-                        self.can_coerce_type(from_pointee, to_pointee, true)
-                    }
-                    (Mutable, Mutable) => {
-                        from_mutable && self.can_coerce_type(from_pointee, to_pointee, true)
-                    }
-                }
-            }
-            (
-                &TypeRepr::Array { item_type: from_item, length: Some(from_length) },
-                &TypeRepr::Array { item_type: to_item, length: Some(to_length) },
-            ) => {
-                from_length == to_length && self.can_coerce_type(from_item, to_item, from_mutable)
-            }
-            (
-                &TypeRepr::Array { item_type: from_item, .. },
-                &TypeRepr::Array { item_type: to_item, length: None },
-            ) => {
-                self.can_coerce_type(from_item, to_item, from_mutable)
-            }
-            (
-                TypeRepr::Function { signature: from_signature },
-                TypeRepr::Function { signature: to_signature },
-            ) => {
-                from_signature.is_variadic() == to_signature.is_variadic()
-                    && self.can_coerce_type(from_signature.return_type(), to_signature.return_type(), false)
-                    && from_signature.parameter_types().len() == to_signature.parameter_types().len()
-                    && std::iter::zip(from_signature.parameter_types(), to_signature.parameter_types())
-                        .all(|(&from_param, &to_param)| {
-                            self.can_coerce_type(from_param, to_param, false)
-                        })
-            }
-            (TypeRepr::Never, _) => true,
-            _ => false
-        }
+    pub fn try_explicit_conversion(&self, from_type: TypeHandle, to_type: TypeHandle, from_mutable: bool) -> Option<Conversion> {
+        Conversion::try_explicit(self, from_type, to_type, from_mutable)
     }
 
     pub fn process_global_statements<'a>(&mut self, top_level_statements: impl IntoIterator<Item = &'a mut Node>) -> crate::Result<()> {

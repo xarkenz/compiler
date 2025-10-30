@@ -54,8 +54,8 @@ implement LinkedList {
         }
     }
 
-    function push_front(mut self: *mut Self, value: *void) {
-        let mut new_node = malloc(sizeof(LinkedListNode)) as *mut LinkedListNode;
+    function push_front(self: *mut Self, value: *void) {
+        let new_node = malloc(sizeof(LinkedListNode)) as *mut LinkedListNode;
         *new_node = LinkedListNode {
             value: value,
             next: self.head,
@@ -63,7 +63,7 @@ implement LinkedList {
         self.head = new_node;
     }
 
-    function pop_front(mut self: *mut Self) -> *void {
+    function pop_front(self: *mut Self) -> *void {
         if (self.head == null) {
             null
         }
@@ -86,7 +86,7 @@ struct AVLTreeNode {
 
 implement AVLTreeNode {
     function alloc(key: *void) -> *mut Self {
-        let mut alloc = malloc(sizeof(Self)) as *mut Self;
+        let alloc = malloc(sizeof(Self)) as *mut Self;
         *alloc = Self {
             key: key,
             left: null,
@@ -106,15 +106,15 @@ implement AVLTreeNode {
         }
     }
 
-    function recompute_height(mut self: *mut Self) {
+    function recompute_height(self: *mut Self) {
         self.height = 1 + i32::max(
             self.left.get_height(),
             self.right.get_height(),
         );
     }
 
-    function rotate_right(mut self: *mut Self) -> *mut Self {
-        let mut new_root = self.left;
+    function rotate_right(self: *mut Self) -> *mut Self {
+        let new_root = self.left;
         self.left = new_root.right;
         new_root.right = self;
         self.recompute_height();
@@ -122,8 +122,8 @@ implement AVLTreeNode {
         new_root
     }
 
-    function rotate_left(mut self: *mut Self) -> *mut Self {
-        let mut new_root = self.right;
+    function rotate_left(self: *mut Self) -> *mut Self {
+        let new_root = self.right;
         self.right = new_root.left;
         new_root.left = self;
         self.recompute_height();
@@ -131,7 +131,7 @@ implement AVLTreeNode {
         new_root
     }
 
-    function balance(mut self: *mut Self) -> *mut Self {
+    function balance(self: *mut Self) -> *mut Self {
         if (self == null) {
             return null;
         }
@@ -197,7 +197,7 @@ implement AVLTree {
         null
     }
 
-    function insert_subtree(mut self: *mut Self, mut node_ref: *mut *mut AVLTreeNode, key: *void) -> *void {
+    function insert_subtree(self: *mut Self, node_ref: *mut *mut AVLTreeNode, key: *void) -> *void {
         if (*node_ref == null) {
             *node_ref = AVLTreeNode::alloc(key);
             return null;
@@ -218,7 +218,7 @@ implement AVLTree {
         null
     }
 
-    function insert(mut self: *mut Self, key: *void) -> *void {
+    function insert(self: *mut Self, key: *void) -> *void {
         self.insert_subtree(&self.root, key)
     }
 
@@ -248,9 +248,9 @@ struct BTreeLeaf {
 
 implement BTreeLeaf {
     function alloc(l_order: usize, first_element: *void) -> *mut Self {
-        let mut elements = malloc(sizeof(*void) * l_order) as *mut [*void];
+        let elements = malloc(sizeof(*void) * l_order) as *mut [*void];
         elements[0] = first_element;
-        let mut alloc = malloc(sizeof(Self)) as *mut Self;
+        let alloc = malloc(sizeof(Self)) as *mut Self;
         *alloc = Self {
             is_leaf: true,
             degree: 1,
@@ -277,7 +277,7 @@ implement BTree {
         }
     }
 
-    function insert(mut self: *mut Self, key: *void) -> *void {
+    function insert(self: *mut Self, key: *void) -> *void {
         if (self.root == null) {
             self.root = BTreeLeaf::alloc(self.l_order, key) as *mut BTreeNode;
             return null;
@@ -286,7 +286,7 @@ implement BTree {
     }
 }
 
-function max_percolate_dmut(mut array: *mut [*void], length: usize, comparator: function(*void, *void) -> i32, mut index: usize) {
+function max_percolate_down(array: *mut [*void], length: usize, comparator: function(*void, *void) -> i32, mut index: usize) {
     let target = array[index];
     while (true) {
         let left = (index + 1) * 2 - 1;
@@ -294,7 +294,7 @@ function max_percolate_dmut(mut array: *mut [*void], length: usize, comparator: 
         if (left >= length) {
             break;
         }
-        let mut max = if (right >= length || comparator(array[left], array[right]) > 0) {
+        let max = if (right >= length || comparator(array[left], array[right]) > 0) {
             left
         } else {
             right
@@ -310,13 +310,13 @@ function max_percolate_dmut(mut array: *mut [*void], length: usize, comparator: 
     array[index] = target;
 }
 
-function heap_sort(mut array: *mut [*void], length: usize, comparator: function(*void, *void) -> i32) {
+function heap_sort(array: *mut [*void], length: usize, comparator: function(*void, *void) -> i32) {
     // Build max heap
     let mut index = length / 2;
     while (index > 0) {
         index -= 1;
-        // Percolate dmut
-        max_percolate_dmut(array, length, comparator, index);
+        // Percolate down
+        max_percolate_down(array, length, comparator, index);
     }
     // Build sorted array
     index = length;
@@ -326,8 +326,8 @@ function heap_sort(mut array: *mut [*void], length: usize, comparator: function(
         let max_value = array[0];
         array[0] = array[index];
         array[index] = max_value;
-        // Percolate the root dmut within the unsorted range
-        max_percolate_dmut(array, index, comparator, 0);
+        // Percolate the root down within the unsorted range
+        max_percolate_down(array, index, comparator, 0);
     }
 }
 
@@ -337,7 +337,7 @@ function print_i32_ptr_array(array: *[*i32], length: usize) {
         return;
     }
     printf("[%d", *array[0]);
-    let mut index: usize = 1;
+    let mut index = 1_usize;
     while (index < length) {
         printf(", %d", *array[index]);
         index += 1;
@@ -371,7 +371,7 @@ foreign function main() -> i32 {
     let mut i = 0_usize;
     while (i < 10) {
         let key = tree.get(&keys[i] as *void);
-        let mut is_contained: *[u8] = if (key != null) {
+        let is_contained: *[u8] = if (key != null) {
             "yes"
         } else {
             "no"

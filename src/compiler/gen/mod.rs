@@ -244,97 +244,76 @@ impl<W: Write> Generator<W> {
         self.emitter.emit_label(label)
     }
 
-    pub fn enforce_type(&mut self, value: Value, target_type: TypeHandle, local_context: &mut LocalContext) -> crate::Result<Value> {
+    pub fn enforce_type(&mut self, value: Value, expected_type: TypeHandle, local_context: &mut LocalContext) -> crate::Result<Value> {
         let got_type = value.get_type();
 
-        if got_type == TypeHandle::NEVER || self.context.types_are_equivalent(got_type, target_type) {
-            Ok(value)
-        }
-        // TODO: should from_mutable be true here?
-        else if self.context.can_coerce_type(got_type, target_type, true) {
+        let conversion = self.context.try_implicit_conversion(got_type, expected_type, true)
+            .ok_or_else(|| Box::new(crate::Error::IncompatibleTypes {
+                expected_type: expected_type.path(self.context()).to_string(),
+                got_type: got_type.path(self.context()).to_string(),
+            }))?;
+
+        self.convert_value(value, expected_type, conversion, local_context)
+    }
+
+    pub fn enforce_constant_type(&mut self, constant: Constant, expected_type: TypeHandle) -> crate::Result<Constant> {
+        let got_type = constant.get_type();
+
+        let conversion = self.context.try_implicit_conversion(got_type, expected_type, true)
+            .ok_or_else(|| Box::new(crate::Error::IncompatibleTypes {
+                expected_type: expected_type.path(self.context()).to_string(),
+                got_type: got_type.path(self.context()).to_string(),
+            }))?;
+
+        self.convert_constant(constant, expected_type, conversion)
+    }
+
+    pub fn explicitly_convert(&mut self, value: Value, to_type: TypeHandle, local_context: &mut LocalContext) -> crate::Result<Value> {
+        let from_type = value.get_type();
+
+        let conversion = self.context.try_explicit_conversion(from_type, to_type, true)
+            .ok_or_else(|| Box::new(crate::Error::IncompatibleTypes {
+                expected_type: to_type.path(self.context()).to_string(),
+                got_type: from_type.path(self.context()).to_string(),
+            }))?;
+
+        self.convert_value(value, to_type, conversion, local_context)
+    }
+
+    pub fn convert_value(&mut self, mut value: Value, to_type: TypeHandle, conversion: Conversion, local_context: &mut LocalContext) -> crate::Result<Value> {
+        if let Some(operation) = conversion.operation_needed {
             if let Value::Constant(constant) = value {
                 Ok(Value::Constant(Constant::Convert {
-                    operation: ConversionOperation::BitwiseCast,
+                    operation,
                     value: Box::new(constant),
-                    result_type: target_type,
+                    result_type: to_type,
                 }))
             }
             else {
                 let value = self.coerce_to_rvalue(value, local_context)?;
-                let result = local_context.new_anonymous_register(target_type);
-                self.emitter.emit_conversion(
-                    ConversionOperation::BitwiseCast,
-                    &result,
-                    &value,
-                    &self.context,
-                )?;
+                let result = local_context.new_anonymous_register(to_type);
+                self.emitter.emit_conversion(operation, &result, &value, &self.context)?;
 
                 Ok(Value::Register(result))
             }
         }
         else {
-            Err(Box::new(crate::Error::IncompatibleTypes {
-                expected_type: target_type.path(self.context()).to_string(),
-                got_type: got_type.path(self.context()).to_string(),
-            }))
+            value.set_type(to_type);
+            Ok(value)
         }
     }
 
-    pub fn enforce_constant_type(&mut self, constant: Constant, target_type: TypeHandle) -> crate::Result<Constant> {
-        let got_type = constant.get_type();
-
-        if got_type == TypeHandle::NEVER || self.context.types_are_equivalent(got_type, target_type) {
-            Ok(constant)
-        }
-        // TODO: should from_mutable be true here?
-        else if self.context.can_coerce_type(got_type, target_type, true) {
+    pub fn convert_constant(&mut self, mut constant: Constant, to_type: TypeHandle, conversion: Conversion) -> crate::Result<Constant> {
+        if let Some(operation) = conversion.operation_needed {
             Ok(Constant::Convert {
-                operation: ConversionOperation::BitwiseCast,
+                operation,
                 value: Box::new(constant),
-                result_type: target_type,
+                result_type: to_type,
             })
         }
         else {
-            Err(Box::new(crate::Error::IncompatibleTypes {
-                expected_type: target_type.path(self.context()).to_string(),
-                got_type: got_type.path(self.context()).to_string(),
-            }))
-        }
-    }
-
-    pub fn change_type(&mut self, value: Value, target_type: TypeHandle, local_context: &mut LocalContext) -> crate::Result<Value> {
-        let original_type = value.get_type();
-
-        if self.context.types_are_equivalent(original_type, target_type) {
-            Ok(value)
-        }
-        else {
-            let original_repr = original_type.repr(&self.context);
-            let target_repr = target_type.repr(&self.context);
-
-            // Signed and unsigned integers of the same size don't require conversion since they
-            // have the same IR representation
-            if let (
-                &TypeRepr::Integer { size: from_size, .. },
-                &TypeRepr::Integer { size: to_size, .. },
-            ) = (original_repr, target_repr) {
-                if from_size == to_size {
-                    return Ok(value);
-                }
-            }
-
-            if let Some(operation) = ConversionOperation::from_type_reprs(original_repr, target_repr) {
-                let result = local_context.new_anonymous_register(target_type);
-                self.emitter.emit_conversion(operation, &result, &value, &self.context)?;
-
-                Ok(Value::from(result))
-            }
-            else {
-                Err(Box::new(crate::Error::InconvertibleTypes {
-                    original_type: target_type.path(self.context()).to_string(),
-                    target_type: original_type.path(self.context()).to_string(),
-                }))
-            }
+            constant.set_type(to_type);
+            Ok(constant)
         }
     }
 
@@ -789,7 +768,7 @@ impl<W: Write> Generator<W> {
 
                 let target_type = self.context.interpret_type_node(type_node)?;
 
-                self.change_type(value, target_type, local_context)?
+                self.explicitly_convert(value, target_type, local_context)?
             }
             ast::BinaryOperation::Add => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
@@ -1968,16 +1947,16 @@ impl<W: Write> Generator<W> {
                     if let Constant::Integer(integer) = value {
                         let converted_integer = IntegerValue::from_unknown_type(integer.raw(), target_type, self.context.target())
                             .ok_or_else(|| Box::new(crate::Error::InconvertibleTypes {
-                                original_type: integer.integer_type().as_handle().path(&self.context).to_string(),
-                                target_type: target_type.path(&self.context).to_string(),
+                                from_type: integer.integer_type().as_handle().path(&self.context).to_string(),
+                                to_type: target_type.path(&self.context).to_string(),
                             }))?;
 
                         Constant::Integer(converted_integer)
                     }
                     else {
                         return Err(Box::new(crate::Error::InconvertibleTypes {
-                            original_type: value.get_type().path(&self.context).to_string(),
-                            target_type: target_type.path(&self.context).to_string(),
+                            from_type: value.get_type().path(&self.context).to_string(),
+                            to_type: target_type.path(&self.context).to_string(),
                         }));
                     }
                 }

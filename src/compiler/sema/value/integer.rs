@@ -132,6 +132,10 @@ impl IntegerValue {
         self.integer_type
     }
 
+    pub fn set_integer_type(&mut self, integer_type: IntegerType) {
+        self.integer_type = integer_type;
+    }
+
     pub fn llvm_syntax(&self) -> String {
         self.to_string()
     }

@@ -187,8 +187,8 @@ pub enum Error {
         got_type: String,
     },
     InconvertibleTypes {
-        original_type: String,
-        target_type: String,
+        from_type: String,
+        to_type: String,
     },
     UnexpectedExpression {
     },
@@ -377,7 +377,7 @@ impl std::fmt::Display for Error {
             Self::UnknownTypeSize { type_name } => write!(f, "cannot use type '{type_name}' here, as its size is not constant (did you mean to use a pointer?)"),
             Self::NonConstantArrayLength {} => write!(f, "array length must be constant"),
             Self::IncompatibleTypes { expected_type, got_type } => write!(f, "expected a value of type '{expected_type}', got '{got_type}' instead"),
-            Self::InconvertibleTypes { original_type, target_type } => write!(f, "cannot convert from '{original_type}' to '{target_type}'"),
+            Self::InconvertibleTypes { from_type: original_type, to_type: target_type } => write!(f, "cannot convert from '{original_type}' to '{target_type}'"),
             Self::UnexpectedExpression {} => write!(f, "unexpected expression type"),
             Self::InvalidBreak {} => write!(f, "unexpected 'break' outside loop"),
             Self::InvalidContinue {} => write!(f, "unexpected 'continue' outside loop"),

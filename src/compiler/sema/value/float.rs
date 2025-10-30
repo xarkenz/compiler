@@ -84,6 +84,10 @@ impl FloatValue {
         self.float_type
     }
 
+    pub fn set_float_type(&mut self, float_type: FloatType) {
+        self.float_type = float_type;
+    }
+
     pub fn llvm_syntax(&self) -> String {
         // Convert to hexadecimal representation for purposes of keeping exact value
         format!("0x{:016X}", self.raw.to_bits())
