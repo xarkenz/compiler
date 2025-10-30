@@ -4,15 +4,32 @@ use super::*;
 pub enum PointerSemantics {
     Immutable,
     Mutable,
+    ImmutableSymbol,
 }
 
 impl PointerSemantics {
-    pub fn from_flag(is_mutable: bool) -> Self {
+    pub fn normal(is_mutable: bool) -> Self {
         if is_mutable {
             Self::Mutable
         }
         else {
             Self::Immutable
+        }
+    }
+
+    pub fn for_symbol(is_mutable: bool) -> Self {
+        if is_mutable {
+            Self::Mutable
+        }
+        else {
+            Self::ImmutableSymbol
+        }
+    }
+
+    pub fn normalized(self) -> Self {
+        match self {
+            Self::ImmutableSymbol => Self::Immutable,
+            semantics => semantics
         }
     }
 }
@@ -213,5 +230,18 @@ impl TypeHandle {
 
     pub fn llvm_syntax(self, context: &GlobalContext) -> &str {
         context.type_llvm_syntax(self)
+    }
+
+    pub fn map_pointer_semantics<F>(self, context: &mut GlobalContext, f: F) -> Self
+    where
+        F: FnOnce(TypeHandle, PointerSemantics) -> PointerSemantics,
+    {
+        if let &TypeRepr::Pointer { pointee_type, semantics } = self.repr(context) {
+            let semantics = f(pointee_type, semantics);
+            context.get_pointer_type(pointee_type, semantics)
+        }
+        else {
+            self
+        }
     }
 }

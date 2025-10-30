@@ -340,8 +340,12 @@ impl<W: Write> Generator<W> {
 
     pub fn coerce_to_rvalue(&mut self, value: Value, local_context: &mut LocalContext) -> crate::Result<Value> {
         let (pointer, mut pointee_type) = match value {
-            Value::Indirect { pointer, pointee_type } => (*pointer, pointee_type),
-            Value::Constant(Constant::Indirect { pointer, pointee_type }) => ((*pointer).into(), pointee_type),
+            Value::Indirect { pointer, pointee_type } => {
+                (*pointer, pointee_type)
+            }
+            Value::Constant(Constant::Indirect { pointer, pointee_type }) => {
+                (Value::Constant(*pointer), pointee_type)
+            }
             value => return Ok(value)
         };
 
@@ -353,7 +357,9 @@ impl<W: Write> Generator<W> {
             let &TypeRepr::Pointer { semantics, .. } = pointer.get_type().repr(&self.context) else {
                 panic!("indirect value pointer is not a pointer type")
             };
-            pointee_type = self.context.get_pointer_type(next_pointee_type, semantics);
+            if !matches!(semantics, PointerSemantics::ImmutableSymbol) {
+                pointee_type = self.context.get_pointer_type(next_pointee_type, semantics);
+            }
         }
 
         let result = local_context.new_anonymous_register(pointee_type);
@@ -680,7 +686,8 @@ impl<W: Write> Generator<W> {
             ast::UnaryOperation::Reference => {
                 let operand = self.generate_local_node(operand, local_context, None)?;
 
-                if let Value::Indirect { pointer, .. } = operand {
+                if let Value::Indirect { mut pointer, .. } = operand {
+                    pointer.map_pointer_semantics(&mut self.context, |_, semantics| semantics.normalized());
                     *pointer
                 }
                 else {
@@ -1102,8 +1109,11 @@ impl<W: Write> Generator<W> {
                         let &TypeRepr::Pointer { semantics: outer_semantics, .. } = pointer.get_type().repr(&self.context) else {
                             panic!("indirect value pointer is not a pointer type")
                         };
-                        let semantics = match semantics {
-                            PointerSemantics::Mutable => outer_semantics,
+                        let semantics = match (outer_semantics, semantics) {
+                            (PointerSemantics::ImmutableSymbol, PointerSemantics::Mutable) => {
+                                PointerSemantics::Mutable
+                            },
+                            (_, PointerSemantics::Mutable) => outer_semantics,
                             _ => semantics
                         };
                         let array_pointer = local_context.new_anonymous_register(pointee_type);
@@ -1604,7 +1614,7 @@ impl<W: Write> Generator<W> {
             }
         };
 
-        let semantics = PointerSemantics::from_flag(is_mutable);
+        let semantics = PointerSemantics::for_symbol(is_mutable);
         let pointer_type = self.context.get_pointer_type(value_type, semantics);
         let pointer = local_context.define_indirect_symbol(name.into(), pointer_type, value_type);
 
@@ -1620,7 +1630,7 @@ impl<W: Write> Generator<W> {
         let value_type = self.context.interpret_type_node(type_node)?;
         let value = self.generate_constant_node(value, Some(local_context), Some(value_type))?;
 
-        let pointer_type = self.context.get_pointer_type(value_type, PointerSemantics::Immutable);
+        let pointer_type = self.context.get_pointer_type(value_type, PointerSemantics::ImmutableSymbol);
         let pointer = local_context.define_indirect_constant_symbol(name.into(), pointer_type, value_type);
 
         self.emitter.emit_global_allocation(&pointer, &value, true, &self.context)?;
@@ -1676,7 +1686,7 @@ impl<W: Write> Generator<W> {
             .map(|(ast::FunctionParameterNode { name, is_mutable, .. }, &parameter_type)| {
                 let input_register = local_context.new_anonymous_register(parameter_type);
 
-                let semantics = PointerSemantics::from_flag(*is_mutable);
+                let semantics = PointerSemantics::for_symbol(*is_mutable);
                 let pointer_type = self.context.get_pointer_type(parameter_type, semantics);
                 let pointer = local_context.define_indirect_symbol(name.clone(), pointer_type, parameter_type);
 

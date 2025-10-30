@@ -14,7 +14,7 @@ foreign function strlen(str: *[u8]) -> u64;
 foreign function isdigit(char: i32) -> i32;
 
 implement u8 {
-    function swap(mut self: *mut Self, mut other: *mut Self) {
+    function swap(self: *mut Self, other: *mut Self) {
         let temp = *self;
         *self = *other;
         *other = temp;
@@ -81,10 +81,10 @@ implement String {
         self.str.as_str()
     }
 
-    function grow_by(mut self: *mut Self, additional: usize) {
+    function grow_by(self: *mut Self, additional: usize) {
         let required_capacity = self.capacity + additional;
         let capacity = usize::max(self.capacity * 2, required_capacity);
-        let mut ptr = malloc(sizeof(u8) * capacity) as *mut [u8];
+        let ptr = malloc(sizeof(u8) * capacity) as *mut [u8];
 
         memcpy(ptr as *mut void, self.str.ptr as *void, self.str.length);
         free(self.str.ptr as *mut void);
@@ -93,7 +93,7 @@ implement String {
         self.capacity = capacity;
     }
 
-    function push(mut self: *mut Self, ch: u8) {
+    function push(self: *mut Self, ch: u8) {
         if (self.str.length == self.capacity) {
             self.grow_by(1);
         }
@@ -102,7 +102,7 @@ implement String {
         self.str.length += 1;
     }
 
-    function insert(mut self: *mut Self, mut index: usize, mut ch: u8) {
+    function insert(self: *mut Self, mut index: usize, mut ch: u8) {
         if (self.str.length == self.capacity) {
             self.grow_by(1);
         }
@@ -188,7 +188,7 @@ function omg_linked_list(values: *[*[u8]], value_count: usize) {
 
     let mut index = 0_usize;
     while (index < value_count) {
-        let mut node = malloc(sizeof(Node)) as *mut Node;
+        let node = malloc(sizeof(Node)) as *mut Node;
         *node = Node {
             value: values[index],
             next: head,

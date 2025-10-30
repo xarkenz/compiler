@@ -86,13 +86,17 @@ impl std::fmt::Display for PathBaseType {
                 write!(f, "{primitive}")
             }
             Self::Pointer { pointee_type, semantics } => match semantics {
-                PointerSemantics::Immutable => write!(f, "*{pointee_type}"),
-                PointerSemantics::Mutable => write!(f, "*mut {pointee_type}"),
+                PointerSemantics::Immutable | PointerSemantics::ImmutableSymbol => {
+                    write!(f, "*{pointee_type}")
+                }
+                PointerSemantics::Mutable => {
+                    write!(f, "*mut {pointee_type}")
+                }
             }
             Self::Array { item_type, length: Some(length) } => {
                 write!(f, "[{item_type}; {length}]")
             }
-            Self::Array { item_type, length: _none } => {
+            Self::Array { item_type, .. } => {
                 write!(f, "[{item_type}]")
             }
             Self::Tuple { item_types } => match item_types.as_ref() {
@@ -201,13 +205,11 @@ impl std::fmt::Display for AbsolutePath {
                 write!(f, "<{base_type}>::{}", self.simple())
             }
         }
+        else if self.simple().is_empty() {
+            write!(f, "::module")
+        }
         else {
-            if self.simple().is_empty() {
-                write!(f, "::module")
-            }
-            else {
-                write!(f, "::{}", self.simple())
-            }
+            write!(f, "::{}", self.simple())
         }
     }
 }

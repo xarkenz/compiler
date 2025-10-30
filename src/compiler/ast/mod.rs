@@ -311,13 +311,17 @@ impl std::fmt::Display for TypeNode {
                 write!(f, "{}", PathSegment::path_to_string(segments))
             }
             Self::Pointer { pointee_type, semantics } => match semantics {
-                PointerSemantics::Immutable => write!(f, "*{pointee_type}"),
-                PointerSemantics::Mutable => write!(f, "*mut {pointee_type}"),
+                PointerSemantics::Immutable | PointerSemantics::ImmutableSymbol => {
+                    write!(f, "*{pointee_type}")
+                }
+                PointerSemantics::Mutable => {
+                    write!(f, "*mut {pointee_type}")
+                }
             }
             Self::Array { item_type, length: Some(length) } => {
                 write!(f, "[{item_type}; {length}]")
             }
-            Self::Array { item_type, length: _none } => {
+            Self::Array { item_type, .. } => {
                 write!(f, "[{item_type}]")
             }
             Self::Tuple { item_types } => match item_types.as_ref() {

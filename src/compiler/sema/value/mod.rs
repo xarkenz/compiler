@@ -95,6 +95,10 @@ impl Register {
         self.value_type
     }
 
+    pub fn set_type(&mut self, value_type: TypeHandle) {
+        self.value_type = value_type;
+    }
+
     pub fn is_global(&self) -> bool {
         self.is_global
     }
@@ -345,6 +349,36 @@ impl Constant {
         }
     }
 
+    pub fn map_pointer_semantics<F>(&mut self, context: &mut GlobalContext, f: F)
+    where
+        F: FnOnce(TypeHandle, PointerSemantics) -> PointerSemantics,
+    {
+        match self {
+            Self::Undefined(value_type) => {
+                *value_type = value_type.map_pointer_semantics(context, f);
+            }
+            Self::Poison(value_type) => {
+                *value_type = value_type.map_pointer_semantics(context, f);
+            }
+            Self::ZeroInitializer(value_type) => {
+                *value_type = value_type.map_pointer_semantics(context, f);
+            }
+            Self::NullPointer(value_type) => {
+                *value_type = value_type.map_pointer_semantics(context, f);
+            }
+            Self::Register(register) => {
+                register.set_type(register.get_type().map_pointer_semantics(context, f));
+            }
+            Self::Convert { result_type, .. } => {
+                *result_type = result_type.map_pointer_semantics(context, f);
+            }
+            Self::GetElementPointer { result_type, .. } => {
+                *result_type = result_type.map_pointer_semantics(context, f);
+            }
+            _ => {}
+        }
+    }
+
     pub fn llvm_syntax(&self, context: &GlobalContext) -> String {
         match self {
             Self::Undefined(..) => {
@@ -416,7 +450,7 @@ impl Constant {
             }
         }
     }
-    
+
     fn array_llvm_syntax<'a>(items: impl IntoIterator<Item = &'a Self>, context: &GlobalContext) -> String {
         let mut items = items.into_iter();
         if let Some(item) = items.next() {
@@ -547,7 +581,7 @@ impl Value {
     pub fn into_mutable_lvalue(self, context: &GlobalContext) -> crate::Result<(Self, TypeHandle)> {
         match self {
             Self::Indirect { pointer, pointee_type } => {
-                if let &TypeRepr::Pointer { semantics: PointerSemantics::Mutable, .. } = context.type_repr(pointer.get_type()) {
+                if let &TypeRepr::Pointer { semantics: PointerSemantics::Mutable, .. } = pointer.get_type().repr(context) {
                     Ok((*pointer, pointee_type))
                 }
                 else {
@@ -564,6 +598,21 @@ impl Value {
         match self {
             Self::BoundFunction { self_value, .. } => Some(self_value.as_ref()),
             _ => None
+        }
+    }
+
+    pub fn map_pointer_semantics<F>(&mut self, context: &mut GlobalContext, f: F)
+    where
+        F: FnOnce(TypeHandle, PointerSemantics) -> PointerSemantics,
+    {
+        match self {
+            Self::Constant(constant) => {
+                constant.map_pointer_semantics(context, f);
+            }
+            Self::Register(register) => {
+                register.set_type(register.get_type().map_pointer_semantics(context, f));
+            }
+            _ => {}
         }
     }
 

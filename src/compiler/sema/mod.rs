@@ -566,10 +566,18 @@ impl GlobalContext {
             ) => {
                 use PointerSemantics::*;
                 match (from_semantics, to_semantics) {
-                    (Immutable, Immutable) => self.can_coerce_type(from_pointee, to_pointee, false),
-                    (Immutable, Mutable) => false,
-                    (Mutable, Immutable) => self.can_coerce_type(from_pointee, to_pointee, true),
-                    (Mutable, Mutable) => from_mutable && self.can_coerce_type(from_pointee, to_pointee, true),
+                    (Immutable | ImmutableSymbol, Immutable | ImmutableSymbol) => {
+                        self.can_coerce_type(from_pointee, to_pointee, false)
+                    }
+                    (Immutable | ImmutableSymbol, Mutable) => {
+                        false
+                    }
+                    (Mutable, Immutable | ImmutableSymbol) => {
+                        self.can_coerce_type(from_pointee, to_pointee, true)
+                    }
+                    (Mutable, Mutable) => {
+                        from_mutable && self.can_coerce_type(from_pointee, to_pointee, true)
+                    }
                 }
             }
             (
@@ -700,7 +708,7 @@ impl GlobalContext {
 
     fn define_global_value(&mut self, name: &str, value_type: TypeHandle, is_mutable: bool) -> crate::Result<Register> {
         let path = self.current_module_info().path().child(name);
-        let pointer_type = self.get_pointer_type(value_type, PointerSemantics::from_flag(is_mutable));
+        let pointer_type = self.get_pointer_type(value_type, PointerSemantics::for_symbol(is_mutable));
         let register = Register::new_global(path.to_string(), pointer_type);
 
         self.current_namespace_info_mut().define(
