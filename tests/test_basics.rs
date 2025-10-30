@@ -1,6 +1,14 @@
 mod common;
 
 #[test]
+fn hello() {
+    common::test_compile(
+        ["hello.cu"],
+        "hello.ll",
+    );
+}
+
+#[test]
 fn test_1() {
     common::test_compile(
         ["test_1.cu"],

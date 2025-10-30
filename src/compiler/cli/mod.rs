@@ -6,14 +6,14 @@ use crate::target::TargetInfo;
 use crate::token::scan::Scanner;
 
 #[derive(ClapParser, Debug)]
-#[command(author, version)]
+#[command(author, version, about)]
 pub struct CompilerArgs {
-    #[arg(short, long)]
+    /// Read source code from <path>
+    #[arg(short, long, value_name = "path")]
     src: Vec<String>,
-    #[arg(short, long)]
+    /// Write output to <path>
+    #[arg(short, long, value_name = "path")]
     out: String,
-    #[arg(long)]
-    debug: bool,
 }
 
 impl CompilerArgs {
@@ -23,10 +23,6 @@ impl CompilerArgs {
 
     pub fn output_path(&self) -> &str {
         &self.out
-    }
-
-    pub fn is_debug(&self) -> bool {
-        self.debug
     }
 }
 

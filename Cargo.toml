@@ -1,16 +1,18 @@
 [package]
-name = "compiler"
+name = "cupric"
 version = "0.1.0"
 edition = "2021"
-default-run = "compiler_driver"
+description = "A compiler for the Cupric programming language"
+readme = "README.md"
+default-run = "driver"
 
 [lib]
 name = "compiler"
 path = "src/compiler/lib.rs"
 
 [[bin]]
-name = "compiler_driver"
-path = "src/compiler_driver/main.rs"
+name = "driver"
+path = "src/driver/main.rs"
 
 [dependencies]
 clap = { version = "4.4.6", features = ["derive"] }
