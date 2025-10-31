@@ -1,0 +1,27 @@
+foreign function isalnum(character: i32) -> i32;
+
+foreign function isalpha(character: i32) -> i32;
+
+foreign function islower(character: i32) -> i32;
+
+foreign function isupper(character: i32) -> i32;
+
+foreign function isdigit(character: i32) -> i32;
+
+foreign function isxdigit(character: i32) -> i32;
+
+foreign function iscntrl(character: i32) -> i32;
+
+foreign function isgraph(character: i32) -> i32;
+
+foreign function isspace(character: i32) -> i32;
+
+foreign function isblank(character: i32) -> i32;
+
+foreign function isprint(character: i32) -> i32;
+
+foreign function ispunct(character: i32) -> i32;
+
+foreign function tolower(character: i32) -> i32;
+
+foreign function toupper(character: i32) -> i32;

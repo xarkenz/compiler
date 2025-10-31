@@ -2,11 +2,12 @@ use super::*;
 
 use std::io::{BufRead, BufReader};
 use std::fs::File;
+use std::path::Path;
 use utf8_chars::BufReadCharsExt;
 
 #[derive(Debug)]
 pub struct Scanner<T: BufRead> {
-    file_id: usize,
+    source_id: usize,
     next_index: usize,
     line: usize,
     source: T,
@@ -14,20 +15,20 @@ pub struct Scanner<T: BufRead> {
 }
 
 impl Scanner<BufReader<File>> {
-    pub fn from_filename(file_id: usize, filename: String) -> crate::Result<Self> {
-        File::open(filename)
-            .map(|file| Self::new(file_id, BufReader::new(file)))
+    pub fn from_path(source_id: usize, path: impl AsRef<Path>) -> crate::Result<Self> {
+        File::open(path)
+            .map(|file| Self::new(source_id, BufReader::new(file)))
             .map_err(|cause| Box::new(crate::Error::SourceFileOpen {
-                file_id,
+                file_id: source_id,
                 cause,
             }))
     }
 }
 
 impl<T: BufRead> Scanner<T> {
-    pub fn new(file_id: usize, source: T) -> Self {
+    pub fn new(source_id: usize, source: T) -> Self {
         Self {
-            file_id,
+            source_id,
             next_index: 0,
             line: 1,
             source,
@@ -35,8 +36,8 @@ impl<T: BufRead> Scanner<T> {
         }
     }
 
-    pub fn file_id(&self) -> usize {
-        self.file_id
+    pub fn source_id(&self) -> usize {
+        self.source_id
     }
 
     pub fn line(&self) -> usize {
@@ -49,7 +50,7 @@ impl<T: BufRead> Scanner<T> {
 
     pub fn create_span(&self, start_index: usize, end_index: usize) -> crate::Span {
         crate::Span {
-            file_id: self.file_id,
+            file_id: self.source_id,
             start_index,
             length: end_index - start_index,
         }
@@ -105,7 +106,7 @@ impl<T: BufRead> Scanner<T> {
         else {
             let read = self.source.read_char()
                 .map_err(|cause| Box::new(crate::Error::SourceFileRead {
-                    file_id: self.file_id,
+                    file_id: self.source_id,
                     line: self.line,
                     cause,
                 }))?;

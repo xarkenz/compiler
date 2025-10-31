@@ -1,23 +1,18 @@
 use clap::Parser;
 
 pub fn test_compile<'a>(
-    source_filenames: impl IntoIterator<Item = &'a str>,
+    source_filename: &str,
     output_filename: &str,
 ) {
-    let args_iter = std::iter::once("compiler".to_string())
-        .chain(source_filenames
-            .into_iter()
-            .flat_map(|source_filename| [
-                "-s".to_string(),
-                format!("tests/sources/{source_filename}"),
-            ]))
-        .chain([
-            "-o".to_string(),
-            format!("tests/outputs/{output_filename}"),
-        ]);
-    let args = compiler::cli::CompilerArgs::parse_from(args_iter);
+    let args = compiler::cli::CompilerArgs::parse_from([
+        "compiler".to_string(),
+        "--out".to_string(),
+        format!("tests/outputs/{output_filename}"),
+        format!("tests/sources/{source_filename}"),
+    ]);
 
     if let Err(error) = compiler::cli::invoke(&args) {
-        panic!("Error: {}", error.to_string_with_context(args.source_paths()))
+        let (error, source_paths) = *error;
+        panic!("Error: {}", error.to_string_with_context(&source_paths))
     }
 }

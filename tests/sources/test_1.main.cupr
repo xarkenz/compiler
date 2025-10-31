@@ -1,17 +1,4 @@
-foreign struct CFile;
-
-foreign function fopen(filename: *[u8], mode: *[u8]) -> *mut CFile;
-foreign function fclose(file: *mut CFile) -> i32;
-foreign function feof(file: *mut CFile) -> i32;
-foreign function fgets(buffer: *mut [u8], limit: i32, file: *mut CFile) -> *mut [u8];
-foreign function printf(format: *[u8], ..) -> u32;
-
-foreign function malloc(size_bytes: usize) -> *mut void;
-foreign function free(alloc: *mut void);
-foreign function memcpy(dest: *mut void, src: *void, byte_count: usize) -> *mut void;
-
-foreign function strlen(str: *[u8]) -> u64;
-foreign function isdigit(char: i32) -> i32;
+module libc;
 
 implement u8 {
     function swap(self: *mut Self, other: *mut Self) {
@@ -74,7 +61,7 @@ implement String {
     }
 
     function del(self: Self) {
-        free(self.str.ptr as *mut void);
+        libc::free(self.str.ptr);
     }
 
     function as_str(self: *Self) -> Str {
@@ -84,10 +71,10 @@ implement String {
     function grow_by(self: *mut Self, additional: usize) {
         let required_capacity = self.capacity + additional;
         let capacity = usize::max(self.capacity * 2, required_capacity);
-        let ptr = malloc(sizeof(u8) * capacity) as *mut [u8];
 
-        memcpy(ptr as *mut void, self.str.ptr as *void, self.str.length);
-        free(self.str.ptr as *mut void);
+        let ptr = libc::malloc(sizeof(u8) * capacity);
+        libc::memcpy(ptr, self.str.ptr, self.str.length);
+        libc::free(self.str.ptr);
 
         self.str.ptr = ptr;
         self.capacity = capacity;
@@ -141,30 +128,30 @@ function gcd(mut a: u32, mut b: u32) -> u32 {
 }
 
 function aoc_01_p1() {
-    let mut input = fopen("day01.txt", "r");
+    let mut input = libc::fopen("day01.txt", "r");
     if (input == null) {
-        printf("unable to open input file\n");
+        libc::printf("unable to open input file\n");
         return;
     }
 
     let mut calibration_sum = 0_u32;
 
     let mut line: [u8; 100];
-    while (fgets(&line, 100, input) != null) {
+    while (libc::fgets(&line, 100, input) != null) {
         // Start at the beginning of the line
-        let mut index = 0_u64;
+        let mut index = 0_usize;
 
         // Find the first digit
-        while (isdigit(line[index] as i32) == 0) {
+        while (libc::isdigit(line[index] as i32) == 0) {
             index += 1;
         }
         let calibration_value = (line[index] - '0') as u32;
 
         // Go to the end of the line
-        index = strlen(&line) - 1;
+        index = libc::strlen(&line) - 1;
 
         // Backtrack to find the last digit
-        while (isdigit(line[index] as i32) == 0) {
+        while (libc::isdigit(line[index] as i32) == 0) {
             index -= 1;
         }
         let calibration_value = calibration_value * 10 + (line[index] - '0') as u32;
@@ -173,9 +160,9 @@ function aoc_01_p1() {
         calibration_sum += calibration_value;
     }
 
-    fclose(input);
+    libc::fclose(input);
 
-    printf("[01p1] Sum of calibration values: %d\n", calibration_sum);
+    libc::printf("[01p1] Sum of calibration values: %d\n", calibration_sum);
 }
 
 struct Node {
@@ -188,7 +175,7 @@ function omg_linked_list(values: *[*[u8]], value_count: usize) {
 
     let mut index = 0_usize;
     while (index < value_count) {
-        let node = malloc(sizeof(Node)) as *mut Node;
+        let node = libc::malloc(sizeof(Node)) as *mut Node;
         *node = Node {
             value: values[index],
             next: head,
@@ -198,14 +185,14 @@ function omg_linked_list(values: *[*[u8]], value_count: usize) {
         index += 1;
     }
 
-    printf("Reversed:\n");
+    libc::printf("Reversed:\n");
     while (head != null) {
         let node = head;
 
-        printf("%s\n", node.value);
+        libc::printf("%s\n", node.value);
         head = node.next;
 
-        free(node as *mut void);
+        libc::free(node as *mut [u8]);
     }
 }
 
@@ -225,9 +212,9 @@ function student_stuff() {
         name: "Joe Mama",
     };
 
-    printf("Name: %s\n", joe.name);
-    printf("Age: %u\n", joe.age);
-    printf("Grades: %u, %u, %u, %u\n", joe.grades[0], joe.grades[1], joe.grades[2], joe.grades[3]);
+    libc::printf("Name: %s\n", joe.name);
+    libc::printf("Age: %u\n", joe.age);
+    libc::printf("Grades: %u, %u, %u, %u\n", joe.grades[0], joe.grades[1], joe.grades[2], joe.grades[3]);
 }
 
 implement i64 {
@@ -288,12 +275,12 @@ foreign function main() -> i32 {
     string.push('!');
     string.push('\0');
     let str = string.as_str();
-    printf("%s\n", str.ptr);
+    libc::printf("%s\n", str.ptr);
     string.del();
 
     let mut number_string = (-12345_i64).to_string();
     number_string.push('\0');
-    printf("i64::to_string: \"%s\"\n", number_string.str.ptr);
+    libc::printf("i64::to_string: \"%s\"\n", number_string.str.ptr);
     number_string.del();
 
     0

@@ -1,7 +1,9 @@
 use crate::ast::{Node, PathSegment, TypeNode};
+use crate::target::TargetInfo;
 use crate::token::Literal;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::num::NonZeroUsize;
+use std::path::{Path, PathBuf};
 
 mod local;
 mod symbol;
@@ -12,7 +14,7 @@ pub use local::*;
 pub use symbol::*;
 pub use types::*;
 pub use value::*;
-use crate::target::TargetInfo;
+use crate::ast::parse::ParsedModule;
 
 struct TypeEntry {
     path: AbsolutePath,
@@ -25,6 +27,9 @@ struct TypeEntry {
 
 pub struct GlobalContext {
     target: TargetInfo,
+    root_file_path: PathBuf,
+    source_paths: Vec<PathBuf>,
+    parse_queue: VecDeque<SimplePath>,
     /// Table of all namespaces in existence.
     namespace_registry: Vec<NamespaceInfo>,
     /// The hierarchy of modules currently being analyzed.
@@ -42,9 +47,12 @@ pub struct GlobalContext {
 }
 
 impl GlobalContext {
-    pub fn new(target: TargetInfo) -> Self {
+    pub fn new(root_file_path: impl Into<PathBuf>, target: TargetInfo) -> Self {
         let mut context = Self {
             target,
+            root_file_path: root_file_path.into(),
+            source_paths: Vec::new(),
+            parse_queue: VecDeque::new(),
             namespace_registry: vec![NamespaceInfo::new(AbsolutePath::at_root())],
             module_stack: vec![NamespaceHandle::ROOT],
             type_registry: Vec::with_capacity(PRIMITIVE_TYPES.len()),
@@ -56,6 +64,8 @@ impl GlobalContext {
             function_types: HashMap::new(),
             fill_phase_complete: false,
         };
+
+        context.parse_queue.push_back(SimplePath::empty());
 
         for (registry_index, &(name, ref repr)) in PRIMITIVE_TYPES.iter().enumerate() {
             let base_type = PathBaseType::Primitive(PrimitiveType {
@@ -74,6 +84,65 @@ impl GlobalContext {
 
     pub fn target(&self) -> &TargetInfo {
         &self.target
+    }
+
+    pub fn root_file_path(&self) -> &Path {
+        &self.root_file_path
+    }
+
+    pub fn source_paths(&self) -> &[PathBuf] {
+        &self.source_paths
+    }
+
+    pub fn prepare_next_source(&mut self) -> crate::Result<Option<(usize, NamespaceHandle)>> {
+        loop {
+            let Some(module_path) = self.parse_queue.pop_front() else {
+                break Ok(None);
+            };
+            let file_path = self.get_file_path_for_module(&module_path);
+            if let Some(source_id) = self.register_source_path(file_path) {
+                let namespace = self.prepare_module_namespace(module_path.segments())?;
+                break Ok(Some((source_id, namespace)));
+            }
+        }
+    }
+
+    fn register_source_path(&mut self, path: PathBuf) -> Option<usize> {
+        if self.source_paths.contains(&path) {
+            None
+        }
+        else {
+            let source_id = self.source_paths.len();
+            self.source_paths.push(path);
+            Some(source_id)
+        }
+    }
+
+    fn prepare_module_namespace(&mut self, path_segments: &[Box<str>]) -> crate::Result<NamespaceHandle> {
+        // TODO: wtf is this
+        match path_segments {
+            [] => Ok(self.current_module()),
+            [name, remaining_segments @ ..] => {
+                self.enter_module_outline(name)?;
+                let namespace = self.prepare_module_namespace(remaining_segments)?;
+                self.exit_module();
+                Ok(namespace)
+            }
+        }
+    }
+
+    pub fn get_file_path_for_module(&self, module_path: &SimplePath) -> PathBuf {
+        if let Some(parent_module_path) = module_path.parent() {
+            let mut file_path = self.root_file_path.parent().unwrap().to_path_buf();
+            file_path.push(parent_module_path
+                .segments()
+                .join(std::path::MAIN_SEPARATOR_STR));
+            file_path.push(format!("{}.cupr", module_path.tail_name().unwrap()));
+            file_path
+        }
+        else {
+            self.root_file_path.clone()
+        }
     }
 
     pub fn current_module(&self) -> NamespaceHandle {
@@ -156,10 +225,21 @@ impl GlobalContext {
 
     pub fn enter_module_outline(&mut self, name: &str) -> crate::Result<NamespaceHandle> {
         let current_namespace = self.current_namespace();
-        let module_path = self.namespace_info(current_namespace).path().child(name);
-        let module_namespace = self.create_namespace(module_path);
+        let current_namespace_info = self.namespace_info(current_namespace);
 
-        self.namespace_info_mut(current_namespace).define(name, Symbol::Module(module_namespace))?;
+        let module_namespace;
+        if let Some(&Symbol::Module(namespace)) = current_namespace_info.find(name) {
+            // Extend the existing module
+            module_namespace = namespace;
+        }
+        else {
+            // Create a new module
+            let module_path = self.namespace_info(current_namespace).path().child(name);
+            let namespace = self.create_namespace(module_path);
+
+            self.namespace_info_mut(current_namespace).define(name, Symbol::Module(namespace))?;
+            module_namespace = namespace;
+        }
 
         self.module_stack.push(module_namespace);
 
@@ -176,6 +256,11 @@ impl GlobalContext {
         if self.module_stack.is_empty() {
             panic!("exited root module");
         }
+    }
+
+    pub fn queue_module_file(&mut self, name: impl Into<Box<str>>) {
+        let module_path = self.current_namespace_info().path().simple().child(name);
+        self.parse_queue.push_back(module_path);
     }
 
     pub fn set_self_type(&mut self, self_type: TypeHandle) {
@@ -562,12 +647,22 @@ impl GlobalContext {
         Conversion::try_explicit(self, from_type, to_type, from_mutable)
     }
 
-    pub fn process_global_statements<'a>(&mut self, top_level_statements: impl IntoIterator<Item = &'a mut Node>) -> crate::Result<()> {
-        for top_level_statement in top_level_statements {
-            self.process_global_statement(top_level_statement)?;
+    pub fn process_all<'a>(&mut self, modules: impl IntoIterator<Item = &'a mut ParsedModule>) -> crate::Result<()> {
+        for parsed_module in modules {
+            self.enter_module(parsed_module.namespace());
+            self.process_global_statements(parsed_module.statements_mut())?;
+            self.exit_module();
         }
 
         self.complete_fill_phase()
+    }
+
+    pub fn process_global_statements<'a>(&mut self, global_statements: impl IntoIterator<Item = &'a mut Node>) -> crate::Result<()> {
+        for global_statement in global_statements {
+            self.process_global_statement(global_statement)?;
+        }
+
+        Ok(())
     }
 
     pub fn process_global_statement(&mut self, node: &mut Node) -> crate::Result<()> {

@@ -6,6 +6,7 @@ use crate::ast;
 use crate::sema::*;
 
 use std::io::Write;
+use std::path::Path;
 
 pub struct Generator<W: Write> {
     emitter: Emitter<W>,
@@ -14,9 +15,8 @@ pub struct Generator<W: Write> {
 }
 
 impl Generator<std::fs::File> {
-    pub fn from_filename(filename: String, context: GlobalContext) -> crate::Result<Self> {
-        Emitter::from_filename(filename)
-            .map(|emitter| Self::new(emitter, context))
+    pub fn from_path(path: impl AsRef<Path>, context: GlobalContext) -> crate::Result<Self> {
+        Ok(Self::new(Emitter::from_path(path)?, context))
     }
 }
 
@@ -45,22 +45,29 @@ impl<W: Write> Generator<W> {
         &mut self.context
     }
 
-    pub fn generate_all<'a>(
-        mut self,
-        top_level_statements: impl IntoIterator<Item = &'a ast::Node>,
-        file_id: usize,
-        filenames: &[String],
-    ) -> crate::Result<()> {
-        self.emitter.emit_preamble(file_id, &filenames[file_id])?;
+    pub fn generate_all<'a>(mut self, modules: impl IntoIterator<Item = &'a ast::parse::ParsedModule>) -> crate::Result<()> {
+        self.emitter.emit_preamble(self.context.root_file_path())?;
 
-        for top_level_statement in top_level_statements {
-            self.generate_global_node(top_level_statement)?;
+        for parsed_module in modules {
+            self.context.enter_module(parsed_module.namespace());
+
+            self.generate_global_statements(parsed_module.statements())?;
+
+            self.context.exit_module();
         }
 
         self.emitter.emit_postamble()
     }
 
-    pub fn generate_global_node(&mut self, node: &ast::Node) -> crate::Result<Value> {
+    pub fn generate_global_statements<'a>(&mut self, global_statements: impl IntoIterator<Item = &'a ast::Node>) -> crate::Result<()> {
+        for global_statement in global_statements {
+            self.generate_global_statement(global_statement)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn generate_global_statement(&mut self, node: &ast::Node) -> crate::Result<Value> {
         match node {
             ast::Node::Let { value, global_register, .. } => {
                 let global_register = global_register.as_ref().expect("register should be valid after fill phase");
@@ -93,8 +100,10 @@ impl<W: Write> Generator<W> {
             ast::Node::Module { statements, namespace, .. } => {
                 self.generate_module_block(statements, *namespace)
             }
-            ast::Node::Import { .. } | ast::Node::GlobImport { .. } => {
-                // The fill phase has done all of the work for us already
+            ast::Node::ModuleFile { .. } |
+            ast::Node::Import { .. } |
+            ast::Node::GlobImport { .. } => {
+                // The work has already been done for us
                 Ok(Value::Void)
             }
             _ => {
@@ -225,7 +234,7 @@ impl<W: Write> Generator<W> {
         if let Some(expected_type) = expected_type {
             self.enforce_type(result, expected_type, local_context)
                 // For debugging purposes. This information is often useful
-                .inspect_err(|_| println!("node: {node:?}"))
+                .inspect_err(|_| println!("problematic node: {node:?}"))
         }
         else {
             Ok(result)
@@ -420,7 +429,7 @@ impl<W: Write> Generator<W> {
         Ok(result)
     }
 
-    fn generate_array_literal(&mut self, items: &[Box<ast::Node>], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_array_literal(&mut self, items: &[ast::Node], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let Some(array_type) = expected_type else {
             return Err(Box::new(crate::Error::UnknownArrayType {}));
         };
@@ -476,7 +485,7 @@ impl<W: Write> Generator<W> {
         })
     }
 
-    fn generate_tuple_literal(&mut self, items: &[Box<ast::Node>], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_tuple_literal(&mut self, items: &[ast::Node], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let Some(tuple_type) = expected_type else {
             return Err(Box::new(crate::Error::UnknownTupleType {}));
         };
@@ -541,7 +550,7 @@ impl<W: Write> Generator<W> {
         })
     }
 
-    fn generate_structure_literal(&mut self, type_name: &ast::Node, initializer_members: &[(Box<str>, Box<ast::Node>)], local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_structure_literal(&mut self, type_name: &ast::Node, initializer_members: &[(Box<str>, ast::Node)], local_context: &mut LocalContext) -> crate::Result<Value> {
         let struct_type = self.context.interpret_node_as_type(type_name)?;
 
         let TypeRepr::Structure { name: type_name, members } = struct_type.repr(&self.context).clone() else {
@@ -1331,7 +1340,7 @@ impl<W: Write> Generator<W> {
         Ok((result, pointer, Value::Register(lhs), rhs))
     }
 
-    fn generate_call_operation(&mut self, callee: &ast::Node, arguments: &[Box<ast::Node>], local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_call_operation(&mut self, callee: &ast::Node, arguments: &[ast::Node], local_context: &mut LocalContext) -> crate::Result<Value> {
         // Determine which kind of call operation this is
         let callee = match callee {
             // Method call operation in the format `value.method(..)`
@@ -1714,13 +1723,13 @@ impl<W: Write> Generator<W> {
         Ok(Value::Void)
     }
 
-    fn generate_implement_block(&mut self, self_type: &ast::TypeNode, statements: &[Box<ast::Node>]) -> crate::Result<Value> {
+    fn generate_implement_block(&mut self, self_type: &ast::TypeNode, statements: &[ast::Node]) -> crate::Result<Value> {
         let self_type = self.context.interpret_type_node(self_type)?;
 
         self.context.set_self_type(self_type);
 
         for statement in statements {
-            self.generate_global_node(statement)?;
+            self.generate_global_statement(statement)?;
         }
 
         self.context.unset_self_type();
@@ -1728,11 +1737,11 @@ impl<W: Write> Generator<W> {
         Ok(Value::Void)
     }
 
-    fn generate_module_block(&mut self, statements: &[Box<ast::Node>], namespace: NamespaceHandle) -> crate::Result<Value> {
+    fn generate_module_block(&mut self, statements: &[ast::Node], namespace: NamespaceHandle) -> crate::Result<Value> {
         self.context.enter_module(namespace);
 
         for statement in statements {
-            self.generate_global_node(statement)?;
+            self.generate_global_statement(statement)?;
         }
 
         self.context.exit_module();

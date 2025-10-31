@@ -1,8 +1,8 @@
-foreign function printf(format: *[u8], ..) -> u32;
+module libc;
 
 foreign function main() -> i32 {
     let vector: [i32; 2] = [4, 8];
-    printf("(%d, %d)\n", vector.x(), vector.y());
+    libc::printf("(%d, %d)\n", vector.x(), vector.y());
     return 0;
 }
 

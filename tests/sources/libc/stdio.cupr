@@ -1,0 +1,13 @@
+foreign struct CFile;
+
+foreign function fopen(filename: *[u8], mode: *[u8]) -> *mut CFile;
+
+foreign function fclose(file: *mut CFile) -> i32;
+
+foreign function feof(file: *mut CFile) -> i32;
+
+foreign function fgets(buffer: *mut [u8], limit: i32, file: *mut CFile) -> *mut [u8];
+
+foreign function printf(format: *[u8], ..) -> i32;
+
+foreign function puts(string: *[u8]) -> i32;

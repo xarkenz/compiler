@@ -1,6 +1,7 @@
 use crate::sema::*;
 
 use std::io::Write;
+use std::path::{Path, PathBuf};
 
 macro_rules! emit {
     ($emitter:expr, $($args:tt)*) => {
@@ -9,40 +10,47 @@ macro_rules! emit {
 }
 
 pub struct Emitter<W: Write> {
-    filename: String,
+    path: PathBuf,
     writer: W,
     is_global: bool,
     queued_global_declarations: Vec<String>,
 }
 
 impl Emitter<std::fs::File> {
-    pub fn from_filename(filename: String) -> crate::Result<Self> {
-        std::fs::File::create(&filename)
-            .map(|file| Self::new(filename.clone(), file))
-            .map_err(|cause| Box::new(crate::Error::OutputFileWrite { filename: filename.clone(), cause }))
+    pub fn from_path(path: impl AsRef<Path>) -> crate::Result<Self> {
+        let path = path.as_ref();
+        std::fs::File::create(path)
+            .map(|file| Self::new(path, file))
+            .map_err(|cause| Box::new(crate::Error::OutputFileOpen {
+                filename: path.display().to_string(),
+                cause,
+            }))
     }
 }
 
 impl<W: Write> Emitter<W> {
-    pub fn new(filename: String, writer: W) -> Self {
+    pub fn new(path: impl Into<PathBuf>, writer: W) -> Self {
         Self {
-            filename,
+            path: path.into(),
             writer,
             is_global: true,
             queued_global_declarations: Vec::new(),
         }
     }
 
-    pub fn filename(&self) -> &str {
-        self.filename.as_str()
+    pub fn filename(&self) -> &Path {
+        &self.path
     }
 
     fn error(&self, cause: std::io::Error) -> Box<crate::Error> {
-        Box::new(crate::Error::OutputFileWrite { filename: self.filename.clone(), cause })
+        Box::new(crate::Error::OutputFileWrite {
+            filename: self.path.display().to_string(),
+            cause,
+        })
     }
 
-    pub fn emit_preamble(&mut self, file_id: usize, source_filename: &str) -> crate::Result<()> {
-        emit!(self, "; file_id = {file_id}\nsource_filename = \"{source_filename}\"\n\n")
+    pub fn emit_preamble(&mut self, source_filename: &Path) -> crate::Result<()> {
+        emit!(self, "source_filename = \"{}\"\n\n", source_filename.display())
     }
 
     pub fn emit_postamble(&mut self) -> crate::Result<()> {

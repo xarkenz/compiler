@@ -1,11 +1,4 @@
-; file_id = 0
-source_filename = "tests/sources/test_collections.cupr"
-
-declare {}* @malloc(i64)
-
-declare void @free({}*)
-
-declare i32 @printf(i8*, ...)
+source_filename = "tests/sources/test_collections.main.cupr"
 
 define i32 @"<i32>::max"(i32 %0, i32 %1) {
 .block.0:
@@ -112,8 +105,8 @@ define void @"::LinkedList::push_front"(%"type.::LinkedList"* %0, {}* %1) {
 	store %"type.::LinkedList"* %0, %"type.::LinkedList"** %self
 	%value = alloca {}*
 	store {}* %1, {}** %value
-	%2 = call {}*(i64) @malloc(i64 16)
-	%3 = bitcast {}* %2 to %"type.::LinkedListNode"*
+	%2 = call i8*(i64) @malloc(i64 16)
+	%3 = bitcast i8* %2 to %"type.::LinkedListNode"*
 	%new_node = alloca %"type.::LinkedListNode"*
 	store %"type.::LinkedListNode"* %3, %"type.::LinkedListNode"** %new_node
 	%4 = load %"type.::LinkedListNode"*, %"type.::LinkedListNode"** %new_node
@@ -164,8 +157,8 @@ define {}* @"::LinkedList::pop_front"(%"type.::LinkedList"* %0) {
 	%15 = load %"type.::LinkedListNode"*, %"type.::LinkedListNode"** %14
 	store %"type.::LinkedListNode"* %15, %"type.::LinkedListNode"** %12
 	%16 = load %"type.::LinkedListNode"*, %"type.::LinkedListNode"** %front
-	%17 = bitcast %"type.::LinkedListNode"* %16 to {}*
-	call void({}*) @free({}* %17)
+	%17 = bitcast %"type.::LinkedListNode"* %16 to i8*
+	call void(i8*) @free(i8* %17)
 	%18 = load {}*, {}** %value
 	br label %.block.3
 .block.3:
@@ -179,8 +172,8 @@ define %"type.::AVLTreeNode"* @"::AVLTreeNode::alloc"({}* %0) {
 .block.0:
 	%key = alloca {}*
 	store {}* %0, {}** %key
-	%1 = call {}*(i64) @malloc(i64 32)
-	%2 = bitcast {}* %1 to %"type.::AVLTreeNode"*
+	%1 = call i8*(i64) @malloc(i64 32)
+	%2 = bitcast i8* %1 to %"type.::AVLTreeNode"*
 	%alloc = alloca %"type.::AVLTreeNode"*
 	store %"type.::AVLTreeNode"* %2, %"type.::AVLTreeNode"** %alloc
 	%3 = load %"type.::AVLTreeNode"*, %"type.::AVLTreeNode"** %alloc
@@ -623,16 +616,16 @@ define %"type.::BTreeLeaf"* @"::BTreeLeaf::alloc"(i64 %0, {}* %1) {
 	store {}* %1, {}** %first_element
 	%2 = load i64, i64* %l_order
 	%3 = mul nuw i64 8, %2
-	%4 = call {}*(i64) @malloc(i64 %3)
-	%5 = bitcast {}* %4 to {}**
+	%4 = call i8*(i64) @malloc(i64 %3)
+	%5 = bitcast i8* %4 to {}**
 	%elements = alloca {}**
 	store {}** %5, {}*** %elements
 	%6 = load {}**, {}*** %elements
 	%7 = getelementptr inbounds {}*, {}** %6, i32 0
 	%8 = load {}*, {}** %first_element
 	store {}* %8, {}** %7
-	%9 = call {}*(i64) @malloc(i64 24)
-	%10 = bitcast {}* %9 to %"type.::BTreeLeaf"*
+	%9 = call i8*(i64) @malloc(i64 24)
+	%10 = bitcast i8* %9 to %"type.::BTreeLeaf"*
 	%alloc = alloca %"type.::BTreeLeaf"*
 	store %"type.::BTreeLeaf"* %10, %"type.::BTreeLeaf"** %alloc
 	%11 = load %"type.::BTreeLeaf"*, %"type.::BTreeLeaf"** %alloc
@@ -1072,4 +1065,66 @@ define i32 @main() {
 @.const.17 = private unnamed_addr constant [2 x i8] c"\0A\00"
 @.const.18 = private unnamed_addr constant [11 x i8] c"heapsort: \00"
 @.const.19 = private unnamed_addr constant [2 x i8] c"\0A\00"
+
+declare i8* @malloc(i64)
+
+declare i8* @calloc(i64, i64)
+
+declare i8* @realloc(i8*, i64)
+
+declare void @free(i8*)
+
+declare i32 @rand()
+
+declare void @srand(i32)
+
+declare i32 @atexit(void()*)
+
+declare void @exit(i32)
+
+declare i32 @isalnum(i32)
+
+declare i32 @isalpha(i32)
+
+declare i32 @islower(i32)
+
+declare i32 @isupper(i32)
+
+declare i32 @isdigit(i32)
+
+declare i32 @isxdigit(i32)
+
+declare i32 @iscntrl(i32)
+
+declare i32 @isgraph(i32)
+
+declare i32 @isspace(i32)
+
+declare i32 @isblank(i32)
+
+declare i32 @isprint(i32)
+
+declare i32 @ispunct(i32)
+
+declare i32 @tolower(i32)
+
+declare i32 @toupper(i32)
+
+%"type.::libc::stdio::CFile" = type opaque
+
+declare %"type.::libc::stdio::CFile"* @fopen(i8*, i8*)
+
+declare i32 @fclose(%"type.::libc::stdio::CFile"*)
+
+declare i32 @feof(%"type.::libc::stdio::CFile"*)
+
+declare i8* @fgets(i8*, i32, %"type.::libc::stdio::CFile"*)
+
+declare i32 @printf(i8*, ...)
+
+declare i32 @puts(i8*)
+
+declare i64 @strlen(i8*)
+
+declare i8* @memcpy(i8*, i8*, i64)
 

@@ -387,23 +387,23 @@ pub enum Node {
     },
     Call {
         callee: Box<Node>,
-        arguments: Box<[Box<Node>]>,
+        arguments: Box<[Node]>,
     },
     ArrayLiteral {
-        items: Box<[Box<Node>]>,
+        items: Box<[Node]>,
     },
     TupleLiteral {
-        items: Box<[Box<Node>]>,
+        items: Box<[Node]>,
     },
     StructureLiteral {
         structure_type: Box<Node>,
-        members: Box<[(Box<str>, Box<Node>)]>,
+        members: Box<[(Box<str>, Node)]>,
     },
     Grouping {
         content: Box<Node>,
     },
     Scope {
-        statements: Box<[Box<Node>]>,
+        statements: Box<[Node]>,
         tail: Option<Box<Node>>,
     },
     Conditional {
@@ -450,12 +450,15 @@ pub enum Node {
     },
     Implement {
         self_type: TypeNode,
-        statements: Box<[Box<Node>]>,
+        statements: Box<[Node]>,
     },
     Module {
         name: Box<str>,
-        statements: Box<[Box<Node>]>,
+        statements: Box<[Node]>,
         namespace: NamespaceHandle,
+    },
+    ModuleFile {
+        name: Box<str>,
     },
     Import {
         segments: Box<[PathSegment]>,
@@ -705,6 +708,9 @@ impl std::fmt::Display for Node {
                     write!(f, "{statement}")?;
                 }
                 write!(f, " }}")
+            }
+            Self::ModuleFile { name } => {
+                write!(f, " module {name};")
             }
             Self::Import { segments, alias } => {
                 let path = PathSegment::path_to_string(segments);

@@ -1,27 +1,4 @@
-; file_id = 0
-source_filename = "tests/sources/test_1.cupr"
-
-%"type.::CFile" = type opaque
-
-declare %"type.::CFile"* @fopen(i8*, i8*)
-
-declare i32 @fclose(%"type.::CFile"*)
-
-declare i32 @feof(%"type.::CFile"*)
-
-declare i8* @fgets(i8*, i32, %"type.::CFile"*)
-
-declare i32 @printf(i8*, ...)
-
-declare {}* @malloc(i64)
-
-declare void @free({}*)
-
-declare {}* @memcpy({}*, {}*, i64)
-
-declare i64 @strlen(i8*)
-
-declare i32 @isdigit(i32)
+source_filename = "tests/sources/test_1.main.cupr"
 
 define void @"<u8>::swap"(i8* %0, i8* %1) {
 .block.0:
@@ -120,8 +97,7 @@ define void @"::String::del"(%"type.::String" %0) {
 	%1 = getelementptr inbounds %"type.::String", %"type.::String"* %self, i32 0, i32 0
 	%2 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %1, i32 0, i32 0
 	%3 = load i8*, i8** %2
-	%4 = bitcast i8* %3 to {}*
-	call void({}*) @free({}* %4)
+	call void(i8*) @free(i8* %3)
 	ret void
 }
 
@@ -158,37 +134,33 @@ define void @"::String::grow_by"(%"type.::String"* %0, i64 %1) {
 	store i64 %12, i64* %capacity
 	%13 = load i64, i64* %capacity
 	%14 = mul nuw i64 1, %13
-	%15 = call {}*(i64) @malloc(i64 %14)
-	%16 = bitcast {}* %15 to i8*
+	%15 = call i8*(i64) @malloc(i64 %14)
 	%ptr = alloca i8*
-	store i8* %16, i8** %ptr
-	%17 = load i8*, i8** %ptr
-	%18 = bitcast i8* %17 to {}*
-	%19 = load %"type.::String"*, %"type.::String"** %self
-	%20 = getelementptr inbounds %"type.::String", %"type.::String"* %19, i32 0, i32 0
-	%21 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %20, i32 0, i32 0
-	%22 = load i8*, i8** %21
-	%23 = bitcast i8* %22 to {}*
-	%24 = load %"type.::String"*, %"type.::String"** %self
-	%25 = getelementptr inbounds %"type.::String", %"type.::String"* %24, i32 0, i32 0
-	%26 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %25, i32 0, i32 1
-	%27 = load i64, i64* %26
-	%28 = call {}*({}*, {}*, i64) @memcpy({}* %18, {}* %23, i64 %27)
-	%29 = load %"type.::String"*, %"type.::String"** %self
-	%30 = getelementptr inbounds %"type.::String", %"type.::String"* %29, i32 0, i32 0
-	%31 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %30, i32 0, i32 0
-	%32 = load i8*, i8** %31
-	%33 = bitcast i8* %32 to {}*
-	call void({}*) @free({}* %33)
+	store i8* %15, i8** %ptr
+	%16 = load i8*, i8** %ptr
+	%17 = load %"type.::String"*, %"type.::String"** %self
+	%18 = getelementptr inbounds %"type.::String", %"type.::String"* %17, i32 0, i32 0
+	%19 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %18, i32 0, i32 0
+	%20 = load i8*, i8** %19
+	%21 = load %"type.::String"*, %"type.::String"** %self
+	%22 = getelementptr inbounds %"type.::String", %"type.::String"* %21, i32 0, i32 0
+	%23 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %22, i32 0, i32 1
+	%24 = load i64, i64* %23
+	%25 = call i8*(i8*, i8*, i64) @memcpy(i8* %16, i8* %20, i64 %24)
+	%26 = load %"type.::String"*, %"type.::String"** %self
+	%27 = getelementptr inbounds %"type.::String", %"type.::String"* %26, i32 0, i32 0
+	%28 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %27, i32 0, i32 0
+	%29 = load i8*, i8** %28
+	call void(i8*) @free(i8* %29)
+	%30 = load %"type.::String"*, %"type.::String"** %self
+	%31 = getelementptr inbounds %"type.::String", %"type.::String"* %30, i32 0, i32 0
+	%32 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %31, i32 0, i32 0
+	%33 = load i8*, i8** %ptr
+	store i8* %33, i8** %32
 	%34 = load %"type.::String"*, %"type.::String"** %self
-	%35 = getelementptr inbounds %"type.::String", %"type.::String"* %34, i32 0, i32 0
-	%36 = getelementptr inbounds %"type.::MutStr", %"type.::MutStr"* %35, i32 0, i32 0
-	%37 = load i8*, i8** %ptr
-	store i8* %37, i8** %36
-	%38 = load %"type.::String"*, %"type.::String"** %self
-	%39 = getelementptr inbounds %"type.::String", %"type.::String"* %38, i32 0, i32 1
-	%40 = load i64, i64* %capacity
-	store i64 %40, i64* %39
+	%35 = getelementptr inbounds %"type.::String", %"type.::String"* %34, i32 0, i32 1
+	%36 = load i64, i64* %capacity
+	store i64 %36, i64* %35
 	ret void
 }
 
@@ -355,11 +327,11 @@ define i32 @"::gcd"(i32 %0, i32 %1) {
 
 define void @"::aoc_01_p1"() {
 .block.0:
-	%0 = call %"type.::CFile"*(i8*, i8*) @fopen(i8* bitcast ([10 x i8]* @.const.0 to i8*), i8* bitcast ([2 x i8]* @.const.1 to i8*))
-	%input = alloca %"type.::CFile"*
-	store %"type.::CFile"* %0, %"type.::CFile"** %input
-	%1 = load %"type.::CFile"*, %"type.::CFile"** %input
-	%2 = icmp eq %"type.::CFile"* %1, null
+	%0 = call %"type.::libc::stdio::CFile"*(i8*, i8*) @fopen(i8* bitcast ([10 x i8]* @.const.0 to i8*), i8* bitcast ([2 x i8]* @.const.1 to i8*))
+	%input = alloca %"type.::libc::stdio::CFile"*
+	store %"type.::libc::stdio::CFile"* %0, %"type.::libc::stdio::CFile"** %input
+	%1 = load %"type.::libc::stdio::CFile"*, %"type.::libc::stdio::CFile"** %input
+	%2 = icmp eq %"type.::libc::stdio::CFile"* %1, null
 	br i1 %2, label %.block.1, label %.block.2
 .block.1:
 	%3 = call i32(i8*, ...) @printf(i8* bitcast ([27 x i8]* @.const.2 to i8*))
@@ -371,8 +343,8 @@ define void @"::aoc_01_p1"() {
 	br label %.block.3
 .block.3:
 	%4 = bitcast [100 x i8]* %line to i8*
-	%5 = load %"type.::CFile"*, %"type.::CFile"** %input
-	%6 = call i8*(i8*, i32, %"type.::CFile"*) @fgets(i8* %4, i32 100, %"type.::CFile"* %5)
+	%5 = load %"type.::libc::stdio::CFile"*, %"type.::libc::stdio::CFile"** %input
+	%6 = call i8*(i8*, i32, %"type.::libc::stdio::CFile"*) @fgets(i8* %4, i32 100, %"type.::libc::stdio::CFile"* %5)
 	%7 = icmp ne i8* %6, null
 	br i1 %7, label %.block.4, label %.block.5
 .block.4:
@@ -435,8 +407,8 @@ define void @"::aoc_01_p1"() {
 	store i32 %42, i32* %calibration_sum
 	br label %.block.3
 .block.5:
-	%43 = load %"type.::CFile"*, %"type.::CFile"** %input
-	%44 = call i32(%"type.::CFile"*) @fclose(%"type.::CFile"* %43)
+	%43 = load %"type.::libc::stdio::CFile"*, %"type.::libc::stdio::CFile"** %input
+	%44 = call i32(%"type.::libc::stdio::CFile"*) @fclose(%"type.::libc::stdio::CFile"* %43)
 	%45 = load i32, i32* %calibration_sum
 	%46 = call i32(i8*, ...) @printf(i8* bitcast ([38 x i8]* @.const.3 to i8*), i32 %45)
 	ret void
@@ -466,8 +438,8 @@ define void @"::omg_linked_list"(i8** %0, i64 %1) {
 	%4 = icmp ult i64 %2, %3
 	br i1 %4, label %.block.2, label %.block.3
 .block.2:
-	%5 = call {}*(i64) @malloc(i64 16)
-	%6 = bitcast {}* %5 to %"type.::Node"*
+	%5 = call i8*(i64) @malloc(i64 16)
+	%6 = bitcast i8* %5 to %"type.::Node"*
 	%node = alloca %"type.::Node"*
 	store %"type.::Node"* %6, %"type.::Node"** %node
 	%7 = load %"type.::Node"*, %"type.::Node"** %node
@@ -509,8 +481,8 @@ define void @"::omg_linked_list"(i8** %0, i64 %1) {
 	%30 = load %"type.::Node"*, %"type.::Node"** %29
 	store %"type.::Node"* %30, %"type.::Node"** %head
 	%31 = load %"type.::Node"*, %"type.::Node"** %node-1
-	%32 = bitcast %"type.::Node"* %31 to {}*
-	call void({}*) @free({}* %32)
+	%32 = bitcast %"type.::Node"* %31 to i8*
+	call void(i8*) @free(i8* %32)
 	br label %.block.4
 .block.6:
 	ret void
@@ -682,4 +654,66 @@ define i32 @main() {
 @.const.14 = private unnamed_addr constant [8 x i8] c"Value 4\00"
 @.const.15 = private unnamed_addr constant [4 x i8] c"%s\0A\00"
 @.const.16 = private unnamed_addr constant [22 x i8] c"i64::to_string: \22%s\22\0A\00"
+
+declare i8* @malloc(i64)
+
+declare i8* @calloc(i64, i64)
+
+declare i8* @realloc(i8*, i64)
+
+declare void @free(i8*)
+
+declare i32 @rand()
+
+declare void @srand(i32)
+
+declare i32 @atexit(void()*)
+
+declare void @exit(i32)
+
+declare i32 @isalnum(i32)
+
+declare i32 @isalpha(i32)
+
+declare i32 @islower(i32)
+
+declare i32 @isupper(i32)
+
+declare i32 @isdigit(i32)
+
+declare i32 @isxdigit(i32)
+
+declare i32 @iscntrl(i32)
+
+declare i32 @isgraph(i32)
+
+declare i32 @isspace(i32)
+
+declare i32 @isblank(i32)
+
+declare i32 @isprint(i32)
+
+declare i32 @ispunct(i32)
+
+declare i32 @tolower(i32)
+
+declare i32 @toupper(i32)
+
+%"type.::libc::stdio::CFile" = type opaque
+
+declare %"type.::libc::stdio::CFile"* @fopen(i8*, i8*)
+
+declare i32 @fclose(%"type.::libc::stdio::CFile"*)
+
+declare i32 @feof(%"type.::libc::stdio::CFile"*)
+
+declare i8* @fgets(i8*, i32, %"type.::libc::stdio::CFile"*)
+
+declare i32 @printf(i8*, ...)
+
+declare i32 @puts(i8*)
+
+declare i64 @strlen(i8*)
+
+declare i8* @memcpy(i8*, i8*, i64)
 

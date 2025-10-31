@@ -4,15 +4,38 @@ use std::io::BufRead;
 use crate::sema::{GlobalContext, PrimitiveType, Symbol};
 use crate::token::scan::Scanner;
 
-pub fn parse_all<T: BufRead>(scanner: &mut Scanner<T>, context: &mut GlobalContext) -> crate::Result<Vec<Node>> {
+pub fn parse_module<T: BufRead>(scanner: &mut Scanner<T>, context: &mut GlobalContext) -> crate::Result<ParsedModule> {
+    let namespace = context.current_namespace();
     let mut parser = Parser::new(scanner)?;
 
-    let mut top_level_statements = Vec::new();
+    let mut statements = Vec::new();
     while let Some(statement) = parser.parse_top_level_statement(context)? {
-        top_level_statements.push(*statement);
+        statements.push(*statement);
     }
 
-    Ok(top_level_statements)
+    Ok(ParsedModule {
+        statements,
+        namespace,
+    })
+}
+
+pub struct ParsedModule {
+    statements: Vec<Node>,
+    namespace: NamespaceHandle,
+}
+
+impl ParsedModule {
+    pub fn statements(&self) -> &[Node] {
+        &self.statements
+    }
+
+    pub fn statements_mut(&mut self) -> &mut [Node] {
+        &mut self.statements
+    }
+
+    pub fn namespace(&self) -> NamespaceHandle {
+        self.namespace
+    }
 }
 
 pub struct Parser<'a, T: BufRead> {
@@ -33,8 +56,8 @@ impl<'a, T: BufRead> Parser<'a, T> {
         Ok(new_instance)
     }
 
-    pub fn file_id(&self) -> usize {
-        self.scanner.file_id()
+    pub fn source_id(&self) -> usize {
+        self.scanner.source_id()
     }
 
     pub fn scan_token(&mut self) -> crate::Result<()> {
@@ -192,7 +215,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     let mut items = Vec::new();
                     while !matches!(self.current_token(), Some(Token::SquareRight)) {
                         let item = self.parse_expression(None, &[Token::Comma, Token::SquareRight], true)?;
-                        items.push(item);
+                        items.push(*item);
 
                         if let Some(Token::Comma) = self.current_token() {
                             self.scan_token()?;
@@ -219,10 +242,10 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         if let Some(Token::Comma) = self.current_token() {
                             // Tuple literal
                             self.scan_token()?;
-                            let mut items = vec![first_item];
+                            let mut items = vec![*first_item];
                             while !matches!(self.current_token(), Some(Token::ParenRight)) {
                                 let item = self.parse_expression(None, &[Token::Comma, Token::ParenRight], true)?;
-                                items.push(item);
+                                items.push(*item);
 
                                 if let Some(Token::Comma) = self.current_token() {
                                     self.scan_token()?;
@@ -357,7 +380,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 }
                 Some(Token::Let) => {
                     self.scan_token()?;
-                    statements.push(self.parse_let_statement()?);
+                    statements.push(*self.parse_let_statement()?);
                 }
                 Some(..) => {
                     let statement = self.parse_expression(None, &[Token::Semicolon, Token::CurlyRight], false)?;
@@ -366,7 +389,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         break Some(statement);
                     }
                     else {
-                        statements.push(statement);
+                        statements.push(*statement);
                     }
                 }
                 None => {
@@ -443,7 +466,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 let mut arguments = Vec::new();
                 while !matches!(self.current_token(), Some(Token::ParenRight)) {
                     let argument = self.parse_expression(None, &[Token::Comma, Token::ParenRight], true)?;
-                    arguments.push(argument);
+                    arguments.push(*argument);
 
                     if let Some(Token::Comma) = self.current_token() {
                         self.scan_token()?;
@@ -474,7 +497,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.expect_token(&[Token::Colon])?;
                     self.scan_token()?;
                     let member_value = self.parse_expression(None, &[Token::Comma, Token::CurlyRight], true)?;
-                    members.push((member_name, member_value));
+                    members.push((member_name, *member_value));
 
                     if let Some(Token::Comma) = self.current_token() {
                         self.scan_token()?;
@@ -850,14 +873,14 @@ impl<'a, T: BufRead> Parser<'a, T> {
         }))
     }
 
-    pub fn parse_global_statement(&mut self, global_context: &mut GlobalContext, is_implementation: bool, allow_empty: bool) -> crate::Result<Option<Box<Node>>> {
+    pub fn parse_statement(&mut self, global_context: &mut GlobalContext, is_implementation: bool, allow_empty: bool) -> crate::Result<Option<Box<Node>>> {
         // Most statement types can be detected simply by the first token
         match self.current_token() {
             Some(Token::Semicolon) if allow_empty => {
                 self.scan_token()?;
                 // Returning None would imply that the end of the file was reached,
                 // so recursively try to parse a statement instead
-                self.parse_global_statement(global_context, is_implementation, allow_empty)
+                self.parse_statement(global_context, is_implementation, allow_empty)
             }
             Some(Token::Let) => {
                 self.scan_token()?;
@@ -894,12 +917,12 @@ impl<'a, T: BufRead> Parser<'a, T> {
                             }));
                         }
                         _ => {
-                            let statement = self.parse_global_statement(global_context, true, true)?
+                            let statement = self.parse_statement(global_context, true, true)?
                                 .ok_or_else(|| Box::new(crate::Error::ExpectedClosingBracket {
                                     span: self.current_span(),
                                     bracket: Token::CurlyRight,
                                 }))?;
-                            statements.push(statement);
+                            statements.push(*statement);
                         }
                     }
                 }
@@ -913,7 +936,16 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.scan_token()?;
                 let name = self.expect_identifier()?;
                 self.scan_token()?;
-                self.expect_token(&[Token::CurlyLeft])?;
+
+                if let Token::Semicolon = self.expect_token(&[Token::Semicolon, Token::CurlyLeft])? {
+                    self.scan_token()?;
+
+                    global_context.queue_module_file(name.clone());
+
+                    return Ok(Some(Box::new(Node::ModuleFile {
+                        name,
+                    })));
+                }
                 self.scan_token()?;
 
                 let namespace = global_context.enter_module_outline(&name)?;
@@ -936,12 +968,12 @@ impl<'a, T: BufRead> Parser<'a, T> {
                             }));
                         }
                         _ => {
-                            let statement = self.parse_global_statement(global_context, false, true)?
+                            let statement = self.parse_statement(global_context, false, true)?
                                 .ok_or_else(|| Box::new(crate::Error::ExpectedClosingBracket {
                                     span: self.current_span(),
                                     bracket: Token::CurlyRight,
                                 }))?;
-                            statements.push(statement);
+                            statements.push(*statement);
                         }
                     }
                 }
@@ -1050,6 +1082,6 @@ impl<'a, T: BufRead> Parser<'a, T> {
     }
 
     pub fn parse_top_level_statement(&mut self, context: &mut GlobalContext) -> crate::Result<Option<Box<Node>>> {
-        self.parse_global_statement(context, false, true)
+        self.parse_statement(context, false, true)
     }
 }

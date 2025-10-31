@@ -1,6 +1,4 @@
-foreign function malloc(size_bytes: usize) -> *mut void;
-foreign function free(alloc: *mut void);
-foreign function printf(format: *[u8], ..) -> u32;
+module libc;
 
 implement i32 {
     function max(self: Self, other: Self) -> Self {
@@ -25,7 +23,7 @@ implement i32 {
     }
 
     function print(self: *Self) {
-        printf("%d", *self);
+        libc::printf("%d", *self);
     }
 }
 
@@ -55,7 +53,7 @@ implement LinkedList {
     }
 
     function push_front(self: *mut Self, value: *void) {
-        let new_node = malloc(sizeof(LinkedListNode)) as *mut LinkedListNode;
+        let new_node = libc::malloc(sizeof(LinkedListNode)) as *mut LinkedListNode;
         *new_node = LinkedListNode {
             value: value,
             next: self.head,
@@ -71,7 +69,7 @@ implement LinkedList {
             let front = self.head;
             let value = front.value;
             self.head = front.next;
-            free(front as *mut void);
+            libc::free(front as *mut [u8]);
             value
         }
     }
@@ -86,7 +84,7 @@ struct AVLTreeNode {
 
 implement AVLTreeNode {
     function alloc(key: *void) -> *mut Self {
-        let alloc = malloc(sizeof(Self)) as *mut Self;
+        let alloc = libc::malloc(sizeof(Self)) as *mut Self;
         *alloc = Self {
             key: key,
             left: null,
@@ -156,13 +154,13 @@ implement AVLTreeNode {
 
     function print(self: *Self, printer: function(*void)) {
         if (self != null) {
-            printf("(");
+            libc::printf("(");
             self.left.print(printer);
-            printf(" ");
+            libc::printf(" ");
             printer(self.key);
-            printf(" ");
+            libc::printf(" ");
             self.right.print(printer);
-            printf(")");
+            libc::printf(")");
         }
     }
 }
@@ -224,7 +222,7 @@ implement AVLTree {
 
     function print(self: *Self, printer: function(*void)) {
         self.root.print(printer);
-        printf("\n");
+        libc::printf("\n");
     }
 }
 
@@ -248,9 +246,9 @@ struct BTreeLeaf {
 
 implement BTreeLeaf {
     function alloc(l_order: usize, first_element: *void) -> *mut Self {
-        let elements = malloc(sizeof(*void) * l_order) as *mut [*void];
+        let elements = libc::malloc(sizeof(*void) * l_order) as *mut [*void];
         elements[0] = first_element;
-        let alloc = malloc(sizeof(Self)) as *mut Self;
+        let alloc = libc::malloc(sizeof(Self)) as *mut Self;
         *alloc = Self {
             is_leaf: true,
             degree: 1,
@@ -333,16 +331,16 @@ function heap_sort(array: *mut [*void], length: usize, comparator: function(*voi
 
 function print_i32_ptr_array(array: *[*i32], length: usize) {
     if (length == 0) {
-        printf("[]");
+        libc::printf("[]");
         return;
     }
-    printf("[%d", *array[0]);
+    libc::printf("[%d", *array[0]);
     let mut index = 1_usize;
     while (index < length) {
-        printf(", %d", *array[index]);
+        libc::printf(", %d", *array[index]);
         index += 1;
     }
-    printf("]");
+    libc::printf("]");
 }
 
 foreign function main() -> i32 {
@@ -351,20 +349,20 @@ foreign function main() -> i32 {
     let mut list = LinkedList::new();
     let mut i = 0_usize;
     while (i < 5) {
-        printf("push: %d\n", keys[i]);
+        libc::printf("push: %d\n", keys[i]);
         list.push_front(&keys[i] as *void);
         i += 1;
     }
     let mut value: *i32;
     while ((value = list.pop_front() as *i32) != null) {
-        printf("pop: %d\n", *value);
+        libc::printf("pop: %d\n", *value);
     }
 
     let mut tree = AVLTree::new(i32::cmp as function(*void, *void) -> i32);
     let mut i = 0_usize;
     while (i < 7) {
         let idx = (i * 7) % 10;
-        printf("insert: %d\n", keys[idx]);
+        libc::printf("insert: %d\n", keys[idx]);
         tree.insert(&keys[idx] as *void);
         i += 1;
     }
@@ -376,7 +374,7 @@ foreign function main() -> i32 {
         } else {
             "no"
         };
-        printf("contains %d: %s\n", keys[i], is_contained);
+        libc::printf("contains %d: %s\n", keys[i], is_contained);
         i += 1;
     }
     tree.print(i32::print as function(*void) -> void);
@@ -391,13 +389,13 @@ foreign function main() -> i32 {
         heap_sort_test[index] = key;
         index += 1;
     }
-    printf("unsorted: ");
+    libc::printf("unsorted: ");
     print_i32_ptr_array(&heap_sort_test, 15);
-    printf("\n");
+    libc::printf("\n");
     heap_sort(&heap_sort_test as *mut [*void], 15, i32::cmp as function(*void, *void) -> i32);
-    printf("heapsort: ");
+    libc::printf("heapsort: ");
     print_i32_ptr_array(&heap_sort_test, 15);
-    printf("\n");
+    libc::printf("\n");
 
     0
 }

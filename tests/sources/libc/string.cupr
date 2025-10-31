@@ -1,0 +1,3 @@
+foreign function strlen(str: *[u8]) -> usize;
+
+foreign function memcpy(dest: *mut [u8], src: *[u8], size_bytes: usize) -> *mut [u8];

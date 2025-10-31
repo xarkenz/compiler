@@ -1,0 +1,3 @@
+import super::ProcessID;
+
+foreign function wait(status: *i32) -> ProcessID;

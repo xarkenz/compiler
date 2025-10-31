@@ -1,0 +1,24 @@
+module ctype;
+import ctype::*;
+
+module stdio;
+import stdio::*;
+
+module string;
+import string::*;
+
+foreign function malloc(size: usize) -> *mut [u8];
+
+foreign function calloc(member_count: usize, member_size: usize) -> *mut [u8];
+
+foreign function realloc(alloc_ptr: *mut [u8], size: usize) -> *mut [u8];
+
+foreign function free(alloc_ptr: *mut [u8]);
+
+foreign function rand() -> i32;
+
+foreign function srand(seed: u32);
+
+foreign function atexit(callback: function()) -> i32;
+
+foreign function exit(status: i32) -> never;

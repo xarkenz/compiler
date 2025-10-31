@@ -2,6 +2,7 @@ use super::*;
 
 use std::io::{BufRead, BufReader};
 use std::fs::File;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Span {
@@ -11,8 +12,8 @@ pub struct Span {
 }
 
 impl Span {
-    pub fn context_to_string(&self, filename: &str) -> std::io::Result<(usize, usize, String)> {
-        let mut reader = BufReader::new(File::open(filename)?);
+    pub fn context_to_string(&self, path: impl AsRef<Path>) -> std::io::Result<(usize, usize, String)> {
+        let mut reader = BufReader::new(File::open(path)?);
         let mut line_number = 0;
         let mut column_number = 0;
         let mut line_start_index = 0;
@@ -317,14 +318,15 @@ impl Error {
         }
     }
 
-    pub fn to_string_with_context(&self, filenames: &[String]) -> String {
+    pub fn to_string_with_context(&self, paths: &[PathBuf]) -> String {
         if let Some(span) = self.span() {
-            let filename = &filenames[span.file_id];
-            if let Ok((line_number, column_number, context)) = span.context_to_string(filename) {
-                format!("{filename}:{line_number}:{column_number}: {self}\n\n{context}")
+            let path = &paths[span.file_id];
+            let path_display = path.display();
+            if let Ok((line_number, column_number, context)) = span.context_to_string(path) {
+                format!("{path_display}:{line_number}:{column_number}: {self}\n\n{context}")
             }
             else {
-                format!("{filename}: {self}")
+                format!("{path_display}: {self}")
             }
         }
         else {

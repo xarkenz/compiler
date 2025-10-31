@@ -1,0 +1,10 @@
+module sys_wait;
+import sys_wait::*;
+
+import i32 as ProcessID;
+
+foreign function getpid() -> ProcessID;
+
+foreign function getppid() -> ProcessID;
+
+foreign function fork() -> ProcessID;
