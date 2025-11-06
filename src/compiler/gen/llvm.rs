@@ -21,10 +21,13 @@ impl Emitter<std::fs::File> {
         let path = path.as_ref();
         std::fs::File::create(path)
             .map(|file| Self::new(path, file))
-            .map_err(|cause| Box::new(crate::Error::OutputFileOpen {
-                filename: path.display().to_string(),
-                cause,
-            }))
+            .map_err(|cause| Box::new(crate::Error::new(
+                None,
+                crate::ErrorKind::OutputFileOpen {
+                    filename: path.display().to_string(),
+                    cause,
+                },
+            )))
     }
 }
 
@@ -43,10 +46,13 @@ impl<W: Write> Emitter<W> {
     }
 
     fn error(&self, cause: std::io::Error) -> Box<crate::Error> {
-        Box::new(crate::Error::OutputFileWrite {
-            filename: self.path.display().to_string(),
-            cause,
-        })
+        Box::new(crate::Error::new(
+            None,
+            crate::ErrorKind::OutputFileWrite {
+                filename: self.path.display().to_string(),
+                cause,
+            },
+        ))
     }
 
     pub fn emit_preamble(&mut self, source_filename: &Path) -> crate::Result<()> {

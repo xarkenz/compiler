@@ -68,16 +68,16 @@ impl<W: Write> Generator<W> {
     }
 
     pub fn generate_global_statement(&mut self, node: &ast::Node) -> crate::Result<Value> {
-        match node {
-            ast::Node::Let { value, global_register, .. } => {
+        match node.kind() {
+            ast::NodeKind::Let { value, global_register, .. } => {
                 let global_register = global_register.as_ref().expect("register should be valid after fill phase");
                 self.generate_global_let_statement(value.as_deref(), global_register)
             }
-            ast::Node::Constant { value, global_register, .. } => {
+            ast::NodeKind::Constant { value, global_register, .. } => {
                 let global_register = global_register.as_ref().expect("register should be valid after fill phase");
                 self.generate_global_constant_statement(value, global_register)
             }
-            ast::Node::Function { name, parameters, body, global_register, .. } => {
+            ast::NodeKind::Function { name, parameters, body, global_register, .. } => {
                 let global_register = global_register.as_ref().expect("register should be valid after fill phase");
                 if let Some(body) = body {
                     self.generate_function_definition(name, parameters, body, global_register)
@@ -86,7 +86,7 @@ impl<W: Write> Generator<W> {
                     self.generate_function_declaration(global_register)
                 }
             }
-            ast::Node::Structure { members, self_type, .. } => {
+            ast::NodeKind::Structure { members, self_type, .. } => {
                 if members.is_some() {
                     self.generate_structure_definition(*self_type)
                 }
@@ -94,20 +94,23 @@ impl<W: Write> Generator<W> {
                     self.generate_opaque_structure_definition(*self_type)
                 }
             }
-            ast::Node::Implement { self_type, statements } => {
+            ast::NodeKind::Implement { self_type, statements } => {
                 self.generate_implement_block(self_type, statements)
             }
-            ast::Node::Module { statements, namespace, .. } => {
+            ast::NodeKind::Module { statements, namespace, .. } => {
                 self.generate_module_block(statements, *namespace)
             }
-            ast::Node::ModuleFile { .. } |
-            ast::Node::Import { .. } |
-            ast::Node::GlobImport { .. } => {
+            ast::NodeKind::ModuleFile { .. } |
+            ast::NodeKind::Import { .. } |
+            ast::NodeKind::GlobImport { .. } => {
                 // The work has already been done for us
                 Ok(Value::Void)
             }
             _ => {
-                Err(Box::new(crate::Error::UnexpectedExpression {}))
+                Err(Box::new(crate::Error::new(
+                    Some(node.span()),
+                    crate::ErrorKind::UnexpectedExpression,
+                )))
             }
         }
     }
@@ -117,37 +120,37 @@ impl<W: Write> Generator<W> {
             return Ok(Value::Constant(constant));
         }
 
-        let result = match node {
-            ast::Node::Literal(literal) => {
-                self.generate_literal(literal, local_context, expected_type)?
+        let result = match node.kind() {
+            ast::NodeKind::Literal(literal) => {
+                self.generate_literal(node.span(), literal, local_context, expected_type)?
             }
-            ast::Node::Path { segments } => {
-                let path = self.context.get_absolute_path(segments)?;
+            ast::NodeKind::Path { segments } => {
+                let path = self.context.get_absolute_path(node.span(), segments)?;
                 self.context.get_path_value(&path)?
             }
-            ast::Node::Unary { operation, operand } => {
+            ast::NodeKind::Unary { operation, operand } => {
                 self.generate_unary_operation(*operation, operand, local_context, expected_type)?
             }
-            ast::Node::Binary { operation, lhs, rhs } => {
+            ast::NodeKind::Binary { operation, lhs, rhs } => {
                 self.generate_binary_operation(*operation, lhs, rhs, local_context, expected_type)?
             }
-            ast::Node::Call { callee, arguments } => {
+            ast::NodeKind::Call { callee, arguments } => {
                 self.generate_call_operation(callee, arguments, local_context)?
             }
-            ast::Node::ArrayLiteral { items } => {
-                self.generate_array_literal(items, local_context, expected_type)?
+            ast::NodeKind::ArrayLiteral { items } => {
+                self.generate_array_literal(node.span(), items, local_context, expected_type)?
             }
-            ast::Node::TupleLiteral { items } => {
-                self.generate_tuple_literal(items, local_context, expected_type)?
+            ast::NodeKind::TupleLiteral { items } => {
+                self.generate_tuple_literal(node.span(), items, local_context, expected_type)?
             }
-            ast::Node::StructureLiteral { structure_type: type_name, members } => {
-                self.generate_structure_literal(type_name, members, local_context)?
+            ast::NodeKind::StructureLiteral { structure_type: type_name, members } => {
+                self.generate_structure_literal(node.span(), type_name, members, local_context)?
             }
-            ast::Node::Grouping { content } => {
+            ast::NodeKind::Grouping { content } => {
                 // Fine to bypass validation steps since this is literally just parentheses
                 return self.generate_local_node(content, local_context, expected_type);
             }
-            ast::Node::Scope { statements, tail } => {
+            ast::NodeKind::Scope { statements, tail } => {
                 local_context.enter_scope();
 
                 let mut result = Value::Void;
@@ -171,36 +174,45 @@ impl<W: Write> Generator<W> {
 
                 result
             }
-            ast::Node::Conditional { condition, consequent, alternative } => {
+            ast::NodeKind::Conditional { condition, consequent, alternative } => {
                 self.generate_conditional(condition, consequent, alternative.as_deref(), local_context, expected_type)?
             }
-            ast::Node::While { condition, body } => {
+            ast::NodeKind::While { condition, body } => {
                 self.generate_while_loop(condition, body, local_context)?
             }
-            ast::Node::Break => {
+            ast::NodeKind::Break => {
                 let break_label = local_context.break_label()
-                    .ok_or_else(|| Box::new(crate::Error::InvalidBreak {}))?;
+                    .ok_or_else(|| Box::new(crate::Error::new(
+                        Some(node.span()),
+                        crate::ErrorKind::InvalidBreak,
+                    )))?;
 
                 self.emitter.emit_unconditional_branch(break_label)?;
 
                 Value::Break
             }
-            ast::Node::Continue => {
+            ast::NodeKind::Continue => {
                 let continue_label = local_context.continue_label()
-                    .ok_or_else(|| Box::new(crate::Error::InvalidContinue {}))?;
+                    .ok_or_else(|| Box::new(crate::Error::new(
+                        Some(node.span()),
+                        crate::ErrorKind::InvalidContinue,
+                    )))?;
 
                 self.emitter.emit_unconditional_branch(continue_label)?;
 
                 Value::Continue
             }
-            ast::Node::Return { value } => {
+            ast::NodeKind::Return { value } => {
                 let return_type = local_context.return_type();
 
                 if let Some(value) = value {
                     if return_type == TypeHandle::VOID {
-                        return Err(Box::new(crate::Error::UnexpectedReturnValue {
-                            function_name: local_context.function_path().to_string(),
-                        }));
+                        return Err(Box::new(crate::Error::new(
+                            Some(value.span()),
+                            crate::ErrorKind::UnexpectedReturnValue {
+                                function_name: local_context.function_path().to_string(),
+                            },
+                        )));
                     }
                     else {
                         let value = self.generate_local_node(value, local_context, Some(return_type))?;
@@ -210,9 +222,12 @@ impl<W: Write> Generator<W> {
                     }
                 }
                 else if return_type != TypeHandle::VOID {
-                    return Err(Box::new(crate::Error::ExpectedReturnValue {
-                        function_name: local_context.function_path().to_string(),
-                    }));
+                    return Err(Box::new(crate::Error::new(
+                        Some(node.span().tail_point()),
+                        crate::ErrorKind::ExpectedReturnValue {
+                            function_name: local_context.function_path().to_string(),
+                        },
+                    )));
                 }
                 else {
                     self.emitter.emit_return(&Value::Void, &self.context)?;
@@ -220,19 +235,22 @@ impl<W: Write> Generator<W> {
 
                 Value::Never
             }
-            ast::Node::Let { name, value_type, is_mutable, value, .. } => {
-                self.generate_local_let_statement(name, value_type.as_ref(), *is_mutable, value.as_deref(), local_context)?
+            ast::NodeKind::Let { name, value_type, is_mutable, value, .. } => {
+                self.generate_local_let_statement(node.span(), name, value_type.as_deref(), *is_mutable, value.as_deref(), local_context)?
             }
-            ast::Node::Constant { name, value_type, value, .. } => {
+            ast::NodeKind::Constant { name, value_type, value, .. } => {
                 self.generate_local_constant_statement(name, value_type, value, local_context)?
             }
             _ => {
-                return Err(Box::new(crate::Error::UnexpectedExpression {}));
+                return Err(Box::new(crate::Error::new(
+                    Some(node.span()),
+                    crate::ErrorKind::UnexpectedExpression,
+                )));
             }
         };
 
         if let Some(expected_type) = expected_type {
-            self.enforce_type(result, expected_type, local_context)
+            self.enforce_type(result, expected_type, node.span(), local_context)
                 // For debugging purposes. This information is often useful
                 .inspect_err(|_| println!("problematic node: {node:?}"))
         }
@@ -253,38 +271,47 @@ impl<W: Write> Generator<W> {
         self.emitter.emit_label(label)
     }
 
-    pub fn enforce_type(&mut self, value: Value, expected_type: TypeHandle, local_context: &mut LocalContext) -> crate::Result<Value> {
+    pub fn enforce_type(&mut self, value: Value, expected_type: TypeHandle, span: crate::Span, local_context: &mut LocalContext) -> crate::Result<Value> {
         let got_type = value.get_type();
 
         let conversion = self.context.try_implicit_conversion(got_type, expected_type, true)
-            .ok_or_else(|| Box::new(crate::Error::IncompatibleTypes {
-                expected_type: expected_type.path(self.context()).to_string(),
-                got_type: got_type.path(self.context()).to_string(),
-            }))?;
+            .ok_or_else(|| Box::new(crate::Error::new(
+                Some(span),
+                crate::ErrorKind::IncompatibleTypes {
+                    expected_type: expected_type.path(self.context()).to_string(),
+                    got_type: got_type.path(self.context()).to_string(),
+                },
+            )))?;
 
         self.convert_value(value, expected_type, conversion, local_context)
     }
 
-    pub fn enforce_constant_type(&mut self, constant: Constant, expected_type: TypeHandle) -> crate::Result<Constant> {
+    pub fn enforce_constant_type(&mut self, constant: Constant, expected_type: TypeHandle, span: crate::Span) -> crate::Result<Constant> {
         let got_type = constant.get_type();
 
         let conversion = self.context.try_implicit_conversion(got_type, expected_type, true)
-            .ok_or_else(|| Box::new(crate::Error::IncompatibleTypes {
-                expected_type: expected_type.path(self.context()).to_string(),
-                got_type: got_type.path(self.context()).to_string(),
-            }))?;
+            .ok_or_else(|| Box::new(crate::Error::new(
+                Some(span),
+                crate::ErrorKind::IncompatibleTypes {
+                    expected_type: expected_type.path(self.context()).to_string(),
+                    got_type: got_type.path(self.context()).to_string(),
+                },
+            )))?;
 
         self.convert_constant(constant, expected_type, conversion)
     }
 
-    pub fn explicitly_convert(&mut self, value: Value, to_type: TypeHandle, local_context: &mut LocalContext) -> crate::Result<Value> {
+    pub fn explicitly_convert(&mut self, value: Value, to_type: TypeHandle, span: crate::Span, local_context: &mut LocalContext) -> crate::Result<Value> {
         let from_type = value.get_type();
 
         let conversion = self.context.try_explicit_conversion(from_type, to_type, true)
-            .ok_or_else(|| Box::new(crate::Error::IncompatibleTypes {
-                expected_type: to_type.path(self.context()).to_string(),
-                got_type: from_type.path(self.context()).to_string(),
-            }))?;
+            .ok_or_else(|| Box::new(crate::Error::new(
+                Some(span),
+                crate::ErrorKind::IncompatibleTypes {
+                    expected_type: to_type.path(self.context()).to_string(),
+                    got_type: from_type.path(self.context()).to_string(),
+                },
+            )))?;
 
         self.convert_value(value, to_type, conversion, local_context)
     }
@@ -356,7 +383,7 @@ impl<W: Write> Generator<W> {
         Ok(Value::Register(result))
     }
 
-    fn generate_literal(&mut self, literal: &token::Literal, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_literal(&mut self, span: crate::Span, literal: &token::Literal, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let result = match *literal {
             token::Literal::Name(ref name) => {
                 if let Some(value) = local_context.find_symbol(name) {
@@ -365,8 +392,8 @@ impl<W: Write> Generator<W> {
                 else {
                     self.context.get_symbol_value(self.context.current_module(), name)
                         .map_err(|mut error| {
-                            if let crate::Error::UndefinedGlobalSymbol { .. } = error.as_ref() {
-                                *error = crate::Error::UndefinedSymbol {
+                            if let crate::ErrorKind::UndefinedGlobalSymbol { .. } = error.kind() {
+                                *error.kind_mut() = crate::ErrorKind::UndefinedSymbol {
                                     name: name.to_string(),
                                 };
                             }
@@ -380,10 +407,13 @@ impl<W: Write> Generator<W> {
                     None => expected_type.unwrap_or(TypeHandle::I32),
                 };
                 let Some(value) = IntegerValue::from_unknown_type(value, value_type, self.context.target()) else {
-                    return Err(Box::new(crate::Error::IncompatibleValueType {
-                        value: value.to_string(),
-                        type_name: value_type.path(&self.context).to_string(),
-                    }));
+                    return Err(Box::new(crate::Error::new(
+                        Some(span),
+                        crate::ErrorKind::IncompatibleValueType {
+                            value: value.to_string(),
+                            type_name: value_type.path(&self.context).to_string(),
+                        },
+                    )));
                 };
 
                 Value::from(value)
@@ -394,10 +424,13 @@ impl<W: Write> Generator<W> {
                     None => expected_type.unwrap_or(TypeHandle::F64),
                 };
                 let Some(value) = FloatValue::from_unknown_type(value, value_type, self.context.target()) else {
-                    return Err(Box::new(crate::Error::IncompatibleValueType {
-                        value: value.to_string(),
-                        type_name: value_type.path(&self.context).to_string(),
-                    }));
+                    return Err(Box::new(crate::Error::new(
+                        Some(span),
+                        crate::ErrorKind::IncompatibleValueType {
+                            value: value.to_string(),
+                            type_name: value_type.path(&self.context).to_string(),
+                        },
+                    )));
                 };
 
                 Value::from(value)
@@ -429,17 +462,23 @@ impl<W: Write> Generator<W> {
         Ok(result)
     }
 
-    fn generate_array_literal(&mut self, items: &[ast::Node], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_array_literal(&mut self, span: crate::Span, items: &[ast::Node], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let Some(array_type) = expected_type else {
-            return Err(Box::new(crate::Error::UnknownArrayType {}));
+            return Err(Box::new(crate::Error::new(
+                Some(span),
+                crate::ErrorKind::UnknownArrayType,
+            )));
         };
         let &TypeRepr::Array { item_type, .. } = array_type.repr(&self.context) else {
-            return Err(Box::new(crate::Error::UnknownArrayType {}));
+            return Err(Box::new(crate::Error::new(
+                Some(span),
+                crate::ErrorKind::UnknownArrayType,
+            )));
         };
 
         let mut non_constant_items = Vec::new();
 
-        let constant_items: Vec<Constant> = crate::Result::from_iter(items
+        let constant_items: Vec<Constant> = items
             .iter()
             .enumerate()
             .map(|(index, item)| {
@@ -454,20 +493,25 @@ impl<W: Write> Generator<W> {
 
                     Ok(Constant::Undefined(item_type))
                 }
-            }))?;
+            })
+            .collect::<crate::Result<_>>()?;
 
         let array_pointer_type = self.context.get_pointer_type(array_type, PointerSemantics::Immutable);
         let array_pointer = local_context.new_anonymous_register(array_pointer_type);
-        let initial_value = Value::Constant(Constant::Array {
-            array_type,
-            items: constant_items,
-        });
 
         self.emitter.emit_local_allocation(&array_pointer, &self.context)?;
 
         let array_pointer = Value::Register(array_pointer);
 
-        self.emitter.emit_store(&initial_value, &array_pointer, &self.context)?;
+        // Store the constant items, if any
+        if non_constant_items.len() < items.len() {
+            let initial_value = Value::Constant(Constant::Array {
+                array_type,
+                items: constant_items,
+            });
+
+            self.emitter.emit_store(&initial_value, &array_pointer, &self.context)?;
+        }
 
         for (index, item) in non_constant_items {
             let item_pointer_type = self.context.get_pointer_type(item.get_type(), PointerSemantics::Mutable);
@@ -476,7 +520,7 @@ impl<W: Write> Generator<W> {
             let index = Value::from(IntegerValue::new(IntegerType::Usize, index as i128));
 
             self.emitter.emit_get_element_pointer(&item_pointer, &array_pointer, &[zero, index], &self.context)?;
-            self.emitter.emit_store(&item, &item_pointer.into(), &self.context)?;
+            self.emitter.emit_store(&item, &Value::Register(item_pointer), &self.context)?;
         }
 
         Ok(Value::Indirect {
@@ -485,21 +529,30 @@ impl<W: Write> Generator<W> {
         })
     }
 
-    fn generate_tuple_literal(&mut self, items: &[ast::Node], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_tuple_literal(&mut self, span: crate::Span, items: &[ast::Node], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let Some(tuple_type) = expected_type else {
-            return Err(Box::new(crate::Error::UnknownTupleType {}));
+            return Err(Box::new(crate::Error::new(
+                Some(span),
+                crate::ErrorKind::UnknownTupleType,
+            )));
         };
         let TypeRepr::Tuple { item_types } = tuple_type.repr(&self.context).clone() else {
-            return Err(Box::new(crate::Error::UnknownTupleType {}));
+            return Err(Box::new(crate::Error::new(
+                Some(span),
+                crate::ErrorKind::UnknownTupleType,
+            )));
         };
         if items.len() != item_types.len() {
             // TODO: better error
-            return Err(Box::new(crate::Error::UnknownTupleType {}));
+            return Err(Box::new(crate::Error::new(
+                Some(span),
+                crate::ErrorKind::UnknownTupleType,
+            )));
         }
 
         let mut non_constant_items = Vec::new();
 
-        let constant_items: Vec<Constant> = crate::Result::from_iter(items
+        let constant_items: Vec<Constant> = items
             .iter()
             .zip(&item_types)
             .enumerate()
@@ -515,7 +568,8 @@ impl<W: Write> Generator<W> {
 
                     Ok(Constant::Undefined(item_type))
                 }
-            }))?;
+            })
+            .collect::<crate::Result<_>>()?;
 
         let tuple_pointer_type = self.context.get_pointer_type(tuple_type, PointerSemantics::Immutable);
         let tuple_pointer = local_context.new_anonymous_register(tuple_pointer_type);
@@ -541,7 +595,7 @@ impl<W: Write> Generator<W> {
             let index = Value::from(IntegerValue::new(IntegerType::I32, index as i128));
 
             self.emitter.emit_get_element_pointer(&item_pointer, &tuple_pointer, &[zero, index], &self.context)?;
-            self.emitter.emit_store(&item, &item_pointer.into(), &self.context)?;
+            self.emitter.emit_store(&item, &Value::Register(item_pointer), &self.context)?;
         }
 
         Ok(Value::Indirect {
@@ -550,58 +604,71 @@ impl<W: Write> Generator<W> {
         })
     }
 
-    fn generate_structure_literal(&mut self, type_name: &ast::Node, initializer_members: &[(Box<str>, ast::Node)], local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_structure_literal(&mut self, span: crate::Span, type_name: &ast::Node, initializer_members: &[(Box<str>, ast::Node)], local_context: &mut LocalContext) -> crate::Result<Value> {
         let struct_type = self.context.interpret_node_as_type(type_name)?;
 
         let TypeRepr::Structure { name: type_name, members } = struct_type.repr(&self.context).clone() else {
-            return Err(Box::new(crate::Error::NonStructType {
-                type_name: type_name.to_string(),
-            }));
+            return Err(Box::new(crate::Error::new(
+                Some(type_name.span()),
+                crate::ErrorKind::NonStructType {
+                    type_name: type_name.to_string(),
+                },
+            )));
         };
 
         let mut initializer_members = initializer_members.to_vec();
         let mut non_constant_members = Vec::new();
         let mut missing_member_names = Vec::new();
 
-        let constant_members: Vec<Constant> = crate::Result::from_iter(members.iter().enumerate().map(|(index, member)| {
-            if let Some(initializer_index) = initializer_members.iter().position(|(name, _)| &member.name == name) {
-                let (_, member_value) = &initializer_members[initializer_index];
-                let member_value = self.generate_local_node(member_value, local_context, Some(member.member_type))?;
+        let constant_members: Vec<Constant> = members
+            .iter()
+            .enumerate()
+            .map(|(index, member)| {
+                if let Some(initializer_index) = initializer_members.iter().position(|(name, _)| &member.name == name) {
+                    let (_, member_value) = &initializer_members[initializer_index];
+                    let member_value = self.generate_local_node(member_value, local_context, Some(member.member_type))?;
 
-                initializer_members.swap_remove(initializer_index);
+                    initializer_members.swap_remove(initializer_index);
 
-                if let Value::Constant(member_constant) = member_value {
-                    Ok(member_constant)
+                    if let Value::Constant(member_constant) = member_value {
+                        Ok(member_constant)
+                    }
+                    else {
+                        let member_value = self.coerce_to_rvalue(member_value, local_context)?;
+                        non_constant_members.push((index, member_value));
+
+                        Ok(Constant::Undefined(member.member_type))
+                    }
                 }
                 else {
-                    let member_value = self.coerce_to_rvalue(member_value, local_context)?;
-                    non_constant_members.push((index, member_value));
+                    missing_member_names.push(member.name.to_string());
 
                     Ok(Constant::Undefined(member.member_type))
                 }
-            }
-            else {
-                missing_member_names.push(member.name.to_string());
-
-                Ok(Constant::Undefined(member.member_type))
-            }
-        }))?;
+            })
+            .collect::<crate::Result<_>>()?;
 
         if !missing_member_names.is_empty() {
-            return Err(Box::new(crate::Error::MissingStructMembers {
-                member_names: missing_member_names,
-                type_name: type_name.to_string(),
-            }))
+            return Err(Box::new(crate::Error::new(
+                Some(span),
+                crate::ErrorKind::MissingStructMembers {
+                    member_names: missing_member_names,
+                    type_name: type_name.to_string(),
+                },
+            )))
         }
 
         if !initializer_members.is_empty() {
-            return Err(Box::new(crate::Error::ExtraStructMembers {
-                member_names: initializer_members
-                    .iter()
-                    .map(|(name, _)| name.to_string())
-                    .collect(),
-                type_name: type_name.to_string(),
-            }));
+            return Err(Box::new(crate::Error::new(
+                Some(span),
+                crate::ErrorKind::ExtraStructMembers {
+                    member_names: initializer_members
+                        .iter()
+                        .map(|(name, _)| name.to_string())
+                        .collect(),
+                    type_name: type_name.to_string(),
+                },
+            )));
         }
 
         let structure_pointer_type = self.context.get_pointer_type(struct_type, PointerSemantics::Immutable);
@@ -628,7 +695,7 @@ impl<W: Write> Generator<W> {
             let index = Value::from(IntegerValue::new(IntegerType::I32, index as i128));
 
             self.emitter.emit_get_element_pointer(&member_pointer, &structure_pointer, &[zero, index], &self.context)?;
-            self.emitter.emit_store(&member, &member_pointer.into(), &self.context)?;
+            self.emitter.emit_store(&member, &Value::Register(member_pointer), &self.context)?;
         }
 
         Ok(Value::Indirect {
@@ -637,15 +704,15 @@ impl<W: Write> Generator<W> {
         })
     }
 
-    fn generate_unary_operation(&mut self, operation: ast::UnaryOperation, operand: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_unary_operation(&mut self, operation: ast::UnaryOperation, operand_node: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let result = match operation {
             ast::UnaryOperation::Positive => {
-                let operand = self.generate_local_node(operand, local_context, expected_type)?;
+                let operand = self.generate_local_node(operand_node, local_context, expected_type)?;
 
                 self.coerce_to_rvalue(operand, local_context)?
             }
             ast::UnaryOperation::Negative => {
-                let operand = self.generate_local_node(operand, local_context, expected_type)?;
+                let operand = self.generate_local_node(operand_node, local_context, expected_type)?;
                 let operand = self.coerce_to_rvalue(operand, local_context)?;
                 let result = local_context.new_anonymous_register(expected_type.unwrap_or_else(|| operand.get_type()));
 
@@ -654,7 +721,7 @@ impl<W: Write> Generator<W> {
                 Value::Register(result)
             }
             ast::UnaryOperation::BitwiseNot => {
-                let operand = self.generate_local_node(operand, local_context, expected_type)?;
+                let operand = self.generate_local_node(operand_node, local_context, expected_type)?;
                 let operand = self.coerce_to_rvalue(operand, local_context)?;
                 let result = local_context.new_anonymous_register(expected_type.unwrap_or_else(|| operand.get_type()));
 
@@ -663,7 +730,7 @@ impl<W: Write> Generator<W> {
                 Value::Register(result)
             }
             ast::UnaryOperation::LogicalNot => {
-                let operand = self.generate_local_node(operand, local_context, Some(TypeHandle::BOOL))?;
+                let operand = self.generate_local_node(operand_node, local_context, Some(TypeHandle::BOOL))?;
                 let operand = self.coerce_to_rvalue(operand, local_context)?;
                 let result = local_context.new_anonymous_register(TypeHandle::BOOL);
 
@@ -672,14 +739,17 @@ impl<W: Write> Generator<W> {
                 Value::Register(result)
             }
             ast::UnaryOperation::Reference => {
-                let operand = self.generate_local_node(operand, local_context, None)?;
+                let operand = self.generate_local_node(operand_node, local_context, None)?;
 
                 if let Value::Indirect { mut pointer, .. } = operand {
                     pointer.map_pointer_semantics(&mut self.context, |_, semantics| semantics.normalized());
                     *pointer
                 }
                 else {
-                    return Err(Box::new(crate::Error::ExpectedLValue {}));
+                    return Err(Box::new(crate::Error::new(
+                        Some(operand_node.span()),
+                        crate::ErrorKind::ExpectedLValue,
+                    )));
                 }
             }
             ast::UnaryOperation::Dereference => {
@@ -687,7 +757,7 @@ impl<W: Write> Generator<W> {
                     self.context.get_pointer_type(expected_type, PointerSemantics::Immutable)
                 });
 
-                let operand = self.generate_local_node(operand, local_context, expected_type)?;
+                let operand = self.generate_local_node(operand_node, local_context, expected_type)?;
                 let operand = self.coerce_to_rvalue(operand, local_context)?;
 
                 if let &TypeRepr::Pointer { pointee_type, .. } = operand.get_type().repr(&self.context) {
@@ -705,37 +775,46 @@ impl<W: Write> Generator<W> {
                     }
                 }
                 else {
-                    return Err(Box::new(crate::Error::ExpectedPointer {
-                        type_name: operand.get_type().path(&self.context).to_string(),
-                    }));
+                    return Err(Box::new(crate::Error::new(
+                        Some(operand_node.span()),
+                        crate::ErrorKind::ExpectedPointer {
+                            type_name: operand.get_type().path(&self.context).to_string(),
+                        },
+                    )));
                 }
             }
             ast::UnaryOperation::GetSize => {
-                let ast::Node::Type(type_node) = operand else {
+                let ast::NodeKind::Type(type_node) = operand_node.kind() else {
                     // If parsing rules are followed, this should not occur
                     panic!("non-type operand for 'sizeof'");
                 };
 
                 let value_type = self.context.interpret_type_node(type_node)?;
                 let Some(size) = self.context.type_size(value_type) else {
-                    return Err(Box::new(crate::Error::UnknownTypeSize {
-                        type_name: value_type.path(&self.context).to_string(),
-                    }));
+                    return Err(Box::new(crate::Error::new(
+                        Some(type_node.span()),
+                        crate::ErrorKind::UnknownTypeSize {
+                            type_name: value_type.path(&self.context).to_string(),
+                        },
+                    )));
                 };
 
                 Value::from(IntegerValue::new(IntegerType::Usize, size as i128))
             }
             ast::UnaryOperation::GetAlign => {
-                let ast::Node::Type(type_node) = operand else {
+                let ast::NodeKind::Type(type_node) = operand_node.kind() else {
                     // If parsing rules are followed, this should not occur
                     panic!("non-type operand for 'alignof'");
                 };
 
                 let value_type = self.context.interpret_type_node(type_node)?;
                 let Some(alignment) = self.context.type_alignment(value_type) else {
-                    return Err(Box::new(crate::Error::UnknownTypeSize {
-                        type_name: value_type.path(&self.context).to_string(),
-                    }));
+                    return Err(Box::new(crate::Error::new(
+                        Some(type_node.span()),
+                        crate::ErrorKind::UnknownTypeAlignment {
+                            type_name: value_type.path(&self.context).to_string(),
+                        },
+                    )));
                 };
 
                 Value::from(IntegerValue::new(IntegerType::Usize, alignment as i128))
@@ -745,13 +824,13 @@ impl<W: Write> Generator<W> {
         Ok(result)
     }
 
-    fn generate_binary_operation(&mut self, operation: ast::BinaryOperation, lhs: &ast::Node, rhs: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_binary_operation(&mut self, operation: ast::BinaryOperation, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let result = match operation {
             ast::BinaryOperation::Subscript => {
-                self.generate_subscript_operation(lhs, rhs, local_context)?
+                self.generate_subscript_operation(lhs_node, rhs_node, local_context)?
             }
             ast::BinaryOperation::Access => {
-                let lhs = self.generate_local_node(lhs, local_context, None)?;
+                let lhs = self.generate_local_node(lhs_node, local_context, None)?;
 
                 if let &TypeRepr::Pointer { pointee_type, .. } = lhs.get_type().repr(&self.context) {
                     let pointer = self.coerce_to_rvalue(lhs, local_context)?;
@@ -760,139 +839,139 @@ impl<W: Write> Generator<W> {
                         pointee_type,
                     };
 
-                    self.generate_member_access(structure, rhs, local_context)?
+                    self.generate_member_access(structure, rhs_node, local_context)?
                 }
                 else {
-                    self.generate_member_access(lhs, rhs, local_context)?
+                    self.generate_member_access(lhs, rhs_node, local_context)?
                 }
             }
             ast::BinaryOperation::Convert => {
-                let ast::Node::Type(type_node) = rhs else {
+                let ast::NodeKind::Type(type_node) = rhs_node.kind() else {
                     // If parsing rules are followed, this should not occur
                     panic!("non-type rhs for 'as'");
                 };
 
-                let value = self.generate_local_node(lhs, local_context, None)?;
+                let value = self.generate_local_node(lhs_node, local_context, None)?;
                 let value = self.coerce_to_rvalue(value, local_context)?;
 
                 let target_type = self.context.interpret_type_node(type_node)?;
 
-                self.explicitly_convert(value, target_type, local_context)?
+                self.explicitly_convert(value, target_type, type_node.span(), local_context)?
             }
             ast::BinaryOperation::Add => {
-                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_addition(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::Subtract => {
-                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_subtraction(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::Multiply => {
-                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_multiplication(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::Divide => {
-                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_division(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::Remainder => {
-                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_remainder(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::ShiftLeft => {
-                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_shift_left(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::ShiftRight => {
-                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_shift_right(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::BitwiseAnd => {
-                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_bitwise_and(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::BitwiseOr => {
-                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_bitwise_or(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::BitwiseXor => {
-                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_bitwise_xor(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::Equal => {
-                let (result, lhs, rhs) = self.generate_comparison_operands(lhs, rhs, local_context)?;
+                let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
                 self.emitter.emit_cmp_equal(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::NotEqual => {
-                let (result, lhs, rhs) = self.generate_comparison_operands(lhs, rhs, local_context)?;
+                let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
                 self.emitter.emit_cmp_not_equal(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::LessThan => {
-                let (result, lhs, rhs) = self.generate_comparison_operands(lhs, rhs, local_context)?;
+                let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
                 self.emitter.emit_cmp_less_than(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::LessEqual => {
-                let (result, lhs, rhs) = self.generate_comparison_operands(lhs, rhs, local_context)?;
+                let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
                 self.emitter.emit_cmp_less_equal(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::GreaterThan => {
-                let (result, lhs, rhs) = self.generate_comparison_operands(lhs, rhs, local_context)?;
+                let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
                 self.emitter.emit_cmp_greater_than(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::GreaterEqual => {
-                let (result, lhs, rhs) = self.generate_comparison_operands(lhs, rhs, local_context)?;
+                let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
                 self.emitter.emit_cmp_greater_equal(&result, &lhs, &rhs, &self.context)?;
 
                 Value::Register(result)
             }
             ast::BinaryOperation::LogicalAnd => {
-                let lhs = self.generate_local_node(lhs, local_context, Some(TypeHandle::BOOL))?;
+                let lhs = self.generate_local_node(lhs_node, local_context, Some(TypeHandle::BOOL))?;
                 let lhs = self.coerce_to_rvalue(lhs, local_context)?;
 
                 let lhs_true_label = local_context.new_block_label();
@@ -902,7 +981,7 @@ impl<W: Write> Generator<W> {
                 let short_circuit_label = local_context.current_block_label().clone();
                 self.start_new_block(&lhs_true_label, local_context)?;
 
-                let rhs = self.generate_local_node(rhs, local_context, Some(TypeHandle::BOOL))?;
+                let rhs = self.generate_local_node(rhs_node, local_context, Some(TypeHandle::BOOL))?;
                 let rhs = self.coerce_to_rvalue(rhs, local_context)?;
 
                 self.emitter.emit_unconditional_branch(&tail_label)?;
@@ -919,7 +998,7 @@ impl<W: Write> Generator<W> {
                 Value::Register(result)
             }
             ast::BinaryOperation::LogicalOr => {
-                let lhs = self.generate_local_node(lhs, local_context, Some(TypeHandle::BOOL))?;
+                let lhs = self.generate_local_node(lhs_node, local_context, Some(TypeHandle::BOOL))?;
                 let lhs = self.coerce_to_rvalue(lhs, local_context)?;
 
                 let lhs_false_label = local_context.new_block_label();
@@ -929,7 +1008,7 @@ impl<W: Write> Generator<W> {
                 let short_circuit_label = local_context.current_block_label().clone();
                 self.start_new_block(&lhs_false_label, local_context)?;
 
-                let rhs = self.generate_local_node(rhs, local_context, Some(TypeHandle::BOOL))?;
+                let rhs = self.generate_local_node(rhs_node, local_context, Some(TypeHandle::BOOL))?;
                 let rhs = self.coerce_to_rvalue(rhs, local_context)?;
 
                 self.emitter.emit_unconditional_branch(&tail_label)?;
@@ -946,9 +1025,9 @@ impl<W: Write> Generator<W> {
                 Value::Register(result)
             }
             ast::BinaryOperation::Assign => {
-                let lhs = self.generate_local_node(lhs, local_context, expected_type)?;
-                let (pointer, pointee_type) = lhs.into_mutable_lvalue(&self.context)?;
-                let rhs = self.generate_local_node(rhs, local_context, Some(pointee_type))?;
+                let lhs = self.generate_local_node(lhs_node, local_context, expected_type)?;
+                let (pointer, pointee_type) = lhs.into_mutable_lvalue(lhs_node.span(), &self.context)?;
+                let rhs = self.generate_local_node(rhs_node, local_context, Some(pointee_type))?;
                 let rhs = self.coerce_to_rvalue(rhs, local_context)?;
 
                 self.emitter.emit_store(&rhs, &pointer, &self.context)?;
@@ -956,7 +1035,7 @@ impl<W: Write> Generator<W> {
                 rhs
             }
             ast::BinaryOperation::MultiplyAssign => {
-                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_multiplication(&result, &lhs, &rhs, &self.context)?;
                 let result = Value::Register(result);
@@ -965,7 +1044,7 @@ impl<W: Write> Generator<W> {
                 result
             }
             ast::BinaryOperation::DivideAssign => {
-                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_division(&result, &lhs, &rhs, &self.context)?;
                 let result = Value::Register(result);
@@ -974,7 +1053,7 @@ impl<W: Write> Generator<W> {
                 result
             }
             ast::BinaryOperation::RemainderAssign => {
-                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_remainder(&result, &lhs, &rhs, &self.context)?;
                 let result = Value::Register(result);
@@ -983,7 +1062,7 @@ impl<W: Write> Generator<W> {
                 result
             }
             ast::BinaryOperation::AddAssign => {
-                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_addition(&result, &lhs, &rhs, &self.context)?;
                 let result = Value::Register(result);
@@ -992,7 +1071,7 @@ impl<W: Write> Generator<W> {
                 result
             }
             ast::BinaryOperation::SubtractAssign => {
-                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_subtraction(&result, &lhs, &rhs, &self.context)?;
                 let result = Value::Register(result);
@@ -1001,7 +1080,7 @@ impl<W: Write> Generator<W> {
                 result
             }
             ast::BinaryOperation::ShiftLeftAssign => {
-                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_shift_left(&result, &lhs, &rhs, &self.context)?;
                 let result = Value::Register(result);
@@ -1010,7 +1089,7 @@ impl<W: Write> Generator<W> {
                 result
             }
             ast::BinaryOperation::ShiftRightAssign => {
-                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_shift_right(&result, &lhs, &rhs, &self.context)?;
                 let result = Value::Register(result);
@@ -1019,7 +1098,7 @@ impl<W: Write> Generator<W> {
                 result
             }
             ast::BinaryOperation::BitwiseAndAssign => {
-                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_bitwise_and(&result, &lhs, &rhs, &self.context)?;
                 let result = Value::Register(result);
@@ -1028,7 +1107,7 @@ impl<W: Write> Generator<W> {
                 result
             }
             ast::BinaryOperation::BitwiseXorAssign => {
-                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_bitwise_xor(&result, &lhs, &rhs, &self.context)?;
                 let result = Value::Register(result);
@@ -1037,7 +1116,7 @@ impl<W: Write> Generator<W> {
                 result
             }
             ast::BinaryOperation::BitwiseOrAssign => {
-                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs, rhs, local_context, expected_type)?;
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 self.emitter.emit_bitwise_or(&result, &lhs, &rhs, &self.context)?;
                 let result = Value::Register(result);
@@ -1050,24 +1129,30 @@ impl<W: Write> Generator<W> {
         Ok(result)
     }
 
-    fn generate_subscript_operation(&mut self, lhs: &ast::Node, rhs: &ast::Node, local_context: &mut LocalContext) -> crate::Result<Value> {
-        let lhs = self.generate_local_node(lhs, local_context, None)?;
-        let rhs = self.generate_local_node(rhs, local_context, None)?;
+    fn generate_subscript_operation(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext) -> crate::Result<Value> {
+        let lhs = self.generate_local_node(lhs_node, local_context, None)?;
+        let rhs = self.generate_local_node(rhs_node, local_context, None)?;
         let rhs = self.coerce_to_rvalue(rhs, local_context)?;
 
         let lhs_type = lhs.get_type();
         let rhs_type = rhs.get_type();
 
         let TypeRepr::Integer { .. } = rhs_type.repr(&self.context) else {
-            return Err(Box::new(crate::Error::ExpectedInteger {
-                type_name: rhs_type.path(&self.context).to_string(),
-            }));
+            return Err(Box::new(crate::Error::new(
+                Some(rhs_node.span()),
+                crate::ErrorKind::ExpectedInteger {
+                    type_name: rhs_type.path(&self.context).to_string(),
+                },
+            )));
         };
 
         let cannot_index_error = |context: &GlobalContext| {
-            Box::new(crate::Error::ExpectedArray {
-                type_name: lhs_type.path(context).to_string(),
-            })
+            Box::new(crate::Error::new(
+                Some(lhs_node.span()),
+                crate::ErrorKind::ExpectedArray {
+                    type_name: lhs_type.path(context).to_string(),
+                },
+            ))
         };
 
         match lhs {
@@ -1113,7 +1198,7 @@ impl<W: Write> Generator<W> {
                         };
 
                         self.emitter.emit_load(&array_pointer, &pointer, &self.context)?;
-                        self.emitter.emit_get_element_pointer(&element_pointer, &array_pointer.into(), &indices, &self.context)?;
+                        self.emitter.emit_get_element_pointer(&element_pointer, &Value::Register(array_pointer), &indices, &self.context)?;
 
                         Ok(Value::Indirect {
                             pointer: Box::new(Value::Register(element_pointer)),
@@ -1135,7 +1220,7 @@ impl<W: Write> Generator<W> {
                             None => vec![rhs],
                         };
 
-                        self.emitter.emit_get_element_pointer(&element_pointer, &register.into(), &indices, &self.context)?;
+                        self.emitter.emit_get_element_pointer(&element_pointer, &Value::Register(register), &indices, &self.context)?;
 
                         Ok(Value::Indirect {
                             pointer: Box::new(Value::Register(element_pointer)),
@@ -1150,24 +1235,30 @@ impl<W: Write> Generator<W> {
         }
     }
 
-    fn fold_subscript_operation(&mut self, lhs: &ast::Node, rhs: &ast::Node, constant_id: &mut usize, local_context: Option<&LocalContext>) -> crate::Result<(Constant, Vec<(Register, Constant)>)> {
-        let (lhs, mut intermediate_constants) = self.fold_as_constant(lhs, constant_id, local_context, None)?;
-        let (rhs, mut constants) = self.fold_as_constant(rhs, constant_id, local_context, None)?;
+    fn fold_subscript_operation(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, constant_id: &mut usize, local_context: Option<&LocalContext>) -> crate::Result<(Constant, Vec<(Register, Constant)>)> {
+        let (lhs, mut intermediate_constants) = self.fold_as_constant(lhs_node, constant_id, local_context, None)?;
+        let (rhs, mut constants) = self.fold_as_constant(rhs_node, constant_id, local_context, None)?;
         intermediate_constants.append(&mut constants);
 
         let lhs_type = lhs.get_type();
         let rhs_type = rhs.get_type();
 
         let TypeRepr::Integer { .. } = rhs_type.repr(&self.context) else {
-            return Err(Box::new(crate::Error::ExpectedInteger {
-                type_name: rhs_type.path(&self.context).to_string(),
-            }));
+            return Err(Box::new(crate::Error::new(
+                Some(rhs_node.span()),
+                crate::ErrorKind::ExpectedInteger {
+                    type_name: rhs_type.path(&self.context).to_string(),
+                },
+            )));
         };
 
         let cannot_index_error = |context: &GlobalContext| {
-            Box::new(crate::Error::ExpectedArray {
-                type_name: lhs_type.path(context).to_string(),
-            })
+            Box::new(crate::Error::new(
+                Some(lhs_node.span()),
+                crate::ErrorKind::ExpectedArray {
+                    type_name: lhs_type.path(context).to_string(),
+                },
+            ))
         };
 
         let constant = match lhs {
@@ -1227,30 +1318,27 @@ impl<W: Write> Generator<W> {
         Ok((constant, intermediate_constants))
     }
 
-    fn generate_member_access(&mut self, lhs: Value, member_name: &ast::Node, local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_member_access(&mut self, lhs: Value, member_name_node: &ast::Node, local_context: &mut LocalContext) -> crate::Result<Value> {
         let lhs_type = lhs.get_type();
 
         let cannot_access_error = |context: &GlobalContext| {
-            Box::new(crate::Error::InvalidMemberAccess {
-                type_name: lhs_type.path(context).to_string(),
-            })
+            Box::new(crate::Error::new(
+                Some(member_name_node.span()),
+                crate::ErrorKind::InvalidMemberAccess {
+                    type_name: lhs_type.path(context).to_string(),
+                },
+            ))
         };
 
         match lhs {
             Value::Indirect { pointer, pointee_type } => match pointee_type.repr(&self.context).clone() {
                 TypeRepr::Tuple { item_types } => {
-                    let item_index = member_name.as_integer_name()?;
+                    let item_index = member_name_node.as_tuple_member(item_types.len() as i32)?;
                     let &TypeRepr::Pointer { semantics, .. } = pointer.get_type().repr(&self.context) else {
                         panic!("indirect value pointer is not a pointer type")
                     };
 
-                    let item_type = item_types
-                        .get(item_index as usize)
-                        .copied()
-                        .ok_or_else(|| Box::new(crate::Error::UndefinedMember {
-                            member_name: item_index.to_string(),
-                            type_name: lhs_type.path(&self.context).to_string(),
-                        }))?;
+                    let item_type = item_types[item_index as usize];
                     let item_pointer_type = self.context.get_pointer_type(item_type, semantics);
                     let item_pointer = local_context.new_anonymous_register(item_pointer_type);
                     let indices = &[
@@ -1266,7 +1354,7 @@ impl<W: Write> Generator<W> {
                     })
                 }
                 TypeRepr::Structure { members, .. } => {
-                    let member_name = member_name.as_name()?;
+                    let member_name = member_name_node.as_name()?;
                     let &TypeRepr::Pointer { semantics, .. } = pointer.get_type().repr(&self.context) else {
                         panic!("indirect value pointer is not a pointer type")
                     };
@@ -1277,10 +1365,13 @@ impl<W: Write> Generator<W> {
                         .find_map(|(index, member)| {
                             (member.name.as_ref() == member_name).then_some((index, member.member_type))
                         })
-                        .ok_or_else(|| Box::new(crate::Error::UndefinedMember {
-                            member_name: member_name.to_string(),
-                            type_name: lhs_type.path(&self.context).to_string(),
-                        }))?;
+                        .ok_or_else(|| Box::new(crate::Error::new(
+                            Some(member_name_node.span()),
+                            crate::ErrorKind::UndefinedMember {
+                                member_name: member_name.to_string(),
+                                type_name: lhs_type.path(&self.context).to_string(),
+                            },
+                        )))?;
                     let member_pointer_type = self.context.get_pointer_type(member_type, semantics);
                     let member_pointer = local_context.new_anonymous_register(member_pointer_type);
                     let indices = &[
@@ -1301,11 +1392,11 @@ impl<W: Write> Generator<W> {
         }
     }
 
-    fn generate_arithmetic_operands(&mut self, lhs: &ast::Node, rhs: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(Register, Value, Value)> {
-        let lhs = self.generate_local_node(lhs, local_context, expected_type)?;
+    fn generate_arithmetic_operands(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(Register, Value, Value)> {
+        let lhs = self.generate_local_node(lhs_node, local_context, expected_type)?;
         let lhs = self.coerce_to_rvalue(lhs, local_context)?;
 
-        let rhs = self.generate_local_node(rhs, local_context, Some(lhs.get_type()))?;
+        let rhs = self.generate_local_node(rhs_node, local_context, Some(lhs.get_type()))?;
         let rhs = self.coerce_to_rvalue(rhs, local_context)?;
 
         let result = local_context.new_anonymous_register(expected_type.unwrap_or_else(|| lhs.get_type()));
@@ -1313,11 +1404,11 @@ impl<W: Write> Generator<W> {
         Ok((result, lhs, rhs))
     }
 
-    fn generate_comparison_operands(&mut self, lhs: &ast::Node, rhs: &ast::Node, local_context: &mut LocalContext) -> crate::Result<(Register, Value, Value)> {
-        let lhs = self.generate_local_node(lhs, local_context, None)?;
+    fn generate_comparison_operands(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext) -> crate::Result<(Register, Value, Value)> {
+        let lhs = self.generate_local_node(lhs_node, local_context, None)?;
         let lhs = self.coerce_to_rvalue(lhs, local_context)?;
 
-        let rhs = self.generate_local_node(rhs, local_context, Some(lhs.get_type()))?;
+        let rhs = self.generate_local_node(rhs_node, local_context, Some(lhs.get_type()))?;
         let rhs = self.coerce_to_rvalue(rhs, local_context)?;
 
         let result = local_context.new_anonymous_register(TypeHandle::BOOL);
@@ -1325,11 +1416,11 @@ impl<W: Write> Generator<W> {
         Ok((result, lhs, rhs))
     }
 
-    fn generate_assignment_operands(&mut self, lhs: &ast::Node, rhs: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(Register, Value, Value, Value)> {
-        let lhs = self.generate_local_node(lhs, local_context, expected_type)?;
-        let (pointer, pointee_type) = lhs.into_mutable_lvalue(&self.context)?;
+    fn generate_assignment_operands(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(Register, Value, Value, Value)> {
+        let lhs = self.generate_local_node(lhs_node, local_context, expected_type)?;
+        let (pointer, pointee_type) = lhs.into_mutable_lvalue(lhs_node.span(), &self.context)?;
 
-        let rhs = self.generate_local_node(rhs, local_context, Some(pointee_type))?;
+        let rhs = self.generate_local_node(rhs_node, local_context, Some(pointee_type))?;
         let rhs = self.coerce_to_rvalue(rhs, local_context)?;
 
         let lhs = local_context.new_anonymous_register(pointee_type);
@@ -1340,55 +1431,61 @@ impl<W: Write> Generator<W> {
         Ok((result, pointer, Value::Register(lhs), rhs))
     }
 
-    fn generate_call_operation(&mut self, callee: &ast::Node, arguments: &[ast::Node], local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_call_operation(&mut self, callee_node: &ast::Node, arguments: &[ast::Node], local_context: &mut LocalContext) -> crate::Result<Value> {
         // Determine which kind of call operation this is
-        let callee = match callee {
+        let callee = match callee_node.kind() {
             // Method call operation in the format `value.method(..)`
-            ast::Node::Binary { operation: ast::BinaryOperation::Access, lhs, rhs } => {
+            ast::NodeKind::Binary { operation: ast::BinaryOperation::Access, lhs, rhs } => {
                 let method_name = rhs.as_name()?;
-                let lhs = self.generate_local_node(lhs, local_context, None)?;
+                let self_value = self.generate_local_node(lhs, local_context, None)?;
 
                 // If lhs is a pointer, perform an implicit dereference (this is also done before
                 // member accesses)
-                let lhs = match lhs.get_type().repr(&self.context) {
+                let self_value = match self_value.get_type().repr(&self.context) {
                     &TypeRepr::Pointer { pointee_type, .. } => {
-                        let pointer = self.coerce_to_rvalue(lhs, local_context)?;
+                        let pointer = self.coerce_to_rvalue(self_value, local_context)?;
                         Value::Indirect {
                             pointer: Box::new(pointer),
                             pointee_type,
                         }
                     }
-                    _ => lhs
+                    _ => self_value
                 };
 
                 // Search in the type's implementation namespace for a matching method
-                let lhs_namespace = self.context.type_namespace(lhs.get_type());
+                let lhs_namespace = self.context.type_namespace(self_value.get_type());
                 if let Some(Symbol::Value(value)) = self.context.namespace_info(lhs_namespace).find(method_name) {
                     // A method was found, so bind lhs as self and use it as the callee
                     Value::BoundFunction {
-                        self_value: Box::new(lhs),
+                        self_value: Box::new((lhs.span(), self_value)),
                         function_value: Box::new(value.clone()),
                     }
                 }
                 else {
-                    return Err(Box::new(crate::Error::NoSuchMethod {
-                        type_name: lhs.get_type().path(&self.context).to_string(),
-                        method_name: method_name.to_string(),
-                    }));
+                    return Err(Box::new(crate::Error::new(
+                        Some(rhs.span()),
+                        crate::ErrorKind::NoSuchMethod {
+                            type_name: self_value.get_type().path(&self.context).to_string(),
+                            method_name: method_name.to_string(),
+                        },
+                    )));
                 }
             }
             // Normal call operation
             _ => {
-                let callee = self.generate_local_node(callee, local_context, None)?;
+                let callee = self.generate_local_node(callee_node, local_context, None)?;
                 self.coerce_to_rvalue(callee, local_context)?
             }
         };
 
         // Ensure the callee is, in fact, a function that can be called
         let TypeRepr::Function { signature } = callee.get_type().repr(&self.context).clone() else {
-            return Err(Box::new(crate::Error::ExpectedFunction {
-                type_name: callee.get_type().path(&self.context).to_string(),
-            }));
+            return Err(Box::new(crate::Error::new(
+                Some(callee_node.span()),
+                crate::ErrorKind::ExpectedFunction {
+                    type_name: callee.get_type().path(&self.context).to_string(),
+                },
+            )));
         };
 
         let mut argument_values = Vec::new();
@@ -1400,14 +1497,18 @@ impl<W: Write> Generator<W> {
             .chain(std::iter::repeat(None));
 
         if let Value::BoundFunction { self_value, .. } = &callee {
-            // This is a method call, and so we need to match the self value to the first parameter
+            let (self_span, self_value) = self_value.as_ref();
+            // This is a method call, so we need to match the self value to the first parameter
             let Some(self_parameter_type) = parameters_iter.next().unwrap() else {
-                return Err(Box::new(crate::Error::ExpectedSelfParameter {}));
+                return Err(Box::new(crate::Error::new(
+                    Some(*self_span),
+                    crate::ErrorKind::ExpectedSelfParameter,
+                )));
             };
 
             // Make an effort to convert the bound self value to the parameter type
             let self_argument = match self_parameter_type.repr(&self.context) {
-                TypeRepr::Pointer { .. } => match self_value.as_ref() {
+                TypeRepr::Pointer { .. } => match self_value {
                     Value::Indirect { pointer, .. } => {
                         pointer.as_ref().clone()
                     }
@@ -1424,11 +1525,11 @@ impl<W: Write> Generator<W> {
                     }
                 }
                 _ => {
-                    self.coerce_to_rvalue(self_value.as_ref().clone(), local_context)?
+                    self.coerce_to_rvalue(self_value.clone(), local_context)?
                 }
             };
 
-            let self_argument = self.enforce_type(self_argument, self_parameter_type, local_context)?;
+            let self_argument = self.enforce_type(self_argument, self_parameter_type, *self_span, local_context)?;
 
             // Pass the bound 'self' value as the first argument
             argument_values.push(self_argument);
@@ -1445,11 +1546,14 @@ impl<W: Write> Generator<W> {
         // Ensure the number of arguments is correct
         let expected_count = signature.parameter_types().len();
         let got_count = argument_values.len();
-        if !signature.is_variadic() && got_count > expected_count {
-            return Err(Box::new(crate::Error::ExtraFunctionArguments { expected_count, got_count }));
-        }
-        else if got_count < expected_count {
-            return Err(Box::new(crate::Error::MissingFunctionArguments { expected_count, got_count }));
+        if (!signature.is_variadic() && got_count > expected_count) || got_count < expected_count {
+            return Err(Box::new(crate::Error::new(
+                Some(callee_node.span()),
+                crate::ErrorKind::WrongFunctionArgumentCount {
+                    expected_count,
+                    got_count,
+                },
+            )));
         }
 
         // Generate the function call itself, which will look different depending on return type
@@ -1574,7 +1678,7 @@ impl<W: Write> Generator<W> {
         Ok(Value::Void)
     }
 
-    fn generate_local_let_statement(&mut self, name: &str, type_node: Option<&ast::TypeNode>, is_mutable: bool, value: Option<&ast::Node>, local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_local_let_statement(&mut self, span: crate::Span, name: &str, type_node: Option<&ast::TypeNode>, is_mutable: bool, value: Option<&ast::Node>, local_context: &mut LocalContext) -> crate::Result<Value> {
         let value_type = match type_node {
             Some(type_node) => {
                 Some(self.context.interpret_type_node(type_node)?)
@@ -1594,9 +1698,12 @@ impl<W: Write> Generator<W> {
             Some(value_type) => value_type,
             None => {
                 let Some(value) = &value else {
-                    return Err(Box::new(crate::Error::MustSpecifyTypeForUninitialized {
-                        name: name.to_string(),
-                    }));
+                    return Err(Box::new(crate::Error::new(
+                        Some(span),
+                        crate::ErrorKind::MustSpecifyTypeForUninitialized {
+                            name: name.to_string(),
+                        },
+                    )));
                 };
                 value.get_type()
             }
@@ -1608,7 +1715,7 @@ impl<W: Write> Generator<W> {
 
         self.emitter.emit_local_allocation(&pointer, &self.context)?;
         if let Some(value) = &value {
-            self.emitter.emit_store(value, &pointer.into(), &self.context)?;
+            self.emitter.emit_store(value, &Value::Register(pointer), &self.context)?;
         }
 
         Ok(Value::Void)
@@ -1687,7 +1794,7 @@ impl<W: Write> Generator<W> {
 
         for (input_register, pointer) in std::iter::zip(parameter_registers, parameter_pointers) {
             self.emitter.emit_local_allocation(&pointer, &self.context)?;
-            self.emitter.emit_store(&input_register.into(), &pointer.into(), &self.context)?;
+            self.emitter.emit_store(&Value::Register(input_register), &Value::Register(pointer), &self.context)?;
         }
 
         let body_result = self.generate_local_node(body, &mut local_context, Some(signature.return_type()))?;
@@ -1773,8 +1880,8 @@ impl<W: Write> Generator<W> {
 
         let mut intermediate_constants = Vec::new();
 
-        let constant = match node {
-            ast::Node::Literal(literal) => {
+        let constant = match node.kind() {
+            ast::NodeKind::Literal(literal) => {
                 match *literal {
                     token::Literal::Name(ref name) => {
                         let value = if let Some(value) = local_context.and_then(|ctx| ctx.find_symbol(name)) {
@@ -1783,8 +1890,8 @@ impl<W: Write> Generator<W> {
                         else {
                             self.context.get_symbol_value(self.context.current_module(), name)
                                 .map_err(|mut error| {
-                                    if let crate::Error::UndefinedGlobalSymbol { .. } = error.as_ref() {
-                                        *error = crate::Error::UndefinedSymbol {
+                                    if let crate::ErrorKind::UndefinedGlobalSymbol { .. } = error.kind() {
+                                        *error.kind_mut() = crate::ErrorKind::UndefinedSymbol {
                                             name: name.to_string(),
                                         };
                                     }
@@ -1796,9 +1903,12 @@ impl<W: Write> Generator<W> {
                             constant
                         }
                         else {
-                            return Err(Box::new(crate::Error::NonConstantSymbol {
-                                name: name.to_string(),
-                            }));
+                            return Err(Box::new(crate::Error::new(
+                                Some(node.span()),
+                                crate::ErrorKind::NonConstantSymbol {
+                                    name: name.to_string(),
+                                },
+                            )));
                         }
                     }
                     token::Literal::Integer(value, suffix) => {
@@ -1807,10 +1917,13 @@ impl<W: Write> Generator<W> {
                             None => expected_type.unwrap_or(TypeHandle::I32),
                         };
                         let Some(value) = IntegerValue::from_unknown_type(value, value_type, self.context.target()) else {
-                            return Err(Box::new(crate::Error::IncompatibleValueType {
-                                value: value.to_string(),
-                                type_name: value_type.path(&self.context).to_string(),
-                            }));
+                            return Err(Box::new(crate::Error::new(
+                                Some(node.span()),
+                                crate::ErrorKind::IncompatibleValueType {
+                                    value: value.to_string(),
+                                    type_name: value_type.path(&self.context).to_string(),
+                                },
+                            )));
                         };
 
                         Constant::from(value)
@@ -1821,10 +1934,13 @@ impl<W: Write> Generator<W> {
                             None => expected_type.unwrap_or(TypeHandle::F64),
                         };
                         let Some(value) = FloatValue::from_unknown_type(value, value_type, self.context.target()) else {
-                            return Err(Box::new(crate::Error::IncompatibleValueType {
-                                value: value.to_string(),
-                                type_name: value_type.path(&self.context).to_string(),
-                            }));
+                            return Err(Box::new(crate::Error::new(
+                                Some(node.span()),
+                                crate::ErrorKind::IncompatibleValueType {
+                                    value: value.to_string(),
+                                    type_name: value_type.path(&self.context).to_string(),
+                                },
+                            )));
                         };
 
                         Constant::from(value)
@@ -1852,26 +1968,35 @@ impl<W: Write> Generator<W> {
                     }
                 }
             }
-            ast::Node::Path { segments } => {
-                let path = self.context.get_absolute_path(segments)?;
+            ast::NodeKind::Path { segments } => {
+                let path = self.context.get_absolute_path(node.span(), segments)?;
                 match self.context.get_path_value(&path)? {
                     Value::Constant(constant) => constant,
-                    _ => return Err(Box::new(crate::Error::NonConstantSymbol {
-                        name: path.to_string(),
-                    }))
+                    _ => return Err(Box::new(crate::Error::new(
+                        Some(node.span()),
+                        crate::ErrorKind::NonConstantSymbol {
+                            name: path.to_string(),
+                        },
+                    )))
                 }
             }
-            ast::Node::ArrayLiteral { items } => {
+            ast::NodeKind::ArrayLiteral { items } => {
                 if let Some(expected_type) = expected_type {
                     let &TypeRepr::Array { item_type, .. } = expected_type.repr(&self.context) else {
-                        return Err(Box::new(crate::Error::UnknownArrayType {}));
+                        return Err(Box::new(crate::Error::new(
+                            Some(node.span()),
+                            crate::ErrorKind::UnknownArrayType,
+                        )));
                     };
-                    let items: Vec<Constant> = crate::Result::from_iter(items.iter().map(|item| {
-                        let (item, mut constants) = self.fold_as_constant(item, constant_id, local_context, Some(item_type))?;
+                    let items: Vec<Constant> = items
+                        .iter()
+                        .map(|item| {
+                            let (item, mut constants) = self.fold_as_constant(item, constant_id, local_context, Some(item_type))?;
 
-                        intermediate_constants.append(&mut constants);
-                        Ok(item)
-                    }))?;
+                            intermediate_constants.append(&mut constants);
+                            Ok(item)
+                        })
+                        .collect::<crate::Result<_>>()?;
 
                     Constant::Array {
                         array_type: expected_type,
@@ -1880,48 +2005,60 @@ impl<W: Write> Generator<W> {
                 }
                 else {
                     // TODO
-                    return Err(Box::new(crate::Error::UnknownArrayType {}));
+                    return Err(Box::new(crate::Error::new(
+                        Some(node.span()),
+                        crate::ErrorKind::UnknownArrayType,
+                    )));
                 }
             }
-            ast::Node::StructureLiteral { structure_type, members: initializer_members } => {
+            ast::NodeKind::StructureLiteral { structure_type, members: initializer_members } => {
                 let struct_type = self.context.interpret_node_as_type(structure_type)?;
 
                 if let TypeRepr::Structure { name: type_name, members } = struct_type.repr(&self.context).clone() {
                     let mut initializer_members = initializer_members.to_vec();
                     let mut missing_member_names = Vec::new();
 
-                    let members: Vec<Constant> = crate::Result::from_iter(members.iter().map(|member| {
-                        if let Some(initializer_index) = initializer_members.iter().position(|(name, _)| &member.name == name) {
-                            let (_, member_value) = &initializer_members[initializer_index];
-                            let (member_value, mut constants) = self.fold_as_constant(member_value, constant_id, local_context, Some(member.member_type))?;
+                    let members: Vec<Constant> = members
+                        .iter()
+                        .map(|member| {
+                            if let Some(initializer_index) = initializer_members.iter().position(|(name, _)| &member.name == name) {
+                                let (_, member_value) = &initializer_members[initializer_index];
+                                let (member_value, mut constants) = self.fold_as_constant(member_value, constant_id, local_context, Some(member.member_type))?;
 
-                            intermediate_constants.append(&mut constants);
-                            initializer_members.swap_remove(initializer_index);
+                                intermediate_constants.append(&mut constants);
+                                initializer_members.swap_remove(initializer_index);
 
-                            Ok(member_value)
-                        }
-                        else {
-                            missing_member_names.push(member.name.to_string());
+                                Ok(member_value)
+                            }
+                            else {
+                                missing_member_names.push(member.name.to_string());
 
-                            Ok(Constant::Undefined(member.member_type))
-                        }
-                    }))?;
+                                Ok(Constant::Undefined(member.member_type))
+                            }
+                        })
+                        .collect::<crate::Result<_>>()?;
 
                     if !missing_member_names.is_empty() {
-                        return Err(Box::new(crate::Error::MissingStructMembers {
-                            member_names: missing_member_names,
-                            type_name: type_name.to_string(),
-                        }))
+                        return Err(Box::new(crate::Error::new(
+                            Some(node.span()),
+                            crate::ErrorKind::MissingStructMembers {
+                                member_names: missing_member_names,
+                                type_name: type_name.to_string(),
+                            },
+                        )))
                     }
 
                     if !initializer_members.is_empty() {
-                        return Err(Box::new(crate::Error::ExtraStructMembers {
-                            member_names: initializer_members
-                                .iter()
-                                .map(|(name, _)| name.to_string())
-                                .collect(),
-                            type_name: type_name.to_string(),
-                        }));
+                        return Err(Box::new(crate::Error::new(
+                            Some(node.span()),
+                            crate::ErrorKind::ExtraStructMembers {
+                                member_names: initializer_members
+                                    .iter()
+                                    .map(|(name, _)| name.to_string())
+                                    .collect(),
+                                type_name: type_name.to_string(),
+                            },
+                        )));
                     }
 
                     Constant::Structure {
@@ -1930,12 +2067,15 @@ impl<W: Write> Generator<W> {
                     }
                 }
                 else {
-                    return Err(Box::new(crate::Error::NonStructType {
-                        type_name: structure_type.to_string(),
-                    }));
+                    return Err(Box::new(crate::Error::new(
+                        Some(structure_type.span()),
+                        crate::ErrorKind::NonStructType {
+                            type_name: structure_type.to_string(),
+                        },
+                    )));
                 }
             }
-            ast::Node::Binary { operation, lhs, rhs } => match operation {
+            ast::NodeKind::Binary { operation, lhs, rhs } => match operation {
                 ast::BinaryOperation::Subscript => {
                     let (value, mut constants) = self.fold_subscript_operation(lhs, rhs, constant_id, local_context)?;
                     intermediate_constants.append(&mut constants);
@@ -1943,7 +2083,7 @@ impl<W: Write> Generator<W> {
                     value
                 }
                 ast::BinaryOperation::Convert => {
-                    let ast::Node::Type(type_node) = rhs.as_ref() else {
+                    let ast::NodeKind::Type(type_node) = rhs.kind() else {
                         // If parsing rules are followed, this should not occur
                         panic!("non-type rhs for 'as'");
                     };
@@ -1953,37 +2093,63 @@ impl<W: Write> Generator<W> {
 
                     let target_type = self.context.interpret_type_node(type_node)?;
 
-                    if let Constant::Integer(integer) = value {
-                        let converted_integer = IntegerValue::from_unknown_type(integer.raw(), target_type, self.context.target())
-                            .ok_or_else(|| Box::new(crate::Error::InconvertibleTypes {
-                                from_type: integer.integer_type().as_handle().path(&self.context).to_string(),
-                                to_type: target_type.path(&self.context).to_string(),
-                            }))?;
+                    match value {
+                        Constant::Integer(integer) => {
+                            let converted_integer = IntegerValue::from_unknown_type(integer.raw(), target_type, self.context.target())
+                                .ok_or_else(|| Box::new(crate::Error::new(
+                                    Some(type_node.span()),
+                                    crate::ErrorKind::InconvertibleTypes {
+                                        from_type: integer.integer_type().as_handle().path(&self.context).to_string(),
+                                        to_type: target_type.path(&self.context).to_string(),
+                                    },
+                                )))?;
 
-                        Constant::Integer(converted_integer)
-                    }
-                    else {
-                        return Err(Box::new(crate::Error::InconvertibleTypes {
-                            from_type: value.get_type().path(&self.context).to_string(),
-                            to_type: target_type.path(&self.context).to_string(),
-                        }));
+                            Constant::Integer(converted_integer)
+                        }
+                        Constant::Float(float) => {
+                            let converted_float = FloatValue::from_unknown_type(float.raw(), target_type, self.context.target())
+                                .ok_or_else(|| Box::new(crate::Error::new(
+                                    Some(type_node.span()),
+                                    crate::ErrorKind::InconvertibleTypes {
+                                        from_type: float.float_type().as_handle().path(&self.context).to_string(),
+                                        to_type: target_type.path(&self.context).to_string(),
+                                    },
+                                )))?;
+
+                            Constant::Float(converted_float)
+                        }
+                        _ => {
+                            return Err(Box::new(crate::Error::new(
+                                Some(type_node.span()),
+                                crate::ErrorKind::InconvertibleTypes {
+                                    from_type: value.get_type().path(&self.context).to_string(),
+                                    to_type: target_type.path(&self.context).to_string(),
+                                },
+                            )));
+                        }
                     }
                 }
                 _ => {
-                    return Err(Box::new(crate::Error::UnsupportedConstantExpression {}));
+                    return Err(Box::new(crate::Error::new(
+                        Some(node.span()),
+                        crate::ErrorKind::UnsupportedConstantExpression,
+                    )));
                 }
             }
-            ast::Node::Grouping { content } => {
+            ast::NodeKind::Grouping { content } => {
                 // Fine to bypass validation steps since this is literally just parentheses
                 return self.fold_as_constant(content, constant_id, local_context, expected_type);
             }
             _ => {
-                return Err(Box::new(crate::Error::UnsupportedConstantExpression {}));
+                return Err(Box::new(crate::Error::new(
+                    Some(node.span()),
+                    crate::ErrorKind::UnsupportedConstantExpression,
+                )));
             }
         };
 
         if let Some(expected_type) = expected_type {
-            self.enforce_constant_type(constant, expected_type)
+            self.enforce_constant_type(constant, expected_type, node.span())
                 .map(|constant| (constant, intermediate_constants))
         }
         else {

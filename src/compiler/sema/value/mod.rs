@@ -423,12 +423,6 @@ impl From<FloatValue> for Constant {
     }
 }
 
-impl From<Register> for Constant {
-    fn from(register: Register) -> Self {
-        Self::Register(register)
-    }
-}
-
 #[derive(Clone, PartialEq, Debug)]
 pub enum Value {
     Never,
@@ -442,7 +436,7 @@ pub enum Value {
         pointee_type: TypeHandle,
     },
     BoundFunction {
-        self_value: Box<Value>,
+        self_value: Box<(crate::Span, Value)>,
         function_value: Box<Value>,
     },
     Type(TypeHandle),
@@ -495,25 +489,33 @@ impl Value {
         }
     }
 
-    pub fn into_mutable_lvalue(self, context: &GlobalContext) -> crate::Result<(Self, TypeHandle)> {
+    pub fn into_mutable_lvalue(self, span: crate::Span, context: &GlobalContext) -> crate::Result<(Self, TypeHandle)> {
         match self {
             Self::Indirect { pointer, pointee_type } => {
                 if let &TypeRepr::Pointer { semantics: PointerSemantics::Mutable, .. } = pointer.get_type().repr(context) {
                     Ok((*pointer, pointee_type))
                 }
                 else {
-                    Err(Box::new(crate::Error::CannotMutateValue { type_name: pointee_type.path(context).to_string() }))
+                    Err(Box::new(crate::Error::new(
+                        Some(span),
+                        crate::ErrorKind::CannotMutateValue {
+                            type_name: pointee_type.path(context).to_string(),
+                        },
+                    )))
                 }
             }
             _ => {
-                Err(Box::new(crate::Error::ExpectedLValue {}))
+                Err(Box::new(crate::Error::new(
+                    Some(span),
+                    crate::ErrorKind::ExpectedLValue,
+                )))
             }
         }
     }
 
     pub fn bound_self_value(&self) -> Option<&Value> {
         match self {
-            Self::BoundFunction { self_value, .. } => Some(self_value.as_ref()),
+            Self::BoundFunction { self_value, .. } => Some(&self_value.1),
             _ => None
         }
     }
@@ -567,11 +569,5 @@ impl From<FloatValue> for Value {
 impl From<Constant> for Value {
     fn from(constant: Constant) -> Self {
         Self::Constant(constant)
-    }
-}
-
-impl From<Register> for Value {
-    fn from(register: Register) -> Self {
-        Self::Register(register)
     }
 }

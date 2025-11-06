@@ -4,14 +4,30 @@ use std::io::{BufRead, BufReader};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub struct Span {
-    pub file_id: usize,
+    pub source_id: usize,
     pub start_index: usize,
     pub length: usize,
 }
 
 impl Span {
+    pub fn tail_point(mut self) -> Self {
+        self.start_index += self.length;
+        self.length = 0;
+        self
+    }
+
+    pub fn expand_to(mut self, end_span: Self) -> Self {
+        if self.source_id != end_span.source_id {
+            panic!("source IDs do not match");
+        }
+        self.length = end_span.start_index.checked_add(end_span.length)
+            .and_then(|end_index| end_index.checked_sub(self.start_index))
+            .expect("end span comes before start span");
+        self
+    }
+
     pub fn context_to_string(&self, path: impl AsRef<Path>) -> std::io::Result<(usize, usize, String)> {
         let mut reader = BufReader::new(File::open(path)?);
         let mut line_number = 0;
@@ -38,16 +54,19 @@ impl Span {
 
                     // Write the span markers on the line below
                     context.push('\t');
-                    for index in line_start_index .. line_start_index + line_trim.len() {
-                        if index >= self.start_index + self.length {
-                            break;
-                        }
-                        else if index >= self.start_index {
-                            context.push('^');
-                        }
-                        else {
-                            context.push(' ');
-                        }
+                    context.extend(std::iter::repeat_n(
+                        ' ',
+                        self.start_index.saturating_sub(line_start_index),
+                    ));
+                    if self.length == 0 {
+                        context.push('^');
+                    }
+                    else {
+                        context.extend(std::iter::repeat_n(
+                            '~',
+                            line_end_index.min(self.start_index + self.length)
+                                .saturating_sub(line_start_index.max(self.start_index))
+                        ));
                     }
                     context.push('\n');
                 }
@@ -65,13 +84,13 @@ impl Span {
     }
 }
 
-pub enum Error {
+pub enum ErrorKind {
     SourceFileOpen {
-        file_id: usize,
+        source_id: usize,
         cause: std::io::Error,
     },
     SourceFileRead {
-        file_id: usize,
+        source_id: usize,
         line: usize,
         cause: std::io::Error,
     },
@@ -83,78 +102,53 @@ pub enum Error {
         filename: String,
         cause: std::io::Error,
     },
-    InvalidToken {
-        span: Span,
-    },
-    InvalidLiteralSuffix {
-        span: Span,
-    },
+    InvalidToken,
+    InvalidLiteralSuffix,
     NonAsciiCharacter {
-        span: Span,
         what: char,
     },
     InvalidEscape {
-        span: Span,
         what: char,
     },
     InvalidHexEscapeDigit {
-        span: Span,
         what: char,
     },
-    UnclosedString {
-        span: Span,
-    },
-    UnclosedCharacter {
-        span: Span,
-    },
-    UnclosedComment {
-        span: Span,
-    },
-    ExpectedToken {
-        span: Span,
-    },
+    UnclosedString,
+    UnclosedCharacter,
+    UnclosedComment,
+    ExpectedToken,
     ExpectedTokenFromList {
-        span: Span,
         got_token: token::Token,
         allowed_tokens: Vec<token::Token>,
     },
-    ExpectedIdentifier {
-        span: Span,
+    ExpectedIdentifier,
+    ExpectedTupleMember,
+    TupleMemberOutOfRange {
+        member: String,
+        member_count: i32,
     },
     ExpectedOperand {
-        span: Span,
         got_token: token::Token,
     },
     ExpectedOperation {
-        span: Span,
         got_token: token::Token,
     },
     ExpectedType {
-        span: Span,
         got_token: token::Token,
     },
     UnexpectedQualifier {
-        span: Span,
         got_token: token::Token,
     },
     ExpectedClosingBracket {
-        span: Span,
         bracket: token::Token,
     },
-    ExpectedStatement {
-        span: Span,
-    },
-    UnexpectedElse {
-        span: Span,
-    },
-    InvalidGlobPath {
-        span: Span,
-    },
+    ExpectedStatement,
+    UnexpectedElse,
+    InvalidGlobPath,
     CannotMutateValue {
         type_name: String,
     },
-    ExpectedLValue {
-    },
+    ExpectedLValue,
     UndefinedSymbol {
         name: String,
     },
@@ -181,8 +175,10 @@ pub enum Error {
     UnknownTypeSize {
         type_name: String,
     },
-    NonConstantArrayLength {
+    UnknownTypeAlignment {
+        type_name: String,
     },
+    NonConstantArrayLength,
     IncompatibleTypes {
         expected_type: String,
         got_type: String,
@@ -191,14 +187,10 @@ pub enum Error {
         from_type: String,
         to_type: String,
     },
-    UnexpectedExpression {
-    },
-    InvalidBreak {
-    },
-    InvalidContinue {
-    },
-    InvalidReturn {
-    },
+    UnexpectedExpression,
+    InvalidBreak,
+    InvalidContinue,
+    InvalidReturn,
     ExpectedReturnValue {
         function_name: String,
     },
@@ -215,16 +207,13 @@ pub enum Error {
         value: String,
         type_name: String,
     },
-    UnknownArrayType {
-    },
-    UnknownTupleType {
-    },
+    UnknownArrayType,
+    UnknownTupleType,
     NoSuchMethod {
         type_name: String,
         method_name: String,
     },
-    InvalidStructIdentifier {
-    },
+    InvalidStructIdentifier,
     NonStructSymbol {
         name: String,
     },
@@ -258,23 +247,16 @@ pub enum Error {
     ExpectedFunction {
         type_name: String,
     },
-    MissingFunctionArguments {
-        expected_count: usize,
-        got_count: usize,
-    },
-    ExtraFunctionArguments {
+    WrongFunctionArgumentCount {
         expected_count: usize,
         got_count: usize,
     },
     MissingReturnStatement {
         function_name: String,
     },
-    UnsupportedConstantExpression {
-    },
-    NoSelfType {
-    },
-    ExpectedSelfParameter {
-    },
+    UnsupportedConstantExpression,
+    NoSelfType,
+    ExpectedSelfParameter,
     ImportAliasRequired {
         path: String,
     },
@@ -287,88 +269,45 @@ pub enum Error {
     },
     MustSpecifyTypeForUninitialized {
         name: String,
-    }
+    },
 }
 
-pub type Result<T> = std::result::Result<T, Box<Error>>;
-
-impl Error {
-    pub fn span(&self) -> Option<&Span> {
-        match self {
-            Self::InvalidToken { span } => Some(span),
-            Self::InvalidLiteralSuffix { span } => Some(span),
-            Self::NonAsciiCharacter { span, .. } => Some(span),
-            Self::InvalidEscape { span, .. } => Some(span),
-            Self::InvalidHexEscapeDigit { span, .. } => Some(span),
-            Self::UnclosedString { span } => Some(span),
-            Self::UnclosedCharacter { span } => Some(span),
-            Self::UnclosedComment { span } => Some(span),
-            Self::ExpectedToken { span } => Some(span),
-            Self::ExpectedTokenFromList { span, .. } => Some(span),
-            Self::ExpectedIdentifier { span } => Some(span),
-            Self::ExpectedOperand { span, .. } => Some(span),
-            Self::ExpectedOperation { span, .. } => Some(span),
-            Self::ExpectedType { span, .. } => Some(span),
-            Self::UnexpectedQualifier { span, .. } => Some(span),
-            Self::ExpectedClosingBracket { span, .. } => Some(span),
-            Self::ExpectedStatement { span } => Some(span),
-            Self::UnexpectedElse { span } => Some(span),
-            Self::InvalidGlobPath { span } => Some(span),
-            _ => None
-        }
-    }
-
-    pub fn to_string_with_context(&self, paths: &[PathBuf]) -> String {
-        if let Some(span) = self.span() {
-            let path = &paths[span.file_id];
-            let path_display = path.display();
-            if let Ok((line_number, column_number, context)) = span.context_to_string(path) {
-                format!("{path_display}:{line_number}:{column_number}: {self}\n\n{context}")
-            }
-            else {
-                format!("{path_display}: {self}")
-            }
-        }
-        else {
-            format!("{self}")
-        }
-    }
-}
-
-impl std::fmt::Display for Error {
+impl std::fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::SourceFileOpen { cause, .. } => write!(f, "unable to open file: {cause}"),
             Self::SourceFileRead { cause, .. } => write!(f, "error while reading file: {cause}"),
             Self::OutputFileOpen { cause, .. } => write!(f, "unable to create file: {cause}"),
             Self::OutputFileWrite { cause, .. } => write!(f, "error while writing file: {cause}"),
-            Self::InvalidToken { .. } => write!(f, "unrecognized token"),
-            Self::InvalidLiteralSuffix { .. } => write!(f, "unsupported literal suffix"),
-            Self::NonAsciiCharacter { what, .. } => write!(f, "non-ASCII character '{what}' in literal"),
-            Self::InvalidEscape { what, .. } => write!(f, "unrecognized escape '\\{what}'"),
-            Self::InvalidHexEscapeDigit { what, .. } => write!(f, "expected hexadecimal digit, got '{what}'"),
-            Self::UnclosedString { .. } => write!(f, "unclosed string literal"),
-            Self::UnclosedCharacter { .. } => write!(f, "expected single quote to close character literal"),
-            Self::UnclosedComment { .. } => write!(f, "unclosed block comment"),
-            Self::ExpectedToken { .. } => write!(f, "unexpected end of file"),
-            Self::ExpectedTokenFromList { got_token, allowed_tokens, .. } => {
+            Self::InvalidToken => write!(f, "unrecognized token"),
+            Self::InvalidLiteralSuffix => write!(f, "unsupported literal suffix"),
+            Self::NonAsciiCharacter { what } => write!(f, "non-ASCII character '{what}' in literal"),
+            Self::InvalidEscape { what } => write!(f, "unrecognized escape '\\{what}'"),
+            Self::InvalidHexEscapeDigit { what } => write!(f, "expected hexadecimal digit, got '{what}'"),
+            Self::UnclosedString => write!(f, "unclosed string literal"),
+            Self::UnclosedCharacter => write!(f, "expected single quote to close character literal"),
+            Self::UnclosedComment => write!(f, "unclosed block comment"),
+            Self::ExpectedToken => write!(f, "unexpected end of file"),
+            Self::ExpectedTokenFromList { got_token, allowed_tokens } => {
                 write!(f, "expected '{}'", &allowed_tokens[0])?;
                 for token in &allowed_tokens[1..] {
                     write!(f, ", '{token}'")?;
                 }
                 write!(f, "; got '{got_token}'")
             }
-            Self::ExpectedIdentifier { .. } => write!(f, "expected an identifier"),
-            Self::ExpectedOperand { got_token, .. } => write!(f, "expected an operand, got '{got_token}'"),
-            Self::ExpectedOperation { got_token, .. } => write!(f, "expected an operation, got '{got_token}'"),
-            Self::ExpectedType { got_token, .. } => write!(f, "expected a type, got '{got_token}'"),
-            Self::UnexpectedQualifier { got_token, .. } => write!(f, "type qualifier '{got_token}' is not allowed here"),
-            Self::ExpectedClosingBracket { bracket, .. } => write!(f, "expected closing '{bracket}'"),
-            Self::ExpectedStatement { .. } => write!(f, "expected a statement"),
-            Self::UnexpectedElse { .. } => write!(f, "unexpected 'else' without previous 'if'"),
-            Self::InvalidGlobPath { .. } => write!(f, "the '*' for a glob path must be located at the end of the path"),
+            Self::ExpectedIdentifier => write!(f, "expected an identifier"),
+            Self::ExpectedTupleMember => write!(f, "expected a tuple member"),
+            Self::TupleMemberOutOfRange { member, member_count } => write!(f, "member '{member}' is out of range for a tuple with {member_count} members"),
+            Self::ExpectedOperand { got_token } => write!(f, "expected an operand, got '{got_token}'"),
+            Self::ExpectedOperation { got_token } => write!(f, "expected an operation, got '{got_token}'"),
+            Self::ExpectedType { got_token } => write!(f, "expected a type, got '{got_token}'"),
+            Self::UnexpectedQualifier { got_token } => write!(f, "type qualifier '{got_token}' is not allowed here"),
+            Self::ExpectedClosingBracket { bracket } => write!(f, "expected closing '{bracket}'"),
+            Self::ExpectedStatement => write!(f, "expected a statement"),
+            Self::UnexpectedElse => write!(f, "unexpected 'else' without previous 'if'"),
+            Self::InvalidGlobPath => write!(f, "the '*' for a glob path must be located at the end of the path"),
             Self::CannotMutateValue { type_name } => write!(f, "cannot mutate value of type '{type_name}' as it is not 'mut'"),
-            Self::ExpectedLValue {} => write!(f, "expected an lvalue"),
+            Self::ExpectedLValue => write!(f, "expected an lvalue"),
             Self::UndefinedSymbol { name } => write!(f, "symbol '{name}' is not defined"),
             Self::UndefinedGlobalSymbol { namespace, name } => write!(f, "symbol '{name}' is not defined in namespace '{namespace}'"),
             Self::GlobalSymbolConflict { namespace, name } => write!(f, "symbol '{name}' is defined multiple times in namespace '{namespace}'"),
@@ -377,22 +316,23 @@ impl std::fmt::Display for Error {
             Self::ExpectedNamespace { name } => write!(f, "expected a module or type, got '{name}'"),
             Self::RecursiveTypeDefinition { type_name } => write!(f, "recursive type definition for {type_name} (did you mean to use a pointer?)"),
             Self::UnknownTypeSize { type_name } => write!(f, "cannot use type '{type_name}' here, as its size is not constant (did you mean to use a pointer?)"),
-            Self::NonConstantArrayLength {} => write!(f, "array length must be constant"),
+            Self::UnknownTypeAlignment { type_name } => write!(f, "type '{type_name}' does not have a defined alignment"),
+            Self::NonConstantArrayLength => write!(f, "array length must be constant"),
             Self::IncompatibleTypes { expected_type, got_type } => write!(f, "expected a value of type '{expected_type}', got '{got_type}' instead"),
             Self::InconvertibleTypes { from_type: original_type, to_type: target_type } => write!(f, "cannot convert from '{original_type}' to '{target_type}'"),
-            Self::UnexpectedExpression {} => write!(f, "unexpected expression type"),
-            Self::InvalidBreak {} => write!(f, "unexpected 'break' outside loop"),
-            Self::InvalidContinue {} => write!(f, "unexpected 'continue' outside loop"),
-            Self::InvalidReturn {} => write!(f, "unexpected 'return' outside function"),
+            Self::UnexpectedExpression => write!(f, "unexpected expression type"),
+            Self::InvalidBreak => write!(f, "unexpected 'break' outside loop"),
+            Self::InvalidContinue => write!(f, "unexpected 'continue' outside loop"),
+            Self::InvalidReturn => write!(f, "unexpected 'return' outside function"),
             Self::ExpectedReturnValue { function_name } => write!(f, "cannot return without a value from non-void function '{function_name}'"),
             Self::UnexpectedReturnValue { function_name } => write!(f, "cannot return a value from void function '{function_name}'"),
             Self::NonValueSymbol { name } => write!(f, "cannot use '{name}' as a value"),
             Self::NonConstantSymbol { name } => write!(f, "'{name}' is not constant and cannot be used in a constant expression"),
             Self::IncompatibleValueType { value, type_name } => write!(f, "'{value}' cannot be used as a value of type '{type_name}'"),
-            Self::UnknownArrayType {} => write!(f, "unable to infer array type"),
-            Self::UnknownTupleType {} => write!(f, "unable to infer tuple type"),
+            Self::UnknownArrayType => write!(f, "unable to infer array type"),
+            Self::UnknownTupleType => write!(f, "unable to infer tuple type"),
             Self::NoSuchMethod { type_name, method_name } => write!(f, "{type_name} has no method '{method_name}' (to call a member, wrap it in parentheses)"),
-            Self::InvalidStructIdentifier {} => write!(f, "invalid syntax for struct type"),
+            Self::InvalidStructIdentifier => write!(f, "invalid syntax for struct type"),
             Self::NonStructSymbol { name } => write!(f, "cannot use '{name}' as a struct type"),
             Self::NonStructType { type_name } => write!(f, "type '{type_name}' is not a struct type"),
             Self::MissingStructMembers { member_names, type_name } => {
@@ -415,12 +355,13 @@ impl std::fmt::Display for Error {
             Self::ExpectedArray { type_name } => write!(f, "expected an array, got value of type '{type_name}'"),
             Self::InvalidMemberAccess { type_name } => write!(f, "expected a struct or tuple, got value of type '{type_name}'"),
             Self::ExpectedFunction { type_name } => write!(f, "expected a function, got value of type '{type_name}'"),
-            Self::MissingFunctionArguments { expected_count, got_count } => write!(f, "too few arguments (expected {expected_count}, got {got_count})"),
-            Self::ExtraFunctionArguments { expected_count, got_count } => write!(f, "too many arguments (expected {expected_count}, got {got_count})"),
+            Self::WrongFunctionArgumentCount { expected_count, got_count } => {
+                write!(f, "too {} arguments for function (expected {expected_count}, got {got_count})", if got_count < expected_count { "few" } else { "many" })
+            }
             Self::MissingReturnStatement { function_name } => write!(f, "non-void function '{function_name}' could finish without returning a value"),
-            Self::UnsupportedConstantExpression {} => write!(f, "unsupported feature in constant expression"),
-            Self::NoSelfType {} => write!(f, "keyword 'Self' can only be used inside 'implement' blocks and 'struct' definitions"),
-            Self::ExpectedSelfParameter {} => write!(f, "expected a first parameter of type 'Self', '*Self', or '*mut Self'"),
+            Self::UnsupportedConstantExpression => write!(f, "unsupported feature in constant expression"),
+            Self::NoSelfType => write!(f, "keyword 'Self' can only be used inside 'implement' blocks and 'struct' definitions"),
+            Self::ExpectedSelfParameter => write!(f, "expected a first parameter of type 'Self', '*Self', or '*mut Self'"),
             Self::ImportAliasRequired { path } => write!(f, "import '{path}' must be renamed using the syntax 'import _ as <name>'"),
             Self::AmbiguousSymbol { name, possible_paths } => {
                 write!(f, "'{name}' could refer to multiple imported items ({}", &possible_paths[0])?;
@@ -435,8 +376,64 @@ impl std::fmt::Display for Error {
     }
 }
 
+impl std::fmt::Debug for ErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{self}")
+    }
+}
+
+pub struct Error {
+    span: Option<Span>,
+    kind: ErrorKind,
+}
+
+pub type Result<T> = std::result::Result<T, Box<Error>>;
+
+impl Error {
+    pub fn new(span: Option<Span>, kind: ErrorKind) -> Self {
+        Self {
+            span,
+            kind,
+        }
+    }
+
+    pub fn span(&self) -> Option<Span> {
+        self.span
+    }
+
+    pub fn kind(&self) -> &ErrorKind {
+        &self.kind
+    }
+
+    pub fn kind_mut(&mut self) -> &mut ErrorKind {
+        &mut self.kind
+    }
+
+    pub fn to_string_with_context(&self, paths: &[PathBuf]) -> String {
+        if let Some(span) = self.span() {
+            let path = &paths[span.source_id];
+            let path_display = path.display();
+            if let Ok((line_number, column_number, context)) = span.context_to_string(path) {
+                format!("{path_display}:{line_number}:{column_number}: {self}\n\n{context}")
+            }
+            else {
+                format!("{path_display}: {self}")
+            }
+        }
+        else {
+            format!("{self}")
+        }
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.kind())
+    }
+}
+
 impl std::fmt::Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Error({self})")
+        write!(f, "Error({})", self.kind())
     }
 }

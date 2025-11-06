@@ -98,7 +98,7 @@ impl UnaryOperation {
         None
     }
 
-    pub fn to_string_with_operand(&self, operand: &Node) -> String {
+    pub fn to_string_with_operand(&self, operand: &NodeKind) -> String {
         match self {
             Self::Positive => format!("+{operand}"),
             Self::Negative => format!("-{operand}"),
@@ -211,7 +211,7 @@ impl BinaryOperation {
         }
     }
 
-    pub fn to_string_with_operands(&self, lhs: &Node, rhs: &Node) -> String {
+    pub fn to_string_with_operands(&self, lhs: &NodeKind, rhs: &NodeKind) -> String {
         match self {
             Self::Subscript => format!("{lhs}[{rhs}]"),
             Self::Access => format!("{lhs}.{rhs}"),
@@ -282,7 +282,7 @@ impl std::fmt::Display for PathSegment {
 }
 
 #[derive(Clone, Debug)]
-pub enum TypeNode {
+pub enum TypeNodeKind {
     Path {
         segments: Box<[PathSegment]>,
     },
@@ -302,9 +302,12 @@ pub enum TypeNode {
         is_variadic: bool,
         return_type: Box<TypeNode>,
     },
+    Grouping {
+        content: Box<TypeNode>,
+    },
 }
 
-impl std::fmt::Display for TypeNode {
+impl std::fmt::Display for TypeNodeKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Path { segments } => {
@@ -352,27 +355,61 @@ impl std::fmt::Display for TypeNode {
                 }
                 write!(f, ") -> {return_type}")
             }
+            Self::Grouping { content } => {
+                write!(f, "({content})")
+            }
         }
     }
 }
 
 #[derive(Clone, Debug)]
+pub struct TypeNode {
+    span: crate::Span,
+    kind: TypeNodeKind,
+}
+
+impl TypeNode {
+    pub fn new(span: crate::Span, kind: TypeNodeKind) -> Self {
+        Self {
+            span,
+            kind,
+        }
+    }
+
+    pub fn span(&self) -> crate::Span {
+        self.span
+    }
+
+    pub fn kind(&self) -> &TypeNodeKind {
+        &self.kind
+    }
+}
+
+impl std::fmt::Display for TypeNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.kind)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct FunctionParameterNode {
+    pub span: crate::Span,
     pub name: Box<str>,
-    pub type_node: TypeNode,
+    pub type_node: Box<TypeNode>,
     pub is_mutable: bool,
 }
 
 #[derive(Clone, Debug)]
 pub struct StructureMemberNode {
+    pub span: crate::Span,
     pub name: Box<str>,
-    pub type_node: TypeNode,
+    pub type_node: Box<TypeNode>,
 }
 
 #[derive(Clone, Debug)]
-pub enum Node {
+pub enum NodeKind {
     Literal(Literal),
-    Type(TypeNode),
+    Type(Box<TypeNode>),
     Path {
         segments: Box<[PathSegment]>,
     },
@@ -422,14 +459,14 @@ pub enum Node {
     },
     Let {
         name: Box<str>,
-        value_type: Option<TypeNode>,
+        value_type: Option<Box<TypeNode>>,
         is_mutable: bool,
         value: Option<Box<Node>>,
         global_register: Option<Register>,
     },
     Constant {
         name: Box<str>,
-        value_type: TypeNode,
+        value_type: Box<TypeNode>,
         value: Box<Node>,
         global_register: Option<Register>,
     },
@@ -438,7 +475,7 @@ pub enum Node {
         is_foreign: bool,
         parameters: Box<[FunctionParameterNode]>,
         is_variadic: bool,
-        return_type: TypeNode,
+        return_type: Box<TypeNode>,
         body: Option<Box<Node>>,
         global_register: Option<Register>,
     },
@@ -449,7 +486,7 @@ pub enum Node {
         self_type: TypeHandle,
     },
     Implement {
-        self_type: TypeNode,
+        self_type: Box<TypeNode>,
         statements: Box<[Node]>,
     },
     Module {
@@ -469,60 +506,7 @@ pub enum Node {
     },
 }
 
-impl Node {
-    pub fn as_name(&self) -> crate::Result<&str> {
-        match self {
-            Self::Literal(Literal::Name(name)) => {
-                Ok(name)
-            }
-            _ => {
-                todo!("need to integrate `Span` into AST")
-                // Err(Box::new(crate::Error::ExpectedIdentifier { span: ??? }))
-            }
-        }
-    }
-
-    pub fn as_integer_name(&self) -> crate::Result<i32> {
-        match self {
-            &Self::Literal(Literal::Integer(value, None))
-            if value >= 0 && value <= i32::MAX as i128 => {
-                Ok(value as i32)
-            }
-            _ => {
-                todo!("need to integrate `Span` into AST")
-                // Err(Box::new(crate::Error::ExpectedIdentifier { span: ??? }))
-            }
-        }
-    }
-
-    pub fn requires_semicolon(&self) -> bool {
-        match self {
-            Self::Scope { .. } |
-            Self::Function { .. } |
-            Self::Structure { .. } |
-            Self::Implement { .. } |
-            Self::Module { .. } => {
-                false
-            }
-            Self::Conditional { consequent, alternative, .. } => {
-                if let Some(alternative) = alternative {
-                    alternative.requires_semicolon()
-                }
-                else {
-                    consequent.requires_semicolon()
-                }
-            }
-            Self::While { body, .. } => {
-                body.requires_semicolon()
-            }
-            _ => {
-                true
-            }
-        }
-    }
-}
-
-impl std::fmt::Display for Node {
+impl std::fmt::Display for NodeKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Literal(literal) => {
@@ -535,10 +519,10 @@ impl std::fmt::Display for Node {
                 write!(f, "{}", PathSegment::path_to_string(segments))
             }
             Self::Unary { operation, operand } => {
-                write!(f, "({operation})", operation = operation.to_string_with_operand(operand.as_ref()))
+                write!(f, "({operation})", operation = operation.to_string_with_operand(operand.kind()))
             }
             Self::Binary { operation, lhs, rhs } => {
-                write!(f, "({operation})", operation = operation.to_string_with_operands(lhs.as_ref(), rhs.as_ref()))
+                write!(f, "({operation})", operation = operation.to_string_with_operands(lhs.kind(), rhs.kind()))
             }
             Self::Call { callee, arguments } => {
                 write!(f, "({callee}(")?;
@@ -649,17 +633,17 @@ impl std::fmt::Display for Node {
                 }
                 write!(f, " function {name}(")?;
                 let mut parameters_iter = parameters.iter();
-                if let Some(FunctionParameterNode { name: parameter_name, type_node: parameter_type, is_mutable }) = parameters_iter.next() {
-                    if *is_mutable {
+                if let Some(parameter) = parameters_iter.next() {
+                    if parameter.is_mutable {
                         write!(f, "mut ")?;
                     }
-                    write!(f, "{parameter_name}: {parameter_type}")?;
-                    for FunctionParameterNode { name: parameter_name, type_node: parameter_type, is_mutable } in parameters_iter {
+                    write!(f, "{}: {}", parameter.name, parameter.type_node)?;
+                    for parameter in parameters_iter {
                         write!(f, ", ")?;
-                        if *is_mutable {
+                        if parameter.is_mutable {
                             write!(f, "mut ")?;
                         }
-                        write!(f, ", {parameter_name}: {parameter_type}")?;
+                        write!(f, ", {}: {}", parameter.name, parameter.type_node)?;
                     }
                     if *is_variadic {
                         write!(f, ", ..")?;
@@ -682,10 +666,10 @@ impl std::fmt::Display for Node {
                 if let Some(members) = members {
                     write!(f, " struct {name} {{")?;
                     let mut members_iter = members.iter();
-                    if let Some(StructureMemberNode { name: member_name, type_node: member_type, .. }) = members_iter.next() {
-                        write!(f, " {member_name}: {member_type}")?;
-                        for StructureMemberNode { name: member_name, type_node: member_type, .. } in members_iter {
-                            write!(f, ", {member_name}: {member_type}")?;
+                    if let Some(member) = members_iter.next() {
+                        write!(f, " {}: {}", member.name, member.type_node)?;
+                        for member in members_iter {
+                            write!(f, ", {}: {}", member.name, member.type_node)?;
                         }
                         write!(f, " ")?;
                     }
@@ -725,5 +709,105 @@ impl std::fmt::Display for Node {
                 write!(f, " import {}::*;", PathSegment::path_to_string(segments))
             }
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Node {
+    span: crate::Span,
+    kind: NodeKind,
+}
+
+impl Node {
+    pub fn new(span: crate::Span, kind: NodeKind) -> Self {
+        Self {
+            span,
+            kind,
+        }
+    }
+
+    pub fn span(&self) -> crate::Span {
+        self.span
+    }
+
+    pub fn kind(&self) -> &NodeKind {
+        &self.kind
+    }
+
+    pub fn kind_mut(&mut self) -> &mut NodeKind {
+        &mut self.kind
+    }
+}
+
+impl Node {
+    pub fn as_name(&self) -> crate::Result<&str> {
+        match self.kind() {
+            NodeKind::Literal(Literal::Name(name)) => {
+                Ok(name)
+            }
+            _ => {
+                Err(Box::new(crate::Error::new(
+                    Some(self.span()),
+                    crate::ErrorKind::ExpectedIdentifier,
+                )))
+            }
+        }
+    }
+
+    pub fn as_tuple_member(&self, member_count: i32) -> crate::Result<i32> {
+        match self.kind() {
+            &NodeKind::Literal(Literal::Integer(value, None)) => {
+                if value >= 0 && value < member_count as i128 {
+                    Ok(value as i32)
+                }
+                else {
+                    Err(Box::new(crate::Error::new(
+                        Some(self.span()),
+                        crate::ErrorKind::TupleMemberOutOfRange {
+                            member: value.to_string(),
+                            member_count,
+                        },
+                    )))
+                }
+            }
+            _ => {
+                Err(Box::new(crate::Error::new(
+                    Some(self.span()),
+                    crate::ErrorKind::ExpectedTupleMember,
+                )))
+            }
+        }
+    }
+
+    pub fn requires_semicolon(&self) -> bool {
+        match self.kind() {
+            NodeKind::Scope { .. } |
+            NodeKind::Function { .. } |
+            NodeKind::Structure { .. } |
+            NodeKind::Implement { .. } |
+            NodeKind::Module { .. } => {
+                false
+            }
+            NodeKind::Conditional { consequent, alternative, .. } => {
+                if let Some(alternative) = alternative {
+                    alternative.requires_semicolon()
+                }
+                else {
+                    consequent.requires_semicolon()
+                }
+            }
+            NodeKind::While { body, .. } => {
+                body.requires_semicolon()
+            }
+            _ => {
+                true
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.kind)
     }
 }

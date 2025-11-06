@@ -18,10 +18,13 @@ impl Scanner<BufReader<File>> {
     pub fn from_path(source_id: usize, path: impl AsRef<Path>) -> crate::Result<Self> {
         File::open(path)
             .map(|file| Self::new(source_id, BufReader::new(file)))
-            .map_err(|cause| Box::new(crate::Error::SourceFileOpen {
-                file_id: source_id,
-                cause,
-            }))
+            .map_err(|cause| Box::new(crate::Error::new(
+                None,
+                crate::ErrorKind::SourceFileOpen {
+                    source_id,
+                    cause,
+                },
+            )))
     }
 }
 
@@ -50,9 +53,9 @@ impl<T: BufRead> Scanner<T> {
 
     pub fn create_span(&self, start_index: usize, end_index: usize) -> crate::Span {
         crate::Span {
-            file_id: self.source_id,
+            source_id: self.source_id,
             start_index,
-            length: end_index - start_index,
+            length: end_index.checked_sub(start_index).expect("end span comes before start span"),
         }
     }
 
@@ -105,11 +108,14 @@ impl<T: BufRead> Scanner<T> {
         }
         else {
             let read = self.source.read_char()
-                .map_err(|cause| Box::new(crate::Error::SourceFileRead {
-                    file_id: self.source_id,
-                    line: self.line,
-                    cause,
-                }))?;
+                .map_err(|cause| Box::new(crate::Error::new(
+                    None,
+                    crate::ErrorKind::SourceFileRead {
+                        source_id: self.source_id,
+                        line: self.line,
+                        cause,
+                    },
+                )))?;
 
             if let Some(ch) = read {
                 if ch == '\n' {
@@ -246,9 +252,10 @@ impl<T: BufRead> Scanner<T> {
         }
 
         let value = content.parse::<f64>()
-            .map_err(|_| Box::new(crate::Error::InvalidToken {
-                span: self.create_span(start_index, self.next_index),
-            }))?;
+            .map_err(|_| Box::new(crate::Error::new(
+                Some(self.create_span(start_index, self.next_index)),
+                crate::ErrorKind::InvalidToken,
+            )))?;
 
         Ok((
             self.create_span(start_index, self.next_index),
@@ -260,18 +267,20 @@ impl<T: BufRead> Scanner<T> {
         let (span, content) = self.scan_alphanumeric_word()?;
 
         IntegerType::from_name(&content)
-            .ok_or_else(|| Box::new(crate::Error::InvalidLiteralSuffix {
-                span,
-            }))
+            .ok_or_else(|| Box::new(crate::Error::new(
+                Some(span),
+                crate::ErrorKind::InvalidLiteralSuffix,
+            )))
     }
 
     fn scan_float_suffix(&mut self) -> crate::Result<FloatType> {
         let (span, content) = self.scan_alphanumeric_word()?;
 
         FloatType::from_name(&content)
-            .ok_or_else(|| Box::new(crate::Error::InvalidLiteralSuffix {
-                span,
-            }))
+            .ok_or_else(|| Box::new(crate::Error::new(
+                Some(span),
+                crate::ErrorKind::InvalidLiteralSuffix,
+            )))
     }
 
     fn scan_word_literal(&mut self) -> crate::Result<(crate::Span, Token)> {
@@ -330,9 +339,10 @@ impl<T: BufRead> Scanner<T> {
             self.put_back(ch);
         }
 
-        Err(Box::new(crate::Error::InvalidToken {
-            span: self.create_span(start_index, start_index),
-        }))
+        Err(Box::new(crate::Error::new(
+            Some(self.create_span(start_index, start_index)),
+            crate::ErrorKind::InvalidToken,
+        )))
     }
 
     fn scan_escaped_char(&mut self) -> crate::Result<Option<u8>> {
@@ -370,10 +380,12 @@ impl<T: BufRead> Scanner<T> {
                                     'A'..='F' => ch as u8 - b'A' + 10,
                                     'a'..='f' => ch as u8 - b'a' + 10,
                                     _ => {
-                                        return Err(Box::new(crate::Error::InvalidHexEscapeDigit {
-                                            span: self.create_span(start_index, start_index + 4),
-                                            what: ch,
-                                        }));
+                                        return Err(Box::new(crate::Error::new(
+                                            Some(self.create_span(start_index, start_index + 4)),
+                                            crate::ErrorKind::InvalidHexEscapeDigit {
+                                                what: ch,
+                                            },
+                                        )));
                                     }
                                 };
                             }
@@ -384,10 +396,12 @@ impl<T: BufRead> Scanner<T> {
                         Ok(Some(byte))
                     }
                     Some(ch) => {
-                        Err(Box::new(crate::Error::InvalidEscape {
-                            span: self.create_span(start_index, self.next_index),
-                            what: ch,
-                        }))
+                        Err(Box::new(crate::Error::new(
+                            Some(self.create_span(start_index, self.next_index)),
+                            crate::ErrorKind::InvalidEscape {
+                                what: ch,
+                            },
+                        )))
                     }
                     None => {
                         Ok(None)
@@ -398,10 +412,12 @@ impl<T: BufRead> Scanner<T> {
                 Ok(Some(ch as u8))
             }
             else {
-                Err(Box::new(crate::Error::NonAsciiCharacter {
-                    span: self.create_span(start_index, start_index),
-                    what: ch,
-                }))
+                Err(Box::new(crate::Error::new(
+                    Some(self.create_span(start_index, start_index)),
+                    crate::ErrorKind::NonAsciiCharacter {
+                        what: ch,
+                    },
+                )))
             }
         }
         else {
@@ -425,26 +441,28 @@ impl<T: BufRead> Scanner<T> {
             }
             else {
                 self.put_back(ch);
-                bytes.push(self.scan_escaped_char()?.ok_or_else(|| {
-                    Box::new(crate::Error::UnclosedString {
-                        span: self.create_span(start_index, start_index),
-                    })
-                })?);
+                let byte = self.scan_escaped_char()?
+                    .ok_or_else(|| Box::new(crate::Error::new(
+                        Some(self.create_span(start_index, start_index)),
+                        crate::ErrorKind::UnclosedString,
+                    )))?;
+                bytes.push(byte);
             }
         }
 
-        Err(Box::new(crate::Error::UnclosedString {
-            span: self.create_span(start_index, start_index),
-        }))
+        Err(Box::new(crate::Error::new(
+            Some(self.create_span(start_index, start_index)),
+            crate::ErrorKind::UnclosedString,
+        )))
     }
 
     fn scan_character_literal(&mut self) -> crate::Result<(crate::Span, Token)> {
         let start_index = self.next_index - 1;
-        let byte = self.scan_escaped_char()?.ok_or_else(|| {
-            Box::new(crate::Error::UnclosedCharacter {
-                span: self.create_span(self.next_index, self.next_index),
-            })
-        })?;
+        let byte = self.scan_escaped_char()?
+            .ok_or_else(|| Box::new(crate::Error::new(
+                Some(self.create_span(self.next_index, self.next_index)),
+                crate::ErrorKind::UnclosedCharacter,
+            )))?;
 
         if let Some('\'') = self.next_char()? {
             let suffix = match self.next_char()? {
@@ -465,9 +483,10 @@ impl<T: BufRead> Scanner<T> {
             ))
         }
         else {
-            Err(Box::new(crate::Error::UnclosedCharacter {
-                span: self.create_span(self.next_index, self.next_index),
-            }))
+            Err(Box::new(crate::Error::new(
+                Some(self.create_span(self.next_index, self.next_index)),
+                crate::ErrorKind::UnclosedCharacter,
+            )))
         }
     }
 
@@ -515,8 +534,9 @@ impl<T: BufRead> Scanner<T> {
             }
         }
 
-        Err(Box::new(crate::Error::UnclosedComment {
-            span: self.create_span(start_index, start_index + 2),
-        }))
+        Err(Box::new(crate::Error::new(
+            Some(self.create_span(start_index, start_index + 2)),
+            crate::ErrorKind::UnclosedComment,
+        )))
     }
 }

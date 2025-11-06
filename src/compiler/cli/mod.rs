@@ -70,7 +70,7 @@ pub fn invoke(args: &CompilerArgs) -> Result<(), Box<(crate::Error, Vec<PathBuf>
         .and_then(|generator| generator.generate_all(&parsed_modules))
         .map_err(|error| Box::new((*error, source_paths)))?;
 
-    println!("LLVM IR successfully written to '{}'.", args.output_path().display());
+    println!("LLVM IR successfully written to '{}'.", output_path.display());
 
     Ok(())
 }

@@ -68,6 +68,14 @@ implement String {
         self.str.as_str()
     }
 
+    function as_mut_str(self: *mut Self) -> MutStr {
+        self.str
+    }
+
+    function capacity(self: *Self) -> usize {
+        self.capacity
+    }
+
     function grow_by(self: *mut Self, additional: usize) {
         let required_capacity = self.capacity + additional;
         let capacity = usize::max(self.capacity * 2, required_capacity);

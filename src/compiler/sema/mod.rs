@@ -1,4 +1,4 @@
-use crate::ast::{Node, PathSegment, TypeNode};
+use crate::ast::{Node, NodeKind, PathSegment, TypeNode, TypeNodeKind};
 use crate::target::TargetInfo;
 use crate::token::Literal;
 use std::collections::{HashMap, VecDeque};
@@ -275,21 +275,7 @@ impl GlobalContext {
         self.current_self_type.take().expect("Self type is not set")
     }
 
-    pub fn get_super_namespace(&mut self, namespace: NamespaceHandle) -> crate::Result<NamespaceHandle> {
-        let Some(super_path) = self.namespace_info(namespace).path().parent() else {
-            return Err(Box::new(crate::Error::InvalidSuper {
-                namespace: self.namespace_info(namespace).path().to_string(),
-            }));
-        };
-
-        self.get_path_value(&super_path)?
-            .as_namespace(self)
-            .ok_or_else(|| Box::new(crate::Error::ExpectedNamespace {
-                name: super_path.to_string(),
-            }))
-    }
-
-    pub fn get_absolute_path(&self, segments: &[PathSegment]) -> crate::Result<AbsolutePath> {
+    pub fn get_absolute_path(&self, path_span: crate::Span, segments: &[PathSegment]) -> crate::Result<AbsolutePath> {
         let mut path = self.namespace_info(self.current_module()).path().clone();
 
         for segment in segments {
@@ -302,9 +288,12 @@ impl GlobalContext {
                 }
                 PathSegment::SuperModule => {
                     let Some(parent) = path.parent() else {
-                        return Err(Box::new(crate::Error::InvalidSuper {
-                            namespace: path.to_string(),
-                        }));
+                        return Err(Box::new(crate::Error::new(
+                            Some(path_span),
+                            crate::ErrorKind::InvalidSuper {
+                                namespace: path.to_string(),
+                            },
+                        )));
                     };
                     path = parent;
                 }
@@ -313,7 +302,10 @@ impl GlobalContext {
                 }
                 PathSegment::SelfType => {
                     let Some(self_type) = self.current_self_type() else {
-                        return Err(Box::new(crate::Error::NoSelfType {}));
+                        return Err(Box::new(crate::Error::new(
+                            Some(path_span),
+                            crate::ErrorKind::NoSelfType,
+                        )));
                     };
                     path = self.type_path(self_type).clone();
                 }
@@ -330,11 +322,11 @@ impl GlobalContext {
     }
 
     pub fn type_path_for_type_node(&self, type_node: &TypeNode) -> crate::Result<AbsolutePath> {
-        match type_node {
-            TypeNode::Path { segments } => {
-                Ok(self.get_absolute_path(segments)?)
+        match type_node.kind() {
+            TypeNodeKind::Path { segments } => {
+                Ok(self.get_absolute_path(type_node.span(), segments)?)
             }
-            TypeNode::Pointer { pointee_type, semantics } => {
+            TypeNodeKind::Pointer { pointee_type, semantics } => {
                 let base_type = PathBaseType::Pointer {
                     pointee_type: self.type_path_for_type_node(pointee_type)?,
                     semantics: *semantics,
@@ -342,24 +334,30 @@ impl GlobalContext {
 
                 Ok(AbsolutePath::at_base_type(Box::new(base_type)))
             }
-            TypeNode::Array { item_type, length } => {
+            TypeNodeKind::Array { item_type, length } => {
                 let base_type = PathBaseType::Array {
                     item_type: self.type_path_for_type_node(item_type)?,
                     length: match length {
                         Some(node) => {
                             // Must be an integer literal (for now)
-                            if let &Node::Literal(Literal::Integer(raw, _)) = node.as_ref() {
+                            if let &NodeKind::Literal(Literal::Integer(raw, _)) = node.kind() {
                                 // Must be an acceptable usize value
                                 let Some(value) = IntegerValue::from_unknown_type(raw, TypeHandle::USIZE, self.target()) else {
-                                    return Err(Box::new(crate::Error::IncompatibleValueType {
-                                        value: raw.to_string(),
-                                        type_name: self.type_path(TypeHandle::USIZE).to_string(),
-                                    }));
+                                    return Err(Box::new(crate::Error::new(
+                                        Some(node.span()),
+                                        crate::ErrorKind::IncompatibleValueType {
+                                            value: raw.to_string(),
+                                            type_name: self.type_path(TypeHandle::USIZE).to_string(),
+                                        },
+                                    )));
                                 };
                                 Some(value.raw() as u64)
                             }
                             else {
-                                return Err(Box::new(crate::Error::NonConstantArrayLength {}));
+                                return Err(Box::new(crate::Error::new(
+                                    Some(node.span()),
+                                    crate::ErrorKind::NonConstantArrayLength,
+                                )));
                             }
                         },
                         None => None,
@@ -368,7 +366,7 @@ impl GlobalContext {
 
                 Ok(AbsolutePath::at_base_type(Box::new(base_type)))
             }
-            TypeNode::Tuple { item_types } => {
+            TypeNodeKind::Tuple { item_types } => {
                 let base_type = PathBaseType::Tuple {
                     item_types: Result::from_iter(item_types
                         .iter()
@@ -377,7 +375,7 @@ impl GlobalContext {
 
                 Ok(AbsolutePath::at_base_type(Box::new(base_type)))
             }
-            TypeNode::Function { parameter_types, is_variadic, return_type } => {
+            TypeNodeKind::Function { parameter_types, is_variadic, return_type } => {
                 let base_type = PathBaseType::Function {
                     parameter_types: Result::from_iter(parameter_types
                         .iter()
@@ -388,26 +386,32 @@ impl GlobalContext {
 
                 Ok(AbsolutePath::at_base_type(Box::new(base_type)))
             }
+            TypeNodeKind::Grouping { content } => {
+                self.type_path_for_type_node(content)
+            }
         }
     }
 
     pub fn type_path_for_node(&self, node: &Node) -> crate::Result<AbsolutePath> {
-        match node {
-            Node::Type(type_node) => {
+        match node.kind() {
+            NodeKind::Type(type_node) => {
                 self.type_path_for_type_node(type_node)
             }
-            Node::Path { segments, .. } => {
-                self.get_absolute_path(segments)
+            NodeKind::Path { segments, .. } => {
+                self.get_absolute_path(node.span(), segments)
             }
-            Node::Literal(Literal::Name(name)) => {
+            NodeKind::Literal(Literal::Name(name)) => {
                 Ok(self.current_module_info().path().child(name.clone()))
             }
-            Node::Literal(Literal::PrimitiveType(primitive_type)) => {
+            NodeKind::Literal(Literal::PrimitiveType(primitive_type)) => {
                 let base_type = PathBaseType::Primitive(*primitive_type);
                 Ok(AbsolutePath::at_base_type(Box::new(base_type)))
             }
             _ => {
-                Err(Box::new(crate::Error::UnexpectedExpression {}))
+                Err(Box::new(crate::Error::new(
+                    Some(node.span()),
+                    crate::ErrorKind::UnexpectedExpression,
+                )))
             }
         }
     }
@@ -461,19 +465,25 @@ impl GlobalContext {
                     .collect();
 
                 if search_results.is_empty() {
-                    Err(Box::new(crate::Error::UndefinedGlobalSymbol {
-                        namespace: self.namespace_info(namespace).path().to_string(),
-                        name: name.to_string(),
-                    }))
+                    Err(Box::new(crate::Error::new(
+                        None, // TODO
+                        crate::ErrorKind::UndefinedGlobalSymbol {
+                            namespace: self.namespace_info(namespace).path().to_string(),
+                            name: name.to_string(),
+                        },
+                    )))
                 }
                 else if search_results.len() > 1 {
-                    Err(Box::new(crate::Error::AmbiguousSymbol {
-                        name: name.to_string(),
-                        possible_paths: search_results
-                            .into_iter()
-                            .map(|(path, _)| path.to_string())
-                            .collect(),
-                    }))
+                    Err(Box::new(crate::Error::new(
+                        None, // TODO
+                        crate::ErrorKind::AmbiguousSymbol {
+                            name: name.to_string(),
+                            possible_paths: search_results
+                                .into_iter()
+                                .map(|(path, _)| path.to_string())
+                                .collect(),
+                        },
+                    )))
                 }
                 else {
                     let (_, value) = search_results.into_iter().next().unwrap();
@@ -495,9 +505,12 @@ impl GlobalContext {
 
         for segment in path.simple().segments() {
             let Some(namespace) = value.as_namespace(self) else {
-                return Err(Box::new(crate::Error::ExpectedNamespace {
-                    name: segment.to_string(),
-                }));
+                return Err(Box::new(crate::Error::new(
+                    None, // TODO
+                    crate::ErrorKind::ExpectedNamespace {
+                        name: segment.to_string(),
+                    },
+                )));
             };
             value = self.get_symbol_value(namespace, segment)?;
         }
@@ -507,9 +520,14 @@ impl GlobalContext {
 
     /// Get the type handle correponding to the given path.
     pub fn get_path_type(&mut self, path: &AbsolutePath) -> crate::Result<TypeHandle> {
-        self.get_path_value(path)?.as_type().ok_or_else(|| Box::new(crate::Error::NonTypeSymbol {
-            name: path.to_string(),
-        }))
+        self.get_path_value(path)?
+            .as_type()
+            .ok_or_else(|| Box::new(crate::Error::new(
+                None, // TODO
+                crate::ErrorKind::NonTypeSymbol {
+                    name: path.to_string(),
+                },
+            )))
     }
 
     /// Get the type handle for a base type of a path.
@@ -525,11 +543,11 @@ impl GlobalContext {
                     panic!("invalid primitive type '{primitive}'")
                 }
                 PathBaseType::Pointer { pointee_type, semantics } => {
-                    let pointee_type = self.get_path_type(&pointee_type)?;
+                    let pointee_type = self.get_path_type(pointee_type)?;
                     self.get_pointer_type(pointee_type, *semantics)
                 }
                 PathBaseType::Array { item_type, length } => {
-                    let item_type = self.get_path_type(&item_type)?;
+                    let item_type = self.get_path_type(item_type)?;
                     self.get_array_type(item_type, *length)
                 }
                 PathBaseType::Tuple { item_types } => {
@@ -542,7 +560,7 @@ impl GlobalContext {
                     let parameter_types = Result::from_iter(parameter_types
                         .iter()
                         .map(|parameter_type| self.get_path_type(parameter_type)))?;
-                    let return_type = self.get_path_type(&return_type)?;
+                    let return_type = self.get_path_type(return_type)?;
                     let signature = FunctionSignature::new(return_type, parameter_types, *is_variadic);
                     self.get_function_type(&signature)
                 }
@@ -666,31 +684,36 @@ impl GlobalContext {
     }
 
     pub fn process_global_statement(&mut self, node: &mut Node) -> crate::Result<()> {
-        match *node {
-            Node::Let { ref name, ref value_type, is_mutable, ref mut global_register, .. } => {
+        let node_span = node.span();
+        match node.kind_mut() {
+            NodeKind::Let { name, value_type, is_mutable, global_register, .. } => {
                 let Some(value_type) = value_type else {
-                    return Err(Box::new(crate::Error::MustSpecifyTypeForGlobal {
-                        name: self.current_namespace_info().path().child(name.clone()).to_string(),
-                    }));
+                    return Err(Box::new(crate::Error::new(
+                        Some(node_span),
+                        crate::ErrorKind::MustSpecifyTypeForGlobal {
+                            name: self.current_namespace_info().path().child(name.clone()).to_string(),
+                        },
+                    )));
                 };
                 let value_type = self.interpret_type_node(value_type)?;
-                *global_register = Some(self.define_global_value(name, value_type, is_mutable)?);
+                *global_register = Some(self.define_global_value(name, value_type, *is_mutable)?);
             }
-            Node::Constant { ref name, ref value_type, ref mut global_register, .. } => {
+            NodeKind::Constant { name, value_type, global_register, .. } => {
                 let value_type = self.interpret_type_node(value_type)?;
                 *global_register = Some(self.define_global_value(name, value_type, false)?);
             }
-            Node::Function { ref name, ref parameters, is_variadic, ref return_type, ref mut global_register, is_foreign, .. } => {
-                let parameter_types = Result::from_iter(parameters
+            NodeKind::Function { name, parameters, is_variadic, return_type, global_register, is_foreign, .. } => {
+                let parameter_types = parameters
                     .iter()
                     .map(|parameter| {
                         self.interpret_type_node(&parameter.type_node)
-                    }))?;
+                    })
+                    .collect::<crate::Result<_>>()?;
                 let return_type = self.interpret_type_node(return_type)?;
-                let signature = FunctionSignature::new(return_type, parameter_types, is_variadic);
+                let signature = FunctionSignature::new(return_type, parameter_types, *is_variadic);
                 let function_type = self.get_function_type(&signature);
 
-                let identifier = if is_foreign {
+                let identifier = if *is_foreign {
                     name.to_string()
                 } else {
                     self.current_namespace_info().path().child(name.clone()).to_string()
@@ -704,14 +727,14 @@ impl GlobalContext {
 
                 *global_register = Some(register);
             }
-            Node::Structure { ref name, ref members, self_type, is_foreign } => {
-                if is_foreign {
-                    self.update_type_repr(self_type, TypeRepr::ForeignStructure {
+            NodeKind::Structure { name, members, self_type, is_foreign } => {
+                if *is_foreign {
+                    self.update_type_repr(*self_type, TypeRepr::ForeignStructure {
                         name: name.clone(),
                     });
                 }
                 else {
-                    self.set_self_type(self_type);
+                    self.set_self_type(*self_type);
 
                     let members = crate::Result::from_iter(members
                         .as_ref()
@@ -721,7 +744,7 @@ impl GlobalContext {
                             name: member.name.clone(),
                             member_type: self.interpret_type_node(&member.type_node)?,
                         })))?;
-                    self.update_type_repr(self_type, TypeRepr::Structure {
+                    self.update_type_repr(*self_type, TypeRepr::Structure {
                         name: name.clone(),
                         members,
                     });
@@ -729,7 +752,7 @@ impl GlobalContext {
                     self.unset_self_type();
                 }
             }
-            Node::Implement { ref self_type, ref mut statements, .. } => {
+            NodeKind::Implement { self_type, statements, .. } => {
                 let self_type = self.interpret_type_node(self_type)?;
                 self.set_self_type(self_type);
 
@@ -739,8 +762,8 @@ impl GlobalContext {
 
                 self.unset_self_type();
             }
-            Node::Module { ref mut statements, namespace, .. } => {
-                self.enter_module(namespace);
+            NodeKind::Module { statements, namespace, .. } => {
+                self.enter_module(*namespace);
 
                 for statement in statements {
                     self.process_global_statement(statement)?;
@@ -807,9 +830,12 @@ impl GlobalContext {
         }
 
         if dependency_stack.contains(&handle) {
-            return Err(Box::new(crate::Error::RecursiveTypeDefinition {
-                type_name: self.type_path(handle).to_string(),
-            }));
+            return Err(Box::new(crate::Error::new(
+                None,
+                crate::ErrorKind::RecursiveTypeDefinition {
+                    type_name: self.type_path(handle).to_string(),
+                },
+            )));
         }
         dependency_stack.push(handle);
 

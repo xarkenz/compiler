@@ -222,11 +222,11 @@ impl NamespaceHandle {
     pub const ROOT: Self = Self::new(0);
 
     pub const fn new(registry_index: usize) -> Self {
-        Self(unsafe { NonZeroUsize::new_unchecked(registry_index + 1) })
+        Self(NonZeroUsize::new(registry_index.wrapping_add(1)).unwrap())
     }
 
     pub const fn registry_index(self) -> usize {
-        self.0.get() - 1
+        self.0.get().wrapping_sub(1)
     }
 
     pub fn info(self, context: &GlobalContext) -> &NamespaceInfo {
@@ -272,10 +272,13 @@ impl NamespaceInfo {
 
     pub fn define(&mut self, name: &str, symbol: Symbol) -> crate::Result<()> {
         match self.symbols.insert(name.into(), symbol) {
-            Some(..) => Err(Box::new(crate::Error::GlobalSymbolConflict {
-                namespace: self.path().to_string(),
-                name: name.to_owned(),
-            })),
+            Some(..) => Err(Box::new(crate::Error::new(
+                None, // TODO
+                crate::ErrorKind::GlobalSymbolConflict {
+                    namespace: self.path().to_string(),
+                    name: name.to_owned(),
+                },
+            ))),
             None => Ok(()),
         }
     }
