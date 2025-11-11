@@ -7,7 +7,7 @@ readme = "README.md"
 default-run = "driver"
 
 [lib]
-name = "compiler"
+name = "cupric"
 path = "src/compiler/lib.rs"
 
 [[bin]]
@@ -16,4 +16,5 @@ path = "src/driver/main.rs"
 
 [dependencies]
 clap = { version = "4.4.6", features = ["derive"] }
+toml = "0.9.8"
 utf8-chars = "3.0.1"

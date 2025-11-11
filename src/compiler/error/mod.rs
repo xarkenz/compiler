@@ -85,13 +85,13 @@ impl Span {
 }
 
 pub enum ErrorKind {
+    PackageFile {
+        cause: String,
+    },
     SourceFileOpen {
-        source_id: usize,
         cause: std::io::Error,
     },
     SourceFileRead {
-        source_id: usize,
-        line: usize,
         cause: std::io::Error,
     },
     OutputFileOpen {
@@ -190,7 +190,6 @@ pub enum ErrorKind {
     UnexpectedExpression,
     InvalidBreak,
     InvalidContinue,
-    InvalidReturn,
     ExpectedReturnValue {
         function_name: String,
     },
@@ -251,9 +250,6 @@ pub enum ErrorKind {
         expected_count: usize,
         got_count: usize,
     },
-    MissingReturnStatement {
-        function_name: String,
-    },
     UnsupportedConstantExpression,
     NoSelfType,
     ExpectedSelfParameter,
@@ -275,6 +271,7 @@ pub enum ErrorKind {
 impl std::fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::PackageFile { cause } => write!(f, "error reading package: {cause}"),
             Self::SourceFileOpen { cause, .. } => write!(f, "unable to open file: {cause}"),
             Self::SourceFileRead { cause, .. } => write!(f, "error while reading file: {cause}"),
             Self::OutputFileOpen { cause, .. } => write!(f, "unable to create file: {cause}"),
@@ -319,11 +316,10 @@ impl std::fmt::Display for ErrorKind {
             Self::UnknownTypeAlignment { type_name } => write!(f, "type '{type_name}' does not have a defined alignment"),
             Self::NonConstantArrayLength => write!(f, "array length must be constant"),
             Self::IncompatibleTypes { expected_type, got_type } => write!(f, "expected a value of type '{expected_type}', got '{got_type}' instead"),
-            Self::InconvertibleTypes { from_type: original_type, to_type: target_type } => write!(f, "cannot convert from '{original_type}' to '{target_type}'"),
+            Self::InconvertibleTypes { from_type, to_type } => write!(f, "cannot convert from '{from_type}' to '{to_type}'"),
             Self::UnexpectedExpression => write!(f, "unexpected expression type"),
             Self::InvalidBreak => write!(f, "unexpected 'break' outside loop"),
             Self::InvalidContinue => write!(f, "unexpected 'continue' outside loop"),
-            Self::InvalidReturn => write!(f, "unexpected 'return' outside function"),
             Self::ExpectedReturnValue { function_name } => write!(f, "cannot return without a value from non-void function '{function_name}'"),
             Self::UnexpectedReturnValue { function_name } => write!(f, "cannot return a value from void function '{function_name}'"),
             Self::NonValueSymbol { name } => write!(f, "cannot use '{name}' as a value"),
@@ -358,7 +354,6 @@ impl std::fmt::Display for ErrorKind {
             Self::WrongFunctionArgumentCount { expected_count, got_count } => {
                 write!(f, "too {} arguments for function (expected {expected_count}, got {got_count})", if got_count < expected_count { "few" } else { "many" })
             }
-            Self::MissingReturnStatement { function_name } => write!(f, "non-void function '{function_name}' could finish without returning a value"),
             Self::UnsupportedConstantExpression => write!(f, "unsupported feature in constant expression"),
             Self::NoSelfType => write!(f, "keyword 'Self' can only be used inside 'implement' blocks and 'struct' definitions"),
             Self::ExpectedSelfParameter => write!(f, "expected a first parameter of type 'Self', '*Self', or '*mut Self'"),
@@ -414,14 +409,14 @@ impl Error {
             let path = &paths[span.source_id];
             let path_display = path.display();
             if let Ok((line_number, column_number, context)) = span.context_to_string(path) {
-                format!("{path_display}:{line_number}:{column_number}: {self}\n\n{context}")
+                format!("Error in '{path_display}':\nline {line_number}:{column_number}: {self}\n\n{context}")
             }
             else {
-                format!("{path_display}: {self}")
+                format!("Error in '{path_display}':\n{self}")
             }
         }
         else {
-            format!("{self}")
+            format!("Error:\n{self}")
         }
     }
 }

@@ -1,0 +1,4 @@
+[package]
+name = "libc"
+kind = "lib"
+main_path = "main.cupr"

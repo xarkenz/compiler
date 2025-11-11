@@ -1,0 +1,25 @@
+implement u8 {
+    function swap(*mut u8, *mut u8) -> void;
+}
+implement usize {
+    function max(usize, usize) -> usize;
+}
+implement package::Str {
+    function raw_parts(*package::Str) -> (*[u8], usize);
+}
+implement package::MutStr {
+    function as_str(*package::MutStr) -> package::Str;
+}
+implement package::String {
+    function new() -> package::String;
+    function del(package::String) -> void;
+    function as_str(*package::String) -> package::Str;
+    function as_mut_str(*mut package::String) -> package::MutStr;
+    function capacity(*package::String) -> usize;
+    function grow_by(*mut package::String, usize) -> void;
+    function push(*mut package::String, u8) -> void;
+    function insert(*mut package::String, usize, u8) -> void;
+}
+implement i64 {
+    function to_string(i64) -> package::String;
+}

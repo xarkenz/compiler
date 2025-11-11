@@ -1,0 +1,29 @@
+let mut static_mut_var: i32;
+let static_var: *[u8];
+function fibonacci(i32) -> i32;
+function gcd(u32, u32) -> u32;
+function aoc_01_p1() -> void;
+function omg_linked_list(values: *[*[u8]], value_count: usize) -> void;
+function student_stuff() -> void;
+function main @ "main"() -> i32;
+struct Str {
+    ptr: *[u8],
+    length: usize,
+}
+struct MutStr {
+    ptr: *mut [u8],
+    length: usize,
+}
+struct String {
+    str: package::MutStr,
+    capacity: usize,
+}
+struct Node {
+    value: *[u8],
+    next: *mut package::Node,
+}
+struct Student {
+    name: *[u8],
+    age: u32,
+    grades: [u32; 4],
+}

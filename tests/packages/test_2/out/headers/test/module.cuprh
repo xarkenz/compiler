@@ -1,0 +1,6 @@
+struct Test{
+    a: *package::Test,
+    b: *package::test::test::Test,
+    c: *package::thing::Thing,
+}
+import package::thing::Thing as Thing;

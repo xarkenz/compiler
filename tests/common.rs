@@ -1,18 +1,14 @@
 use clap::Parser;
 
-pub fn test_compile<'a>(
-    source_filename: &str,
-    output_filename: &str,
-) {
-    let args = compiler::cli::CompilerArgs::parse_from([
+pub fn test_compile_package(package_name: &str) {
+    let args = cupric::cli::CompilerArgs::parse_from([
         "compiler".to_string(),
-        "--out".to_string(),
-        format!("tests/outputs/{output_filename}"),
-        format!("tests/sources/{source_filename}"),
+        format!("tests/packages/{package_name}"),
     ]);
 
-    if let Err(error) = compiler::cli::invoke(&args) {
+    if let Err(error) = cupric::cli::invoke(&args) {
         let (error, source_paths) = *error;
-        panic!("Error: {}", error.to_string_with_context(&source_paths))
+        println!("\x1b[31m{}\x1b[0m", error.to_string_with_context(&source_paths));
+        panic!("compile command failed")
     }
 }

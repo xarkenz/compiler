@@ -1,0 +1,11 @@
+function malloc @ "malloc"(usize) -> *mut [u8];
+function calloc @ "calloc"(usize, usize) -> *mut [u8];
+function realloc @ "realloc"(*mut [u8], usize) -> *mut [u8];
+function free @ "free"(*mut [u8]) -> void;
+function rand @ "rand"() -> i32;
+function srand @ "srand"(u32) -> void;
+function atexit @ "atexit"(function() -> void) -> i32;
+function exit @ "exit"(i32) -> never;
+import* package::ctype;
+import* package::stdio;
+import* package::string;

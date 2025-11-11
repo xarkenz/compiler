@@ -1,0 +1,4 @@
+[package]
+name = "unix"
+kind = "lib"
+main_path = "main.cupr"

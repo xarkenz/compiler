@@ -4,14 +4,17 @@ use std::io::BufRead;
 use crate::sema::{GlobalContext, PrimitiveType, Symbol};
 use crate::token::scan::Scanner;
 
-pub fn parse_module<T: BufRead>(scanner: &mut Scanner<T>, context: &mut GlobalContext) -> crate::Result<ParsedModule> {
-    let namespace = context.current_namespace();
+pub fn parse_module<T: BufRead>(scanner: &mut Scanner<T>, context: &mut GlobalContext, namespace: NamespaceHandle) -> crate::Result<ParsedModule> {
     let mut parser = Parser::new(scanner)?;
+
+    let previous_module = context.replace_current_module(namespace);
 
     let mut statements = Vec::new();
     while let Some(statement) = parser.parse_top_level_statement(context)? {
         statements.push(*statement);
     }
+
+    context.replace_current_module(previous_module);
 
     Ok(ParsedModule {
         statements,
@@ -1141,7 +1144,11 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 }
                 self.scan_token()?;
 
-                let namespace = global_context.enter_module_outline(&name)?;
+                let namespace = global_context.get_or_create_module(
+                    global_context.current_module(),
+                    &name,
+                )?;
+                let parent_module = global_context.replace_current_module(namespace);
 
                 let mut statements = Vec::new();
                 let span = loop {
@@ -1176,7 +1183,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     }
                 };
 
-                global_context.exit_module();
+                global_context.replace_current_module(parent_module);
 
                 Ok(Some(Box::new(Node::new(
                     span,

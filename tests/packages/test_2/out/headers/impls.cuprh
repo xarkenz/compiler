@@ -1,0 +1,7 @@
+implement [i32; 2] {
+    function x(*[i32; 2]) -> i32;
+    function y(*[i32; 2]) -> i32;
+}
+implement package::test::test::Test {
+    function do_thing(*package::test::test::Test, i32) -> i32;
+}

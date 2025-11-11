@@ -1,0 +1,6 @@
+struct Thing {
+    x: *package::Test,
+    y: *package::First,
+    z: *package::thing::Thing,
+}
+import* package;

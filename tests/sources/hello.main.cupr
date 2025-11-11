@@ -1,6 +1,0 @@
-module libc;
-
-foreign function main() -> i32 {
-    libc::puts("Hello world!");
-    0
-}

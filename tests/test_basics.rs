@@ -2,48 +2,30 @@ mod common;
 
 #[test]
 fn hello() {
-    common::test_compile(
-        "hello.main.cupr",
-        "hello.ll",
-    );
+    common::test_compile_package("hello");
 }
 
 #[test]
 fn test_1() {
-    common::test_compile(
-        "test_1.main.cupr",
-        "test_1.ll",
-    );
+    common::test_compile_package("test_1");
 }
 
 #[test]
 fn test_2() {
-    common::test_compile(
-        "test_2.main.cupr",
-        "test_2.ll",
-    );
+    common::test_compile_package("test_2");
 }
 
 #[test]
 fn test_3() {
-    common::test_compile(
-        "test_3.main.cupr",
-        "test_3.ll",
-    );
+    common::test_compile_package("test_3");
 }
 
 #[test]
 fn test_unix() {
-    common::test_compile(
-        "test_unix.main.cupr",
-        "test_unix.ll",
-    );
+    common::test_compile_package("test_unix");
 }
 
 #[test]
 fn test_collections() {
-    common::test_compile(
-        "test_collections.main.cupr",
-        "test_collections.ll",
-    );
+    common::test_compile_package("test_collections");
 }

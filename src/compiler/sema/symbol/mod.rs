@@ -1,4 +1,9 @@
 use super::*;
+use std::collections::HashMap;
+use std::num::NonZeroUsize;
+
+mod registry;
+pub use registry::*;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct SimplePath {
@@ -219,7 +224,7 @@ impl std::fmt::Display for AbsolutePath {
 pub struct NamespaceHandle(NonZeroUsize);
 
 impl NamespaceHandle {
-    pub const ROOT: Self = Self::new(0);
+    pub const GLOBAL_ROOT: Self = Self::new(0);
 
     pub const fn new(registry_index: usize) -> Self {
         Self(NonZeroUsize::new(registry_index.wrapping_add(1)).unwrap())

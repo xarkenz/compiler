@@ -19,7 +19,8 @@ pub struct Emitter<W: Write> {
 impl Emitter<std::fs::File> {
     pub fn from_path(path: impl AsRef<Path>) -> crate::Result<Self> {
         let path = path.as_ref();
-        std::fs::File::create(path)
+        std::fs::create_dir_all(path.parent().expect("emitter path should have a parent"))
+            .and_then(|_| std::fs::File::create(path))
             .map(|file| Self::new(path, file))
             .map_err(|cause| Box::new(crate::Error::new(
                 None,

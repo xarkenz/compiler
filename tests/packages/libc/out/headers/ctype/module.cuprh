@@ -1,0 +1,14 @@
+function isalnum @ "isalnum"(i32) -> i32;
+function isalpha @ "isalpha"(i32) -> i32;
+function islower @ "islower"(i32) -> i32;
+function isupper @ "isupper"(i32) -> i32;
+function isdigit @ "isdigit"(i32) -> i32;
+function isxdigit @ "isxdigit"(i32) -> i32;
+function iscntrl @ "iscntrl"(i32) -> i32;
+function isgraph @ "isgraph"(i32) -> i32;
+function isspace @ "isspace"(i32) -> i32;
+function isblank @ "isblank"(i32) -> i32;
+function isprint @ "isprint"(i32) -> i32;
+function ispunct @ "ispunct"(i32) -> i32;
+function tolower @ "tolower"(i32) -> i32;
+function toupper @ "toupper"(i32) -> i32;

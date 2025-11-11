@@ -1,0 +1,7 @@
+[package]
+name = "std"
+kind = "lib"
+main_path = "main.cupr"
+
+[dependency.libc]
+path = "../libc"

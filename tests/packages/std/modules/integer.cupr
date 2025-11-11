@@ -1,0 +1,10 @@
+implement usize {
+    function max(self: Self, other: Self) -> Self {
+        if (self > other) {
+            self
+        }
+        else {
+            other
+        }
+    }
+}

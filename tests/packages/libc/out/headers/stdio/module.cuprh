@@ -1,0 +1,7 @@
+function fopen @ "fopen"(*[u8], *[u8]) -> *mut package::stdio::CFile;
+function fclose @ "fclose"(*mut package::stdio::CFile) -> i32;
+function feof @ "feof"(*mut package::stdio::CFile) -> i32;
+function fgets @ "fgets"(*mut [u8], i32, *mut package::stdio::CFile) -> *mut [u8];
+function printf @ "printf"(*[u8], ..) -> i32;
+function puts @ "puts"(*[u8]) -> i32;
+struct CFile opaque;

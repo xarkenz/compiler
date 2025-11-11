@@ -1,0 +1,7 @@
+function main @ "main"() -> i32;
+struct First {}
+struct Test {
+    a: *package::test::Test,
+    b: *package::test::test::Test,
+    c: *package::thing::Thing,
+}

@@ -1,0 +1,10 @@
+[package]
+name = "test_unix"
+kind = "exe"
+main_path = "main.cupr"
+
+[dependency.libc]
+path = "../libc"
+
+[dependency.unix]
+path = "../unix"

@@ -1,0 +1,100 @@
+implement u8 {
+    function swap(self: *mut Self, other: *mut Self) {
+        let temp = *self;
+        *self = *other;
+        *other = temp;
+    }
+}
+
+struct Str {
+    ptr: *[u8],
+    length: usize,
+}
+
+implement Str {
+    function raw_parts(self: *Self) -> (*[u8], usize) {
+        (self.ptr, self.length)
+    }
+}
+
+struct MutStr {
+    ptr: *mut [u8],
+    length: usize,
+}
+
+implement MutStr {
+    function as_str(self: *Self) -> Str {
+        Str {
+            ptr: self.ptr,
+            length: self.length,
+        }
+    }
+}
+
+struct String {
+    str: MutStr,
+    capacity: usize,
+}
+
+implement String {
+    function new() -> Self {
+        Self {
+            str: MutStr {
+                ptr: null,
+                length: 0,
+            },
+            capacity: 0,
+        }
+    }
+
+    function del(self: Self) {
+        libc::free(self.str.ptr);
+    }
+
+    function as_str(self: *Self) -> Str {
+        self.str.as_str()
+    }
+
+    function as_mut_str(self: *mut Self) -> MutStr {
+        self.str
+    }
+
+    function capacity(self: *Self) -> usize {
+        self.capacity
+    }
+
+    function grow_by(self: *mut Self, additional: usize) {
+        let required_capacity = self.capacity + additional;
+        let capacity = usize::max(self.capacity * 2, required_capacity);
+
+        let ptr = libc::malloc(sizeof(u8) * capacity);
+        libc::memcpy(ptr, self.str.ptr, self.str.length);
+        libc::free(self.str.ptr);
+
+        self.str.ptr = ptr;
+        self.capacity = capacity;
+    }
+
+    function push(self: *mut Self, ch: u8) {
+        if (self.str.length == self.capacity) {
+            self.grow_by(1);
+        }
+
+        self.str.ptr[self.str.length] = ch;
+        self.str.length += 1;
+    }
+
+    function insert(self: *mut Self, mut index: usize, mut ch: u8) {
+        if (self.str.length == self.capacity) {
+            self.grow_by(1);
+        }
+
+        while (index < self.str.length) {
+            self.str.ptr[index].swap(&ch);
+            index += 1;
+        }
+
+        self.str.ptr[self.str.length] = ch;
+        self.str.length += 1;
+    }
+}

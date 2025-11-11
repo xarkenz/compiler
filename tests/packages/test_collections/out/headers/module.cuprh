@@ -1,0 +1,42 @@
+function max_percolate_down(*mut [*void], usize, function(*void, *void) -> i32, usize) -> void;
+function heap_sort(*mut [*void], usize, function(*void, *void) -> i32) -> void;
+function print_i32_ptr_array(*[*i32], usize) -> void;
+function main @ "main"() -> i32;
+struct LinkedListNode {
+    value: *void,
+    next: *mut package::LinkedListNode,
+}
+struct LinkedList {
+    head: *mut package::LinkedListNode,
+}
+struct AVLTreeNode {
+    key: *void,
+    left: *mut package::AVLTreeNode,
+    right: *mut package::AVLTreeNode,
+    height: i32,
+}
+struct AVLTree {
+    root: *mut package::AVLTreeNode,
+    comparator: function(*void, *void) -> i32,
+}
+struct BTreeNodeKey {
+    boundary: *void,
+    left: *mut package::BTreeNode,
+}
+struct BTreeNode {
+    is_leaf: bool,
+    degree: usize,
+    keys: *mut [package::BTreeNodeKey],
+    right: *mut package::BTreeNode,
+}
+struct BTreeLeaf {
+    is_leaf: bool,
+    degree: usize,
+    elements: *mut [*void],
+}
+struct BTree {
+    m_order: usize,
+    l_order: usize,
+    comparator: function(*void, *void) -> i32,
+    root: *mut package::BTreeNode,
+}

@@ -1,0 +1,2 @@
+function strlen @ "strlen"(*[u8]) -> usize;
+function memcpy @ "memcpy"(*mut [u8], *[u8], usize) -> *mut [u8];

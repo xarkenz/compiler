@@ -1,0 +1,7 @@
+[package]
+name = "hello"
+kind = "exe"
+main_path = "main.cupr"
+
+[dependency.libc]
+path = "../libc"

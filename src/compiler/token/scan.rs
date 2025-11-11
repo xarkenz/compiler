@@ -19,9 +19,12 @@ impl Scanner<BufReader<File>> {
         File::open(path)
             .map(|file| Self::new(source_id, BufReader::new(file)))
             .map_err(|cause| Box::new(crate::Error::new(
-                None,
-                crate::ErrorKind::SourceFileOpen {
+                Some(crate::Span {
                     source_id,
+                    start_index: 0,
+                    length: 0,
+                }),
+                crate::ErrorKind::SourceFileOpen {
                     cause,
                 },
             )))
@@ -109,10 +112,12 @@ impl<T: BufRead> Scanner<T> {
         else {
             let read = self.source.read_char()
                 .map_err(|cause| Box::new(crate::Error::new(
-                    None,
-                    crate::ErrorKind::SourceFileRead {
+                    Some(crate::Span {
                         source_id: self.source_id,
-                        line: self.line,
+                        start_index: self.next_index,
+                        length: 0,
+                    }),
+                    crate::ErrorKind::SourceFileRead {
                         cause,
                     },
                 )))?;

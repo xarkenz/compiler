@@ -1,4 +1,8 @@
 use super::*;
+use std::num::NonZeroUsize;
+
+mod registry;
+pub use registry::*;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PointerSemantics {
@@ -288,7 +292,7 @@ pub struct Conversion {
 }
 
 impl Conversion {
-    pub fn try_implicit(context: &GlobalContext, from_type: TypeHandle, to_type: TypeHandle, from_mutable: bool) -> Option<Self> {
+    pub fn try_implicit(registry: &TypeRegistry, from_type: TypeHandle, to_type: TypeHandle, from_mutable: bool) -> Option<Self> {
         if from_type == TypeHandle::NEVER || from_type == to_type {
             return Some(Self {
                 operation_needed: None,
@@ -296,7 +300,7 @@ impl Conversion {
             });
         }
 
-        match (from_type.repr(context), to_type.repr(context)) {
+        match (registry.type_repr(from_type), registry.type_repr(to_type)) {
             (
                 &TypeRepr::Pointer { pointee_type: from_pointee, semantics: from_semantics },
                 &TypeRepr::Pointer { pointee_type: to_pointee, semantics: to_semantics },
@@ -304,13 +308,13 @@ impl Conversion {
                 use PointerSemantics::*;
                 match (from_semantics, to_semantics) {
                     (Immutable | ImmutableSymbol, Immutable | ImmutableSymbol) => {
-                        Self::try_implicit(context, from_pointee, to_pointee, false)
+                        Self::try_implicit(registry, from_pointee, to_pointee, false)
                     }
                     (Mutable, Immutable | ImmutableSymbol) => {
-                        Self::try_implicit(context, from_pointee, to_pointee, true)
+                        Self::try_implicit(registry, from_pointee, to_pointee, true)
                     }
                     (Mutable, Mutable) if from_mutable => {
-                        Self::try_implicit(context, from_pointee, to_pointee, true)
+                        Self::try_implicit(registry, from_pointee, to_pointee, true)
                     }
                     _ => None
                 }
@@ -322,13 +326,13 @@ impl Conversion {
                 if from_length != to_length {
                     return None;
                 }
-                Self::try_implicit(context, from_item, to_item, from_mutable)
+                Self::try_implicit(registry, from_item, to_item, from_mutable)
             }
             (
                 &TypeRepr::Array { item_type: from_item, length: from_length },
                 &TypeRepr::Array { item_type: to_item, length: None },
             ) => {
-                Self::try_implicit(context, from_item, to_item, from_mutable)
+                Self::try_implicit(registry, from_item, to_item, from_mutable)
                     .map(|mut conversion| {
                         if from_length.is_some() {
                             conversion.operation_needed = Some(ConversionOperation::BitwiseCast);
@@ -340,12 +344,12 @@ impl Conversion {
         }
     }
 
-    pub fn try_explicit(context: &GlobalContext, from_type: TypeHandle, to_type: TypeHandle, from_mutable: bool) -> Option<Self> {
-        if let Some(conversion) = Self::try_implicit(context, from_type, to_type, from_mutable) {
+    pub fn try_explicit(registry: &TypeRegistry, from_type: TypeHandle, to_type: TypeHandle, from_mutable: bool) -> Option<Self> {
+        if let Some(conversion) = Self::try_implicit(registry, from_type, to_type, from_mutable) {
             return Some(conversion);
         }
 
-        let operation_needed = match (from_type.repr(context), to_type.repr(context)) {
+        let operation_needed = match (registry.type_repr(from_type), registry.type_repr(to_type)) {
             (
                 &TypeRepr::Integer { size: from_size, signed: from_signed },
                 &TypeRepr::Integer { size: to_size, .. },

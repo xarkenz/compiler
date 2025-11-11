@@ -1,0 +1,10 @@
+[package]
+name = "test_1"
+kind = "exe"
+main_path = "main.cupr"
+
+[dependency.std]
+path = "../std"
+
+[dependency.libc]
+path = "../libc"

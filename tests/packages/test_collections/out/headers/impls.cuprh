@@ -1,0 +1,34 @@
+implement i32 {
+    function max(i32, i32) -> i32;
+    function cmp(*i32, *i32) -> i32;
+    function print(*i32) -> void;
+}
+implement package::LinkedList {
+    function new() -> package::LinkedList;
+    function front(*package::LinkedList) -> *void;
+    function push_front(*mut package::LinkedList, *void) -> void;
+    function pop_front(*mut package::LinkedList) -> *void;
+}
+implement package::AVLTreeNode {
+    function alloc(*void) -> *mut package::AVLTreeNode;
+    function get_height(*package::AVLTreeNode) -> i32;
+    function recompute_height(*mut package::AVLTreeNode) -> void;
+    function rotate_right(*mut package::AVLTreeNode) -> *mut package::AVLTreeNode;
+    function rotate_left(*mut package::AVLTreeNode) -> *mut package::AVLTreeNode;
+    function balance(*mut package::AVLTreeNode) -> *mut package::AVLTreeNode;
+    function print(*package::AVLTreeNode, function(*void) -> void) -> void;
+}
+implement package::AVLTree {
+    function new(function(*void, *void) -> i32) -> package::AVLTree;
+    function get(*package::AVLTree, *void) -> *void;
+    function insert_subtree(*mut package::AVLTree, *mut *mut package::AVLTreeNode, *void) -> *void;
+    function insert(*mut package::AVLTree, *void) -> *void;
+    function print(*package::AVLTree, function(*void) -> void) -> void;
+}
+implement package::BTreeLeaf {
+    function alloc(usize, *void) -> *mut package::BTreeLeaf;
+}
+implement package::BTree {
+    function new(usize, usize, function(*void, *void) -> i32) -> package::BTree;
+    function insert(*mut package::BTree, *void) -> *void;
+}

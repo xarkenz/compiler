@@ -1,0 +1,2 @@
+function wait @ "wait"(*i32) -> i32;
+import i32 as ProcessID;

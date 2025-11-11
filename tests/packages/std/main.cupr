@@ -1,0 +1,3 @@
+module float;
+module integer;
+module string;

@@ -1,0 +1,5 @@
+function getpid @ "getpid"() -> i32;
+function getppid @ "getppid"() -> i32;
+function fork @ "fork"() -> i32;
+import* package::sys_wait;
+import i32 as ProcessID;
