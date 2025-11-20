@@ -56,7 +56,7 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
             self.context.replace_current_module(parent_module);
         }
 
-        self.emitter.emit_postamble()
+        self.emitter.emit_postamble(&self.context)
     }
 
     pub fn generate_global_statements<'a>(&mut self, global_statements: impl IntoIterator<Item = &'a ast::Node>) -> crate::Result<()> {
@@ -83,16 +83,12 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                     self.generate_function_definition(name, parameters, body, global_register)
                 }
                 else {
-                    self.generate_function_declaration(global_register)
+                    // The work has already been done for us
+                    Ok(Value::Void)
                 }
             }
-            ast::NodeKind::Structure { members, self_type, .. } => {
-                if members.is_some() {
-                    self.generate_structure_definition(*self_type)
-                }
-                else {
-                    self.generate_opaque_structure_definition(*self_type)
-                }
+            ast::NodeKind::Structure { self_type, .. } => {
+                self.generate_structure_definition(*self_type)
             }
             ast::NodeKind::Implement { self_type, statements } => {
                 self.generate_implement_block(self_type, statements)
@@ -455,7 +451,7 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                 Value::Constant(Constant::Register(pointer))
             }
             token::Literal::PrimitiveType(primitive_type) => {
-                Value::Type(primitive_type.handle)
+                Value::Constant(Constant::Type(primitive_type.handle))
             }
         };
 
@@ -607,7 +603,11 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
     fn generate_structure_literal(&mut self, span: crate::Span, type_name: &ast::Node, initializer_members: &[(Box<str>, ast::Node)], local_context: &mut LocalContext) -> crate::Result<Value> {
         let struct_type = self.context.interpret_node_as_type(type_name)?;
 
-        let TypeRepr::Structure { name: type_name, members } = struct_type.repr(self.context).clone() else {
+        let TypeRepr::Structure {
+            name: type_name,
+            members,
+            is_external,
+        } = struct_type.repr(self.context).clone() else {
             return Err(Box::new(crate::Error::new(
                 Some(type_name.span()),
                 crate::ErrorKind::NonStructType {
@@ -615,6 +615,11 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                 },
             )));
         };
+
+        // This was probably already handled, but it can't hurt
+        if is_external {
+            self.context.use_external_value(&Value::Constant(Constant::Type(struct_type)));
+        }
 
         let mut initializer_members = initializer_members.to_vec();
         let mut non_constant_members = Vec::new();
@@ -1454,7 +1459,7 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
 
                 // Search in the type's implementation namespace for a matching method
                 let lhs_namespace = self.context.type_namespace(self_value.get_type());
-                if let Some(Symbol::Value(value)) = self.context.namespace_info(lhs_namespace).find(method_name) {
+                if let Ok(value) = self.context.get_symbol_value(lhs_namespace, method_name, Some(&rhs.span())) {
                     // A method was found, so bind lhs as self and use it as the callee
                     Value::BoundFunction {
                         self_value: Box::new((lhs.span(), self_value)),
@@ -1809,23 +1814,9 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         Ok(Value::Void)
     }
 
-    fn generate_function_declaration(&mut self, function_register: &Register) -> crate::Result<Value> {
-        // The fill phase has done basically all of the work for us already
-        self.emitter.emit_function_declaration(function_register, self.context)?;
-
-        Ok(Value::Void)
-    }
-
     fn generate_structure_definition(&mut self, self_type: TypeHandle) -> crate::Result<Value> {
         // The fill phase has done basically all of the work for us already
         self.emitter.emit_type_definition(self_type, self.context)?;
-
-        Ok(Value::Void)
-    }
-
-    fn generate_opaque_structure_definition(&mut self, self_type: TypeHandle) -> crate::Result<Value> {
-        // The fill phase has done basically all of the work for us already
-        self.emitter.emit_type_declaration(self_type, self.context)?;
 
         Ok(Value::Void)
     }
@@ -2014,65 +2005,73 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
             ast::NodeKind::StructureLiteral { structure_type, members: initializer_members } => {
                 let struct_type = self.context.interpret_node_as_type(structure_type)?;
 
-                if let TypeRepr::Structure { name: type_name, members } = struct_type.repr(self.context).clone() {
-                    let mut initializer_members = initializer_members.to_vec();
-                    let mut missing_member_names = Vec::new();
-
-                    let members: Vec<Constant> = members
-                        .iter()
-                        .map(|member| {
-                            if let Some(initializer_index) = initializer_members.iter().position(|(name, _)| &member.name == name) {
-                                let (_, member_value) = &initializer_members[initializer_index];
-                                let (member_value, mut constants) = self.fold_as_constant(member_value, constant_id, local_context, Some(member.member_type))?;
-
-                                intermediate_constants.append(&mut constants);
-                                initializer_members.swap_remove(initializer_index);
-
-                                Ok(member_value)
-                            }
-                            else {
-                                missing_member_names.push(member.name.to_string());
-
-                                Ok(Constant::Undefined(member.member_type))
-                            }
-                        })
-                        .collect::<crate::Result<_>>()?;
-
-                    if !missing_member_names.is_empty() {
-                        return Err(Box::new(crate::Error::new(
-                            Some(node.span()),
-                            crate::ErrorKind::MissingStructMembers {
-                                member_names: missing_member_names,
-                                type_name: type_name.to_string(),
-                            },
-                        )))
-                    }
-
-                    if !initializer_members.is_empty() {
-                        return Err(Box::new(crate::Error::new(
-                            Some(node.span()),
-                            crate::ErrorKind::ExtraStructMembers {
-                                member_names: initializer_members
-                                    .iter()
-                                    .map(|(name, _)| name.to_string())
-                                    .collect(),
-                                type_name: type_name.to_string(),
-                            },
-                        )));
-                    }
-
-                    Constant::Structure {
-                        members,
-                        struct_type,
-                    }
-                }
-                else {
+                let TypeRepr::Structure {
+                    name: type_name,
+                    members,
+                    is_external,
+                } = struct_type.repr(self.context).clone() else {
                     return Err(Box::new(crate::Error::new(
                         Some(structure_type.span()),
                         crate::ErrorKind::NonStructType {
                             type_name: structure_type.to_string(),
                         },
                     )));
+                };
+
+                // This was probably already handled, but it can't hurt
+                if is_external {
+                    self.context.use_external_value(&Value::Constant(Constant::Type(struct_type)));
+                }
+
+                let mut initializer_members = initializer_members.to_vec();
+                let mut missing_member_names = Vec::new();
+
+                let members: Vec<Constant> = members
+                    .iter()
+                    .map(|member| {
+                        if let Some(initializer_index) = initializer_members.iter().position(|(name, _)| &member.name == name) {
+                            let (_, member_value) = &initializer_members[initializer_index];
+                            let (member_value, mut constants) = self.fold_as_constant(member_value, constant_id, local_context, Some(member.member_type))?;
+
+                            intermediate_constants.append(&mut constants);
+                            initializer_members.swap_remove(initializer_index);
+
+                            Ok(member_value)
+                        }
+                        else {
+                            missing_member_names.push(member.name.to_string());
+
+                            Ok(Constant::Undefined(member.member_type))
+                        }
+                    })
+                    .collect::<crate::Result<_>>()?;
+
+                if !missing_member_names.is_empty() {
+                    return Err(Box::new(crate::Error::new(
+                        Some(node.span()),
+                        crate::ErrorKind::MissingStructMembers {
+                            member_names: missing_member_names,
+                            type_name: type_name.to_string(),
+                        },
+                    )))
+                }
+
+                if !initializer_members.is_empty() {
+                    return Err(Box::new(crate::Error::new(
+                        Some(node.span()),
+                        crate::ErrorKind::ExtraStructMembers {
+                            member_names: initializer_members
+                                .iter()
+                                .map(|(name, _)| name.to_string())
+                                .collect(),
+                            type_name: type_name.to_string(),
+                        },
+                    )));
+                }
+
+                Constant::Structure {
+                    members,
+                    struct_type,
                 }
             }
             ast::NodeKind::Binary { operation, lhs, rhs } => match operation {

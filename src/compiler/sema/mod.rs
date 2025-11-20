@@ -88,6 +88,9 @@ impl GlobalContext {
     }
 
     pub fn start_next_package(&mut self) -> bool {
+        self.namespace_registry.finish_package();
+        self.type_registry.finish_package();
+
         if let Some(package_info) = self.package_manager.get_next_to_compile() {
             self.package = self.namespace_registry.create_package_context(package_info);
             true
@@ -184,7 +187,7 @@ impl GlobalContext {
     pub fn get_or_create_module(&mut self, parent_module: NamespaceHandle, name: &str) -> crate::Result<NamespaceHandle> {
         let parent_module_info = self.namespace_info(parent_module);
 
-        if let Some(&Symbol::Module(namespace)) = parent_module_info.find(name) {
+        if let Some(namespace) = parent_module_info.find(name).and_then(Symbol::as_module) {
             // Extend the existing module
             Ok(namespace)
         }
@@ -193,7 +196,7 @@ impl GlobalContext {
             let module_path = parent_module_info.path().child(name);
             let namespace = self.namespace_registry.create_namespace(module_path);
 
-            self.namespace_info_mut(parent_module).define(name, Symbol::Module(namespace))?;
+            self.namespace_info_mut(parent_module).define(name, Symbol::new(SymbolKind::Module(namespace)))?;
 
             Ok(namespace)
         }
@@ -372,71 +375,81 @@ impl GlobalContext {
             self.package.fill_phase_complete(),
         );
 
-        self.current_module_info_mut().define(&name, Symbol::Type(handle))?;
+        self.current_module_info_mut().define(&name, Symbol::new(SymbolKind::Type(handle)))?;
 
         Ok(handle)
     }
 
     pub fn get_symbol_value(&mut self, namespace: NamespaceHandle, name: &str, span: Option<&crate::Span>) -> crate::Result<Value> {
         // FIXME: does not detect recursive import
-        match self.namespace_info(namespace).find(name) {
-            Some(Symbol::Alias(target_path)) => {
-                let target_path = target_path.clone();
-                self.get_path_value(&target_path, span)
-            }
-            Some(Symbol::Module(namespace)) => {
-                Ok(Value::Module(*namespace))
-            }
-            Some(Symbol::Type(handle)) => {
-                Ok(Value::Type(*handle))
-            }
-            Some(Symbol::Value(value)) => {
-                Ok(value.clone())
-            }
-            None => {
-                let glob_imports = self.namespace_info(namespace)
-                    .glob_imports()
-                    .to_vec();
+        if let Some(symbol) = self.namespace_info(namespace).find(name) {
+            let is_external = symbol.is_external();
 
-                // TODO: wtf, kinda
-                let search_results: Vec<(AbsolutePath, Value)> = glob_imports
-                    .into_iter()
-                    .map(|glob_import_path| glob_import_path.into_child(name))
-                    .chain((namespace != NamespaceHandle::GLOBAL_ROOT).then(|| {
-                        AbsolutePath::at_root().into_child(name)
-                    }))
-                    .filter_map(|test_path| {
-                        self.get_path_value(&test_path, span)
-                            .ok()
-                            .map(|value| (test_path, value))
-                    })
-                    .collect();
+            let value = match symbol.kind() {
+                SymbolKind::Alias(target_path) => {
+                    let target_path = target_path.clone();
+                    self.get_path_value(&target_path, span)?
+                }
+                SymbolKind::Module(namespace) => {
+                    Value::Constant(Constant::Module(*namespace))
+                }
+                SymbolKind::Type(handle) => {
+                    Value::Constant(Constant::Type(*handle))
+                }
+                SymbolKind::Value(value) => {
+                    value.clone()
+                }
+            };
 
-                if search_results.is_empty() {
-                    Err(Box::new(crate::Error::new(
-                        span.copied(),
-                        crate::ErrorKind::UndefinedGlobalSymbol {
-                            namespace: self.namespace_info(namespace).path().to_string(),
-                            name: name.to_string(),
-                        },
-                    )))
-                }
-                else if search_results.len() > 1 {
-                    Err(Box::new(crate::Error::new(
-                        span.copied(),
-                        crate::ErrorKind::AmbiguousSymbol {
-                            name: name.to_string(),
-                            possible_paths: search_results
-                                .into_iter()
-                                .map(|(path, _)| path.to_string())
-                                .collect(),
-                        },
-                    )))
-                }
-                else {
-                    let (_, value) = search_results.into_iter().next().unwrap();
-                    Ok(value)
-                }
+            if is_external {
+                self.use_external_value(&value);
+            }
+
+            Ok(value)
+        }
+        else {
+            let glob_imports = self.namespace_info(namespace)
+                .glob_imports()
+                .to_vec();
+
+            // TODO: wtf, kinda
+            let search_results: Vec<(AbsolutePath, Value)> = glob_imports
+                .into_iter()
+                .map(|glob_import_path| glob_import_path.into_child(name))
+                .chain((namespace != NamespaceHandle::GLOBAL_ROOT).then(|| {
+                    AbsolutePath::at_root().into_child(name)
+                }))
+                .filter_map(|test_path| {
+                    self.get_path_value(&test_path, span)
+                        .ok()
+                        .map(|value| (test_path, value))
+                })
+                .collect();
+
+            if search_results.is_empty() {
+                Err(Box::new(crate::Error::new(
+                    span.copied(),
+                    crate::ErrorKind::UndefinedGlobalSymbol {
+                        namespace: self.namespace_info(namespace).path().to_string(),
+                        name: name.to_string(),
+                    },
+                )))
+            }
+            else if search_results.len() > 1 {
+                Err(Box::new(crate::Error::new(
+                    span.copied(),
+                    crate::ErrorKind::AmbiguousSymbol {
+                        name: name.to_string(),
+                        possible_paths: search_results
+                            .into_iter()
+                            .map(|(path, _)| path.to_string())
+                            .collect(),
+                    },
+                )))
+            }
+            else {
+                let (_, value) = search_results.into_iter().next().unwrap();
+                Ok(value)
             }
         }
     }
@@ -445,10 +458,10 @@ impl GlobalContext {
         path.simple().segments().iter().try_fold(
             match path.base_type() {
                 Some(base_type) => {
-                    Value::Type(self.get_path_base_type(base_type, span)?)
+                    Value::Constant(Constant::Type(self.get_path_base_type(base_type, span)?))
                 }
                 None => {
-                    Value::Module(NamespaceHandle::GLOBAL_ROOT)
+                    Value::Constant(Constant::Module(NamespaceHandle::GLOBAL_ROOT))
                 }
             },
             |value, segment| {
@@ -633,7 +646,7 @@ impl GlobalContext {
 
                 self.current_namespace_info_mut().define(
                     name,
-                    Symbol::Value(Value::Constant(Constant::Register(register.clone()))),
+                    Symbol::new(SymbolKind::Value(Value::Constant(Constant::Register(register.clone())))),
                 )?;
 
                 *global_register = Some(register);
@@ -642,8 +655,9 @@ impl GlobalContext {
                 if *is_foreign {
                     self.type_registry.update_type_repr(
                         *self_type,
-                        TypeRepr::ForeignStructure {
+                        TypeRepr::OpaqueStructure {
                             name: name.clone(),
+                            is_external: false,
                         },
                         &self.target,
                         self.package.fill_phase_complete(),
@@ -665,6 +679,7 @@ impl GlobalContext {
                         TypeRepr::Structure {
                             name: name.clone(),
                             members,
+                            is_external: false,
                         },
                         &self.target,
                         self.package.fill_phase_complete(),
@@ -705,10 +720,10 @@ impl GlobalContext {
 
         self.current_namespace_info_mut().define(
             name,
-            Symbol::Value(Value::Constant(Constant::Indirect {
+            Symbol::new(SymbolKind::Value(Value::Constant(Constant::Indirect {
                 pointee_type: value_type,
                 pointer: Box::new(Constant::Register(register.clone())),
-            })),
+            }))),
         )?;
 
         Ok(register)
@@ -720,5 +735,57 @@ impl GlobalContext {
         self.package.complete_fill_phase();
 
         Ok(())
+    }
+
+    pub fn use_external_value(&mut self, value: &Value) {
+        if !self.package.use_external_value(value) {
+            return;
+        }
+
+        if let &Value::Constant(Constant::Type(handle)) = value {
+            if let TypeRepr::Structure { members, .. } = self.type_repr(handle) {
+                let inner_external_types: Vec<TypeHandle> = members
+                    .iter()
+                    .flat_map(|member| self.get_inner_external_types(member.member_type))
+                    .collect();
+                for inner_type in inner_external_types {
+                    self.use_external_value(&Value::Constant(Constant::Type(inner_type)));
+                }
+            }
+        }
+        else {
+            for inner_type in self.get_inner_external_types(value.get_type()) {
+                self.use_external_value(&Value::Constant(Constant::Type(inner_type)));
+            }
+        }
+    }
+
+    fn get_inner_external_types(&self, handle: TypeHandle) -> Vec<TypeHandle> {
+        match *self.type_repr(handle) {
+            TypeRepr::Structure { is_external: true, .. } |
+            TypeRepr::OpaqueStructure { is_external: true, .. } => {
+                vec![handle]
+            }
+            TypeRepr::Pointer { pointee_type, .. } => {
+                self.get_inner_external_types(pointee_type)
+            }
+            TypeRepr::Array { item_type, .. } => {
+                self.get_inner_external_types(item_type)
+            }
+            TypeRepr::Tuple { ref item_types, .. } => {
+                item_types
+                    .iter()
+                    .flat_map(|&item_type| self.get_inner_external_types(item_type))
+                    .collect()
+            }
+            TypeRepr::Function { ref signature } => {
+                signature.parameter_types()
+                    .iter()
+                    .flat_map(|&parameter_type| self.get_inner_external_types(parameter_type))
+                    .chain(self.get_inner_external_types(signature.return_type()))
+                    .collect()
+            }
+            _ => Vec::new()
+        }
     }
 }

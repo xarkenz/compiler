@@ -1,4 +1,4 @@
-source_filename = "\\?\C:\Users\seane\Projects\compiler\tests\packages\test_2\main.cupr"
+source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\\test_2\\main.cupr"
 
 define i32 @main() {
 .block.0:
@@ -32,18 +32,18 @@ define i32 @"<[i32; 2]>::y"([2 x i32]* %0) {
 	ret i32 %3
 }
 
-%"type.::test_2::First" = type {}
+%"::test_2::First" = type {}
 
-%"type.::test_2::thing::Thing" = type { %"type.::test_2::Test"*, %"type.::test_2::First"*, %"type.::test_2::thing::Thing"* }
+%"::test_2::thing::Thing" = type { %"::test_2::Test"*, %"::test_2::First"*, %"::test_2::thing::Thing"* }
 
-%"type.::test_2::Test" = type { %"type.::test_2::test::Test"*, %"type.::test_2::test::test::Test"*, %"type.::test_2::thing::Thing"* }
+%"::test_2::Test" = type { %"::test_2::test::Test"*, %"::test_2::test::test::Test"*, %"::test_2::thing::Thing"* }
 
-%"type.::test_2::test::Test" = type { %"type.::test_2::Test"*, %"type.::test_2::test::test::Test"*, %"type.::test_2::thing::Thing"* }
+%"::test_2::test::Test" = type { %"::test_2::Test"*, %"::test_2::test::test::Test"*, %"::test_2::thing::Thing"* }
 
-define i32 @"::test_2::test::test::Test::do_thing"(%"type.::test_2::test::test::Test"* %0, i32 %1) {
+define i32 @"::test_2::test::test::Test::do_thing"(%"::test_2::test::test::Test"* %0, i32 %1) {
 .block.0:
-	%self = alloca %"type.::test_2::test::test::Test"*
-	store %"type.::test_2::test::test::Test"* %0, %"type.::test_2::test::test::Test"** %self
+	%self = alloca %"::test_2::test::test::Test"*
+	store %"::test_2::test::test::Test"* %0, %"::test_2::test::test::Test"** %self
 	%x = alloca i32
 	store i32 %1, i32* %x
 	%2 = load i32, i32* %x
@@ -52,5 +52,9 @@ define i32 @"::test_2::test::test::Test::do_thing"(%"type.::test_2::test::test::
 	ret i32 %4
 }
 
-%"type.::test_2::test::test::Test" = type { %"type.::test_2::Test"*, %"type.::test_2::test::Test"*, %"type.::test_2::thing::Thing"* }
+%"::test_2::test::test::Test" = type { %"::test_2::Test"*, %"::test_2::test::Test"*, %"::test_2::thing::Thing"* }
+
+; ==== External definitions from other packages ====
+
+declare i32 @printf(i8*, ...)
 

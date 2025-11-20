@@ -1,4 +1,4 @@
-source_filename = "\\?\C:\Users\seane\Projects\compiler\tests\packages\test_unix\main.cupr"
+source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\\test_unix\\main.cupr"
 
 define i32 @main() {
 .block.0:
@@ -35,4 +35,14 @@ define i32 @main() {
 @.const.1 = private unnamed_addr constant [31 x i8] c"2. I am the child with PID %d\0A\00"
 @.const.2 = private unnamed_addr constant [25 x i8] c"3. My parent has PID %d\0A\00"
 @.const.3 = private unnamed_addr constant [24 x i8] c"4. My child has PID %d\0A\00"
+
+; ==== External definitions from other packages ====
+
+declare i32 @getpid()
+
+declare i32 @printf(i8*, ...)
+
+declare i32 @fork()
+
+declare i32 @wait(i32*)
 

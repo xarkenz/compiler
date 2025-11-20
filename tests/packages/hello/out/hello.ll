@@ -1,4 +1,4 @@
-source_filename = "\\?\C:\Users\seane\Projects\compiler\tests\packages\hello\main.cupr"
+source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\\hello\\main.cupr"
 
 define i32 @main() {
 .block.0:
@@ -7,4 +7,8 @@ define i32 @main() {
 }
 
 @.const.0 = private unnamed_addr constant [13 x i8] c"Hello world!\00"
+
+; ==== External definitions from other packages ====
+
+declare i32 @puts(i8*)
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::sema::Value;
 
 pub struct PackageContext {
     info: Rc<PackageInfo>,
@@ -7,6 +8,7 @@ pub struct PackageContext {
     source_paths: Vec<PathBuf>,
     parse_queue: VecDeque<SimplePath>,
     fill_phase_complete: bool,
+    external_values: Vec<Value>,
 }
 
 impl PackageContext {
@@ -19,6 +21,7 @@ impl PackageContext {
             source_paths: Vec::new(),
             parse_queue: VecDeque::from([main_module_path]),
             fill_phase_complete: false,
+            external_values: Vec::new(),
         }
     }
 
@@ -104,6 +107,20 @@ impl PackageContext {
                 .join(std::path::MAIN_SEPARATOR_STR));
             file_path.push(format!("{}.cupr", module_path.tail_name().unwrap()));
             file_path
+        }
+    }
+
+    pub fn external_values(&self) -> &[Value] {
+        &self.external_values
+    }
+
+    pub fn use_external_value(&mut self, value: &Value) -> bool {
+        if self.external_values.contains(value) {
+            false
+        }
+        else {
+            self.external_values.push(value.clone());
+            true
         }
     }
 }

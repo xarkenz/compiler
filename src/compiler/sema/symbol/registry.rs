@@ -35,10 +35,18 @@ impl NamespaceRegistry {
         ));
 
         self.namespace_info_mut(NamespaceHandle::GLOBAL_ROOT)
-            .define(info.name(), Symbol::Module(package_root_module))
+            .define(info.name(), Symbol::new(SymbolKind::Module(package_root_module)))
             .expect("global root module should not have conflicts");
 
         PackageContext::new(info, package_root_module)
+    }
+
+    pub fn finish_package(&mut self) {
+        for namespace_info in &mut self.namespace_table {
+            for symbol in namespace_info.symbols.values_mut() {
+                symbol.set_external(true);
+            }
+        }
     }
 }
 

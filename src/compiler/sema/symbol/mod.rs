@@ -294,7 +294,7 @@ impl NamespaceInfo {
 }
 
 #[derive(Clone, Debug)]
-pub enum Symbol {
+pub enum SymbolKind {
     /// The symbol is defined by a direct import (e.g. `path::to::symbol`). The path to the source
     /// symbol is given.
     Alias(AbsolutePath),
@@ -307,4 +307,63 @@ pub enum Symbol {
     /// The symbol is defined by a `let` statement or `function` declaration. The declared function
     /// or value is given.
     Value(Value),
+}
+
+#[derive(Clone, Debug)]
+pub struct Symbol {
+    kind: SymbolKind,
+    is_external: bool,
+}
+
+impl Symbol {
+    pub fn new(kind: SymbolKind) -> Self {
+        Self {
+            kind,
+            is_external: false,
+        }
+    }
+
+    pub fn kind(&self) -> &SymbolKind {
+        &self.kind
+    }
+
+    pub fn kind_mut(&mut self) -> &mut SymbolKind {
+        &mut self.kind
+    }
+
+    pub fn is_external(&self) -> bool {
+        self.is_external
+    }
+
+    pub fn set_external(&mut self, is_external: bool) {
+        self.is_external = is_external;
+    }
+
+    pub fn as_alias(&self) -> Option<&AbsolutePath> {
+        match self.kind {
+            SymbolKind::Alias(ref path) => Some(path),
+            _ => None
+        }
+    }
+
+    pub fn as_module(&self) -> Option<NamespaceHandle> {
+        match self.kind {
+            SymbolKind::Module(handle) => Some(handle),
+            _ => None
+        }
+    }
+
+    pub fn as_type(&self) -> Option<TypeHandle> {
+        match self.kind {
+            SymbolKind::Type(handle) => Some(handle),
+            _ => None
+        }
+    }
+
+    pub fn as_value(&self) -> Option<&Value> {
+        match self.kind {
+            SymbolKind::Value(ref value) => Some(value),
+            _ => None
+        }
+    }
 }

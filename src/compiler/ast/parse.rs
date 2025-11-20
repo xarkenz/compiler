@@ -1,7 +1,7 @@
 use super::*;
 
 use std::io::BufRead;
-use crate::sema::{GlobalContext, PrimitiveType, Symbol};
+use crate::sema::{GlobalContext, PrimitiveType, Symbol, SymbolKind};
 use crate::token::scan::Scanner;
 
 pub fn parse_module<T: BufRead>(scanner: &mut Scanner<T>, context: &mut GlobalContext, namespace: NamespaceHandle) -> crate::Result<ParsedModule> {
@@ -1248,7 +1248,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     // Establish an alias symbol in the current module corresponding to this import
                     global_context.current_module_info_mut().define(
                         import_name,
-                        Symbol::Alias(path.clone()),
+                        Symbol::new(SymbolKind::Alias(path.clone())),
                     )?;
 
                     Ok(Some(Box::new(Node::new(

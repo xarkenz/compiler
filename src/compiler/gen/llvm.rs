@@ -9,6 +9,26 @@ macro_rules! emit {
     };
 }
 
+pub struct EscapedStringDisplay<T: AsRef<[u8]>>(pub T);
+
+impl<T: AsRef<[u8]>> std::fmt::Display for EscapedStringDisplay<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "\"")?;
+        for &ch in self.0.as_ref() {
+            if ch == b'"' || !(ch == b' ' || ch.is_ascii_graphic()) {
+                write!(f, "\\{ch:02X}")?;
+            }
+            else if ch == b'\\' {
+                write!(f, "\\\\")?;
+            }
+            else {
+                write!(f, "{}", ch as char)?;
+            }
+        }
+        write!(f, "\"")
+    }
+}
+
 pub struct Emitter<W: Write> {
     path: PathBuf,
     writer: W,
@@ -57,36 +77,67 @@ impl<W: Write> Emitter<W> {
     }
 
     pub fn emit_preamble(&mut self, source_filename: &Path) -> crate::Result<()> {
-        emit!(self, "source_filename = \"{}\"\n\n", source_filename.display())
+        let source_filename = source_filename.display().to_string();
+        emit!(self, "source_filename = {}\n\n", EscapedStringDisplay(&source_filename))
     }
 
-    pub fn emit_postamble(&mut self) -> crate::Result<()> {
+    pub fn emit_postamble(&mut self, context: &GlobalContext) -> crate::Result<()> {
+        emit!(self, "; ==== External definitions from other packages ====\n\n")?;
+
+        for external_value in context.package().external_values() {
+            self.emit_value_declaration(external_value, context)?;
+        }
+
         // TODO: metadata
         Ok(())
     }
 
-    pub fn emit_function_declaration(&mut self, function: &Register, context: &GlobalContext) -> crate::Result<()> {
-        let TypeRepr::Function { signature } = function.get_type().repr(context) else {
-            panic!("{} is not a valid function", function.llvm_syntax());
-        };
-
-        emit!(self, "declare {} {}(", signature.return_type().llvm_syntax(context), function.llvm_syntax())?;
-
-        let mut parameters_iter = signature.parameter_types().iter().copied();
-        if let Some(parameter_type) = parameters_iter.next() {
-            emit!(self, "{}", parameter_type.llvm_syntax(context))?;
-            for parameter_type in parameters_iter {
-                emit!(self, ", {}", parameter_type.llvm_syntax(context))?;
+    pub fn emit_value_declaration(&mut self, value: &Value, context: &GlobalContext) -> crate::Result<()> {
+        match *value {
+            Value::Constant(Constant::Type(handle)) => {
+                self.emit_type_definition(handle, context)
             }
-            if signature.is_variadic() {
-                emit!(self, ", ...")?;
+            Value::Constant(Constant::Indirect { ref pointer, .. }) => {
+                let &TypeRepr::Pointer { pointee_type, semantics } = pointer.get_type().repr(context) else {
+                    panic!("{} is not a pointer type", pointer.get_type().path(context));
+                };
+
+                emit!(
+                    self,
+                    "{} = external {} {}\n\n",
+                    pointer.llvm_syntax(context),
+                    match semantics {
+                        PointerSemantics::Immutable |
+                        PointerSemantics::ImmutableSymbol => "constant",
+                        PointerSemantics::Mutable => "global",
+                    },
+                    pointee_type.llvm_syntax(context),
+                )
+            }
+            _ => {
+                let TypeRepr::Function { signature } = value.get_type().repr(context) else {
+                    return Ok(());
+                };
+
+                emit!(self, "declare {} {}(", signature.return_type().llvm_syntax(context), value.llvm_syntax(context))?;
+
+                let mut parameters_iter = signature.parameter_types().iter().copied();
+                if let Some(parameter_type) = parameters_iter.next() {
+                    emit!(self, "{}", parameter_type.llvm_syntax(context))?;
+                    for parameter_type in parameters_iter {
+                        emit!(self, ", {}", parameter_type.llvm_syntax(context))?;
+                    }
+                    if signature.is_variadic() {
+                        emit!(self, ", ...")?;
+                    }
+                }
+                else if signature.is_variadic() {
+                    emit!(self, "...")?;
+                }
+
+                emit!(self, ")\n\n")
             }
         }
-        else if signature.is_variadic() {
-            emit!(self, "...")?;
-        }
-
-        emit!(self, ")\n\n")
     }
 
     pub fn emit_function_enter(&mut self, function: &Register, parameters: &[Register], context: &GlobalContext) -> crate::Result<()> {
@@ -136,30 +187,31 @@ impl<W: Write> Emitter<W> {
         Ok(())
     }
 
-    pub fn emit_type_declaration(&mut self, type_handle: TypeHandle, context: &GlobalContext) -> crate::Result<()> {
-        let syntax = type_handle.llvm_syntax(context);
-
-        emit!(self, "{syntax} = type opaque\n\n")
-    }
-
     pub fn emit_type_definition(&mut self, type_handle: TypeHandle, context: &GlobalContext) -> crate::Result<()> {
         let syntax = type_handle.llvm_syntax(context);
 
-        let TypeRepr::Structure { members, .. } = type_handle.repr(context) else {
-            panic!("{} is not a structure type", type_handle.path(context));
-        };
-
-        emit!(self, "{syntax} = type ")?;
-        let mut members_iter = members.iter();
-        if let Some(&StructureMember { member_type, .. }) = members_iter.next() {
-            emit!(self, "{{ {}", member_type.llvm_syntax(context))?;
-            for &StructureMember { member_type, .. } in members_iter {
-                emit!(self, ", {}", member_type.llvm_syntax(context))?;
+        match type_handle.repr(context) {
+            TypeRepr::Structure { members, .. } => {
+                emit!(self, "{syntax} = type ")?;
+                let mut members_iter = members.iter();
+                if let Some(&StructureMember { member_type, .. }) = members_iter.next() {
+                    emit!(self, "{{ {}", member_type.llvm_syntax(context))?;
+                    for &StructureMember { member_type, .. } in members_iter {
+                        emit!(self, ", {}", member_type.llvm_syntax(context))?;
+                    }
+                    emit!(self, " }}\n\n")
+                }
+                else {
+                    emit!(self, "{{}}\n\n")
+                }
             }
-            emit!(self, " }}\n\n")
-        }
-        else {
-            emit!(self, "{{}}\n\n")
+            TypeRepr::OpaqueStructure { .. } => {
+                emit!(self, "{syntax} = type opaque\n\n")
+            }
+            _ => {
+                // Nothing to do-- this type does not need to be defined
+                Ok(())
+            }
         }
     }
 

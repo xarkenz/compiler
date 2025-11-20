@@ -123,10 +123,12 @@ pub enum TypeRepr {
     Structure {
         name: Box<str>,
         members: Box<[StructureMember]>,
+        is_external: bool,
     },
     /// The representation for structure types whose layout details are unknown (opaque).
-    ForeignStructure {
+    OpaqueStructure {
         name: Box<str>,
+        is_external: bool,
     },
     /// The representation for function types, which are defined by their
     /// [signature](FunctionSignature).
@@ -143,6 +145,14 @@ impl TypeRepr {
                 signed,
             },
             other_repr => other_repr.clone(),
+        }
+    }
+
+    pub fn set_external(&mut self, external: bool) {
+        match self {
+            Self::Structure { is_external, .. } => *is_external = external,
+            Self::OpaqueStructure { is_external, .. } => *is_external = external,
+            _ => {}
         }
     }
 }

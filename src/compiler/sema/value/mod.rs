@@ -5,6 +5,7 @@ mod integer;
 
 pub use float::*;
 pub use integer::*;
+use crate::gen::llvm::EscapedStringDisplay;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct StringValue {
@@ -37,16 +38,7 @@ impl StringValue {
 
 impl std::fmt::Display for StringValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "c\"")?;
-        for &byte in self.bytes() {
-            if byte != b'"' && (byte == b' ' || byte.is_ascii_graphic()) {
-                write!(f, "{}", byte as char)?;
-            }
-            else {
-                write!(f, "\\{byte:02X}")?;
-            }
-        }
-        write!(f, "\"")
+        write!(f, "c{}", EscapedStringDisplay(self.bytes()))
     }
 }
 
@@ -56,8 +48,7 @@ fn quote_identifier_if_needed(mut identifier: String) -> Box<str> {
     });
 
     if needs_quotes {
-        identifier.insert(0, '"');
-        identifier.push('"');
+        identifier = EscapedStringDisplay(&identifier).to_string();
     }
 
     identifier.into_boxed_str()
@@ -192,14 +183,6 @@ pub enum Constant {
 }
 
 impl Constant {
-    pub fn as_namespace(&self, context: &GlobalContext) -> Option<NamespaceHandle> {
-        match *self {
-            Self::Type(handle) => Some(context.type_namespace(handle)),
-            Self::Module(namespace) => Some(namespace),
-            _ => None
-        }
-    }
-
     pub fn as_type(&self) -> Option<TypeHandle> {
         match *self {
             Self::Type(handle) => Some(handle),
@@ -209,6 +192,14 @@ impl Constant {
 
     pub fn as_module(&self) -> Option<NamespaceHandle> {
         match *self {
+            Self::Module(namespace) => Some(namespace),
+            _ => None
+        }
+    }
+
+    pub fn as_namespace(&self, context: &GlobalContext) -> Option<NamespaceHandle> {
+        match *self {
+            Self::Type(handle) => Some(context.type_namespace(handle)),
             Self::Module(namespace) => Some(namespace),
             _ => None
         }
@@ -331,13 +322,13 @@ impl Constant {
             Self::Indirect { pointer, .. } => {
                 format!("<ERROR indirect constant: {}>", pointer.llvm_syntax(context))
             }
-            Self::Convert { operation, value, result_type: to_type } => {
+            Self::Convert { operation, value, result_type } => {
                 let value_type = value.get_type();
                 let value_syntax = value.llvm_syntax(context);
                 format!(
                     "{operation} ({} {value_syntax} to {})",
                     context.type_llvm_syntax(value_type),
-                    context.type_llvm_syntax(*to_type),
+                    context.type_llvm_syntax(*result_type),
                 )
             }
             Self::GetElementPointer { aggregate_type, pointer, indices, .. } => {
@@ -439,34 +430,26 @@ pub enum Value {
         self_value: Box<(crate::Span, Value)>,
         function_value: Box<Value>,
     },
-    Type(TypeHandle),
-    Module(NamespaceHandle),
 }
 
 impl Value {
-    pub fn as_namespace(&self, context: &GlobalContext) -> Option<NamespaceHandle> {
-        match *self {
-            Self::Constant(ref constant) => constant.as_namespace(context),
-            Self::Type(handle) => Some(context.type_namespace(handle)),
-            Self::Module(namespace) => Some(namespace),
+    pub fn as_constant(&self) -> Option<&Constant> {
+        match self {
+            Self::Constant(constant) => Some(constant),
             _ => None
         }
     }
 
     pub fn as_type(&self) -> Option<TypeHandle> {
-        match *self {
-            Self::Constant(ref constant) => constant.as_type(),
-            Self::Type(handle) => Some(handle),
-            _ => None
-        }
+        self.as_constant()?.as_type()
     }
 
     pub fn as_module(&self) -> Option<NamespaceHandle> {
-        match *self {
-            Self::Constant(ref constant) => constant.as_module(),
-            Self::Module(namespace) => Some(namespace),
-            _ => None
-        }
+        self.as_constant()?.as_module()
+    }
+
+    pub fn as_namespace(&self, context: &GlobalContext) -> Option<NamespaceHandle> {
+        self.as_constant()?.as_namespace(context)
     }
 
     pub fn get_type(&self) -> TypeHandle {
@@ -477,7 +460,6 @@ impl Value {
             Self::Register(ref register) => register.get_type(),
             Self::Indirect { pointee_type, .. } => pointee_type,
             Self::BoundFunction { ref function_value, .. } => function_value.get_type(),
-            Self::Type(..) | Self::Module(..) => TypeHandle::META,
         }
     }
 
@@ -537,13 +519,24 @@ impl Value {
 
     pub fn llvm_syntax(&self, context: &GlobalContext) -> String {
         match self {
-            Self::Never | Self::Break | Self::Continue => "<ERROR never value>".into(),
-            Self::Void => "<ERROR void value>".into(),
-            Self::Constant(constant) => constant.llvm_syntax(context),
-            Self::Register(register) => register.llvm_syntax(),
-            Self::Indirect { pointer, .. } => format!("<ERROR indirect value: {}>", pointer.llvm_syntax(context)),
-            Self::BoundFunction { function_value, .. } => function_value.llvm_syntax(context),
-            Self::Type(..) | Self::Module(..) => "<ERROR meta value>".into(),
+            Self::Never | Self::Break | Self::Continue => {
+                "<ERROR never value>".to_string()
+            }
+            Self::Void => {
+                "<ERROR void value>".to_string()
+            }
+            Self::Constant(constant) => {
+                constant.llvm_syntax(context)
+            }
+            Self::Register(register) => {
+                register.llvm_syntax()
+            }
+            Self::Indirect { pointer, .. } => {
+                format!("<ERROR indirect value: {}>", pointer.llvm_syntax(context))
+            }
+            Self::BoundFunction { function_value, .. } => {
+                function_value.llvm_syntax(context)
+            }
         }
     }
 }

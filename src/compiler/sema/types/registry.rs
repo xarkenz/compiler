@@ -439,7 +439,7 @@ impl TypeRegistry {
                 .map(|member| self.type_alignment(member.member_type))
                 .max()
                 .unwrap_or(Some(1)),
-            TypeRepr::ForeignStructure { .. } => None,
+            TypeRepr::OpaqueStructure { .. } => None,
         }
     }
 
@@ -471,7 +471,7 @@ impl TypeRegistry {
                     .iter()
                     .map(|member| member.member_type))
             }
-            TypeRepr::ForeignStructure { .. } => None,
+            TypeRepr::OpaqueStructure { .. } => None,
         }
     }
 
@@ -538,8 +538,8 @@ impl TypeRegistry {
                     syntax.into_boxed_str()
                 }
             }
-            TypeRepr::Structure { .. } | TypeRepr::ForeignStructure { .. } => {
-                format!("%\"type.{identifier}\"").into_boxed_str()
+            TypeRepr::Structure { .. } | TypeRepr::OpaqueStructure { .. } => {
+                format!("%\"{identifier}\"").into_boxed_str()
             }
             TypeRepr::Function { ref signature } => {
                 let mut syntax = format!("{}(", self.type_llvm_syntax(signature.return_type()));
@@ -561,6 +561,12 @@ impl TypeRegistry {
 
                 syntax.into_boxed_str()
             }
+        }
+    }
+
+    pub fn finish_package(&mut self) {
+        for type_entry in &mut self.type_table {
+            type_entry.repr.set_external(true);
         }
     }
 }
