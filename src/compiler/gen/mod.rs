@@ -38,7 +38,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(())
     }
 
-    pub fn generate_global_statements<'a>(&mut self, global_statements: impl IntoIterator<Item = &'a ast::Node>) -> crate::Result<()> {
+    pub fn generate_global_statements<'a>(&mut self, global_statements: impl IntoIterator<Item = &'a ast::GlobalNode>) -> crate::Result<()> {
         for global_statement in global_statements {
             self.generate_global_statement(global_statement)?;
         }
@@ -46,88 +46,82 @@ impl<'ctx> Generator<'ctx> {
         Ok(())
     }
 
-    pub fn generate_global_statement(&mut self, node: &ast::Node) -> crate::Result<Value> {
+    pub fn generate_global_statement(&mut self, node: &ast::GlobalNode) -> crate::Result<Value> {
         match node.kind() {
-            ast::NodeKind::Let { value, global_register, .. } => {
-                let global_register = global_register.as_ref().expect("register should be valid after fill phase");
+            ast::GlobalNodeKind::Let { value, register, .. } => {
+                let register = register.as_ref().expect("register should be valid after fill phase");
                 if let Some(value) = value {
-                    self.generate_global_let_statement(value, global_register)
+                    self.generate_global_let_statement(value, register)
                 }
                 else {
                     // The work has already been done for us
                     Ok(Value::Void)
                 }
             }
-            ast::NodeKind::Function { name, parameters, body, global_register, .. } => {
-                let global_register = global_register.as_ref().expect("register should be valid after fill phase");
+            ast::GlobalNodeKind::Function { name, parameters, body, register, .. } => {
+                let register = register.as_ref().expect("register should be valid after fill phase");
                 if let Some(body) = body {
-                    self.generate_function_definition(name, parameters, body, global_register)
+                    self.generate_function_definition(name, parameters, body, register)
                 }
                 else {
                     // The work has already been done for us
                     Ok(Value::Void)
                 }
             }
-            ast::NodeKind::Structure { self_type, .. } => {
+            ast::GlobalNodeKind::Structure { self_type, .. } => {
                 self.generate_structure_definition(*self_type)
             }
-            ast::NodeKind::Implement { self_type, statements } => {
+            ast::GlobalNodeKind::Implement { self_type, statements } => {
                 self.generate_implement_block(self_type, statements)
             }
-            ast::NodeKind::Module { statements, namespace, .. } => {
+            ast::GlobalNodeKind::Module { statements, namespace, .. } => {
                 self.generate_module_block(statements, *namespace)
             }
-            ast::NodeKind::ModuleFile { .. } |
-            ast::NodeKind::Import { .. } |
-            ast::NodeKind::GlobImport { .. } => {
+            ast::GlobalNodeKind::ModuleFile { .. } |
+            ast::GlobalNodeKind::Import { .. } |
+            ast::GlobalNodeKind::GlobImport { .. } => {
                 // The work has already been done for us
                 Ok(Value::Void)
-            }
-            _ => {
-                Err(Box::new(crate::Error::new(
-                    Some(node.span()),
-                    crate::ErrorKind::UnexpectedExpression,
-                )))
             }
         }
     }
 
-    pub fn generate_local_node(&mut self, node: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    pub fn generate_local_node(&mut self, node: &ast::LocalNode, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         if let Ok(constant) = self.generate_constant_node(node, Some(local_context), expected_type) {
             return Ok(Value::Constant(constant));
         }
 
         let result = match node.kind() {
-            ast::NodeKind::Literal(literal) => {
+            ast::LocalNodeKind::Literal(literal) => {
                 self.generate_literal(node.span(), literal, local_context, expected_type)?
             }
-            ast::NodeKind::Path { segments } => {
+            ast::LocalNodeKind::Path { segments } => {
                 let path = self.context.get_absolute_path(node.span(), segments)?;
                 self.context.get_path_value(&path, Some(&node.span()))?
             }
-            ast::NodeKind::Unary { operation, operand } => {
+            ast::LocalNodeKind::Unary { operation, operand } => {
                 self.generate_unary_operation(*operation, operand, local_context, expected_type)?
             }
-            ast::NodeKind::Binary { operation, lhs, rhs } => {
+            ast::LocalNodeKind::Binary { operation, lhs, rhs } => {
                 self.generate_binary_operation(*operation, lhs, rhs, local_context, expected_type)?
             }
-            ast::NodeKind::Call { callee, arguments } => {
+            ast::LocalNodeKind::Call { callee, arguments } => {
                 self.generate_call_operation(callee, arguments, local_context)?
             }
-            ast::NodeKind::ArrayLiteral { items } => {
+            ast::LocalNodeKind::ArrayLiteral { items } => {
                 self.generate_array_literal(node.span(), items, local_context, expected_type)?
             }
-            ast::NodeKind::TupleLiteral { items } => {
+            ast::LocalNodeKind::TupleLiteral { items } => {
                 self.generate_tuple_literal(node.span(), items, local_context, expected_type)?
             }
-            ast::NodeKind::StructureLiteral { structure_type: type_name, members } => {
+            ast::LocalNodeKind::StructureLiteral { structure_type: type_name, members } => {
                 self.generate_structure_literal(node.span(), type_name, members, local_context)?
             }
-            ast::NodeKind::Grouping { content } => {
+            ast::LocalNodeKind::Grouping { content } => {
                 // Fine to bypass validation steps since this is literally just parentheses
                 return self.generate_local_node(content, local_context, expected_type);
             }
-            ast::NodeKind::Scope { statements, tail } => {
+            ast::LocalNodeKind::Scope { statements, tail } => {
                 local_context.enter_scope();
 
                 let mut result = Value::Void;
@@ -151,13 +145,13 @@ impl<'ctx> Generator<'ctx> {
 
                 result
             }
-            ast::NodeKind::Conditional { condition, consequent, alternative } => {
+            ast::LocalNodeKind::Conditional { condition, consequent, alternative } => {
                 self.generate_conditional(condition, consequent, alternative.as_deref(), local_context, expected_type)?
             }
-            ast::NodeKind::While { condition, body } => {
+            ast::LocalNodeKind::While { condition, body } => {
                 self.generate_while_loop(condition, body, local_context)?
             }
-            ast::NodeKind::Break => {
+            ast::LocalNodeKind::Break => {
                 let break_label = local_context.break_label()
                     .ok_or_else(|| Box::new(crate::Error::new(
                         Some(node.span()),
@@ -170,7 +164,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Break
             }
-            ast::NodeKind::Continue => {
+            ast::LocalNodeKind::Continue => {
                 let continue_label = local_context.continue_label()
                     .ok_or_else(|| Box::new(crate::Error::new(
                         Some(node.span()),
@@ -183,7 +177,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Continue
             }
-            ast::NodeKind::Return { value } => {
+            ast::LocalNodeKind::Return { value } => {
                 let return_type = local_context.return_type();
 
                 let return_value;
@@ -219,7 +213,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Never
             }
-            ast::NodeKind::Let { name, value_type, is_mutable, value, .. } => {
+            ast::LocalNodeKind::Let { name, value_type, is_mutable, value, .. } => {
                 self.generate_local_let_statement(node.span(), name, value_type.as_deref(), *is_mutable, value.as_deref(), local_context)?
             }
             _ => {
@@ -452,7 +446,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(result)
     }
 
-    fn generate_array_literal(&mut self, span: crate::Span, items: &[ast::Node], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_array_literal(&mut self, span: crate::Span, items: &[ast::LocalNode], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let Some(array_type) = expected_type else {
             return Err(Box::new(crate::Error::new(
                 Some(span),
@@ -530,7 +524,7 @@ impl<'ctx> Generator<'ctx> {
         })
     }
 
-    fn generate_tuple_literal(&mut self, span: crate::Span, items: &[ast::Node], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_tuple_literal(&mut self, span: crate::Span, items: &[ast::LocalNode], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let Some(tuple_type) = expected_type else {
             return Err(Box::new(crate::Error::new(
                 Some(span),
@@ -616,7 +610,7 @@ impl<'ctx> Generator<'ctx> {
         })
     }
 
-    fn generate_structure_literal(&mut self, span: crate::Span, type_name: &ast::Node, initializer_members: &[(Box<str>, ast::Node)], local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_structure_literal(&mut self, span: crate::Span, type_name: &ast::LocalNode, initializer_members: &[(Box<str>, ast::LocalNode)], local_context: &mut LocalContext) -> crate::Result<Value> {
         let struct_type = self.context.interpret_node_as_type(type_name)?;
 
         let TypeRepr::Structure {
@@ -739,7 +733,7 @@ impl<'ctx> Generator<'ctx> {
         })
     }
 
-    fn generate_unary_operation(&mut self, operation: ast::UnaryOperation, operand_node: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_unary_operation(&mut self, operation: ast::UnaryOperation, operand_node: &ast::LocalNode, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let result = match operation {
             ast::UnaryOperation::Positive => {
                 let operand = self.generate_local_node(operand_node, local_context, expected_type)?;
@@ -786,7 +780,7 @@ impl<'ctx> Generator<'ctx> {
                 let operand = self.generate_local_node(operand_node, local_context, None)?;
 
                 if let Value::Indirect { mut pointer, .. } = operand {
-                    pointer.map_pointer_semantics(&mut self.context, |_, semantics| semantics.normalized());
+                    pointer.map_pointer_semantics(self.context, |_, semantics| semantics.normalized());
                     *pointer
                 }
                 else {
@@ -828,7 +822,7 @@ impl<'ctx> Generator<'ctx> {
                 }
             }
             ast::UnaryOperation::GetSize => {
-                let ast::NodeKind::Type(type_node) = operand_node.kind() else {
+                let ast::LocalNodeKind::Type(type_node) = operand_node.kind() else {
                     // If parsing rules are followed, this should not occur
                     panic!("non-type operand for 'sizeof'");
                 };
@@ -846,7 +840,7 @@ impl<'ctx> Generator<'ctx> {
                 Value::from(IntegerValue::new(IntegerType::Usize, size as i128))
             }
             ast::UnaryOperation::GetAlign => {
-                let ast::NodeKind::Type(type_node) = operand_node.kind() else {
+                let ast::LocalNodeKind::Type(type_node) = operand_node.kind() else {
                     // If parsing rules are followed, this should not occur
                     panic!("non-type operand for 'alignof'");
                 };
@@ -868,7 +862,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(result)
     }
 
-    fn generate_binary_operation(&mut self, operation: ast::BinaryOperation, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_binary_operation(&mut self, operation: ast::BinaryOperation, lhs_node: &ast::LocalNode, rhs_node: &ast::LocalNode, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let result = match operation {
             ast::BinaryOperation::Subscript => {
                 self.generate_subscript_operation(lhs_node, rhs_node, local_context)?
@@ -890,7 +884,7 @@ impl<'ctx> Generator<'ctx> {
                 }
             }
             ast::BinaryOperation::Convert => {
-                let ast::NodeKind::Type(type_node) = rhs_node.kind() else {
+                let ast::LocalNodeKind::Type(type_node) = rhs_node.kind() else {
                     // If parsing rules are followed, this should not occur
                     panic!("non-type rhs for 'as'");
                 };
@@ -1324,7 +1318,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(result)
     }
 
-    fn generate_subscript_operation(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_subscript_operation(&mut self, lhs_node: &ast::LocalNode, rhs_node: &ast::LocalNode, local_context: &mut LocalContext) -> crate::Result<Value> {
         let lhs = self.generate_local_node(lhs_node, local_context, None)?;
         let rhs = self.generate_local_node(rhs_node, local_context, None)?;
         let rhs = self.coerce_to_rvalue(rhs, local_context)?;
@@ -1442,7 +1436,7 @@ impl<'ctx> Generator<'ctx> {
         }
     }
 
-    fn fold_subscript_operation(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, constant_id: &mut usize, local_context: Option<&LocalContext>) -> crate::Result<(Constant, Vec<GlobalVariable>)> {
+    fn fold_subscript_operation(&mut self, lhs_node: &ast::LocalNode, rhs_node: &ast::LocalNode, constant_id: &mut usize, local_context: Option<&LocalContext>) -> crate::Result<(Constant, Vec<GlobalVariable>)> {
         let (lhs, mut intermediate_constants) = self.fold_as_constant(lhs_node, constant_id, local_context, None)?;
         let (rhs, mut constants) = self.fold_as_constant(rhs_node, constant_id, local_context, None)?;
         intermediate_constants.append(&mut constants);
@@ -1525,7 +1519,7 @@ impl<'ctx> Generator<'ctx> {
         Ok((constant, intermediate_constants))
     }
 
-    fn generate_member_access(&mut self, lhs: Value, member_name_node: &ast::Node, local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_member_access(&mut self, lhs: Value, member_name_node: &ast::LocalNode, local_context: &mut LocalContext) -> crate::Result<Value> {
         let lhs_type = lhs.get_type();
 
         let cannot_access_error = |context: &GlobalContext| {
@@ -1605,7 +1599,7 @@ impl<'ctx> Generator<'ctx> {
         }
     }
 
-    fn generate_arithmetic_operands(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(LocalRegister, Value, Value)> {
+    fn generate_arithmetic_operands(&mut self, lhs_node: &ast::LocalNode, rhs_node: &ast::LocalNode, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(LocalRegister, Value, Value)> {
         let lhs = self.generate_local_node(lhs_node, local_context, expected_type)?;
         let lhs = self.coerce_to_rvalue(lhs, local_context)?;
 
@@ -1617,7 +1611,7 @@ impl<'ctx> Generator<'ctx> {
         Ok((result, lhs, rhs))
     }
 
-    fn generate_comparison_operands(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext) -> crate::Result<(LocalRegister, Value, Value)> {
+    fn generate_comparison_operands(&mut self, lhs_node: &ast::LocalNode, rhs_node: &ast::LocalNode, local_context: &mut LocalContext) -> crate::Result<(LocalRegister, Value, Value)> {
         let lhs = self.generate_local_node(lhs_node, local_context, None)?;
         let lhs = self.coerce_to_rvalue(lhs, local_context)?;
 
@@ -1629,7 +1623,7 @@ impl<'ctx> Generator<'ctx> {
         Ok((result, lhs, rhs))
     }
 
-    fn generate_assignment_operands(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(LocalRegister, Value, Value, Value)> {
+    fn generate_assignment_operands(&mut self, lhs_node: &ast::LocalNode, rhs_node: &ast::LocalNode, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(LocalRegister, Value, Value, Value)> {
         let lhs = self.generate_local_node(lhs_node, local_context, expected_type)?;
         let (pointer, pointee_type) = lhs.into_mutable_lvalue(lhs_node.span(), self.context)?;
 
@@ -1647,11 +1641,11 @@ impl<'ctx> Generator<'ctx> {
         Ok((result, pointer, Value::Register(lhs), rhs))
     }
 
-    fn generate_call_operation(&mut self, callee_node: &ast::Node, arguments: &[ast::Node], local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_call_operation(&mut self, callee_node: &ast::LocalNode, arguments: &[ast::LocalNode], local_context: &mut LocalContext) -> crate::Result<Value> {
         // Determine which kind of call operation this is
         let callee = match callee_node.kind() {
             // Method call operation in the format `value.method(..)`
-            ast::NodeKind::Binary { operation: ast::BinaryOperation::Access, lhs, rhs } => {
+            ast::LocalNodeKind::Binary { operation: ast::BinaryOperation::Access, lhs, rhs } => {
                 let method_name = rhs.as_name()?;
                 let self_value = self.generate_local_node(lhs, local_context, None)?;
 
@@ -1810,7 +1804,7 @@ impl<'ctx> Generator<'ctx> {
         }
     }
 
-    fn generate_conditional(&mut self, condition: &ast::Node, consequent: &ast::Node, alternative: Option<&ast::Node>, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_conditional(&mut self, condition: &ast::LocalNode, consequent: &ast::LocalNode, alternative: Option<&ast::LocalNode>, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let condition = self.generate_local_node(condition, local_context, Some(TypeHandle::BOOL))?;
         let condition = self.coerce_to_rvalue(condition, local_context)?;
 
@@ -1894,7 +1888,7 @@ impl<'ctx> Generator<'ctx> {
         }
     }
 
-    fn generate_while_loop(&mut self, condition: &ast::Node, body: &ast::Node, local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_while_loop(&mut self, condition: &ast::LocalNode, body: &ast::LocalNode, local_context: &mut LocalContext) -> crate::Result<Value> {
         // TODO: handling never, break/continue vs. return
         let condition_label = local_context.new_block_label();
 
@@ -1936,7 +1930,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(Value::Void)
     }
 
-    fn generate_local_let_statement(&mut self, span: crate::Span, name: &str, type_node: Option<&ast::TypeNode>, is_mutable: bool, value: Option<&ast::Node>, local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_local_let_statement(&mut self, span: crate::Span, name: &str, type_node: Option<&ast::TypeNode>, is_mutable: bool, value: Option<&ast::LocalNode>, local_context: &mut LocalContext) -> crate::Result<Value> {
         let value_type = match type_node {
             Some(type_node) => {
                 Some(self.context.interpret_type_node(type_node)?)
@@ -1984,7 +1978,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(Value::Void)
     }
 
-    fn generate_global_let_statement(&mut self, value: &ast::Node, global_register: &GlobalRegister) -> crate::Result<Value> {
+    fn generate_global_let_statement(&mut self, value: &ast::LocalNode, global_register: &GlobalRegister) -> crate::Result<Value> {
         // The fill phase has done most of the work for us already
         let TypeRepr::Pointer { pointee_type, semantics } = *self.context.type_repr(global_register.get_type()) else {
             panic!("invalid global value register type");
@@ -2005,7 +1999,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(Value::Void)
     }
 
-    fn generate_function_definition(&mut self, name: &str, parameters: &[ast::FunctionParameterNode], body: &ast::Node, function_register: &GlobalRegister) -> crate::Result<Value> {
+    fn generate_function_definition(&mut self, name: &str, parameters: &[ast::FunctionParameterNode], body: &ast::LocalNode, function_register: &GlobalRegister) -> crate::Result<Value> {
         // The fill phase has done a lot of the initial work for us already
         let TypeRepr::Function { signature } = self.context.type_repr(function_register.get_type()) else {
             panic!("invalid global value register type");
@@ -2059,7 +2053,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(Value::Void)
     }
 
-    fn generate_implement_block(&mut self, self_type: &ast::TypeNode, statements: &[ast::Node]) -> crate::Result<Value> {
+    fn generate_implement_block(&mut self, self_type: &ast::TypeNode, statements: &[ast::GlobalNode]) -> crate::Result<Value> {
         let self_type = self.context.interpret_type_node(self_type)?;
 
         self.context.set_self_type(self_type);
@@ -2073,7 +2067,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(Value::Void)
     }
 
-    fn generate_module_block(&mut self, statements: &[ast::Node], namespace: NamespaceHandle) -> crate::Result<Value> {
+    fn generate_module_block(&mut self, statements: &[ast::GlobalNode], namespace: NamespaceHandle) -> crate::Result<Value> {
         let parent_module = self.context.replace_current_module(namespace);
 
         for statement in statements {
@@ -2085,7 +2079,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(Value::Void)
     }
 
-    pub fn generate_constant_node(&mut self, node: &ast::Node, local_context: Option<&LocalContext>, expected_type: Option<TypeHandle>) -> crate::Result<Constant> {
+    pub fn generate_constant_node(&mut self, node: &ast::LocalNode, local_context: Option<&LocalContext>, expected_type: Option<TypeHandle>) -> crate::Result<Constant> {
         let mut constant_id = self.next_anonymous_constant_id;
         let (constant, intermediate_constants) = self.fold_as_constant(node, &mut constant_id,  local_context, expected_type)?;
         self.next_anonymous_constant_id = constant_id;
@@ -2097,7 +2091,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(constant)
     }
 
-    pub fn fold_as_constant(&mut self, node: &ast::Node, constant_id: &mut usize, local_context: Option<&LocalContext>, expected_type: Option<TypeHandle>) -> crate::Result<(Constant, Vec<GlobalVariable>)> {
+    pub fn fold_as_constant(&mut self, node: &ast::LocalNode, constant_id: &mut usize, local_context: Option<&LocalContext>, expected_type: Option<TypeHandle>) -> crate::Result<(Constant, Vec<GlobalVariable>)> {
         let mut new_intermediate_constant = |constant: Constant, context: &mut GlobalContext| {
             let pointer = GlobalRegister::new(
                 format!(".const.{}.{constant_id}", context.package().info().name()).as_bytes().into(),
@@ -2114,7 +2108,7 @@ impl<'ctx> Generator<'ctx> {
         let mut intermediate_constants = Vec::new();
 
         let constant = match node.kind() {
-            ast::NodeKind::Literal(literal) => {
+            ast::LocalNodeKind::Literal(literal) => {
                 match *literal {
                     token::Literal::Name(ref name) => {
                         let value = if let Some(value) = local_context.and_then(|ctx| ctx.find_symbol(name)) {
@@ -2191,7 +2185,7 @@ impl<'ctx> Generator<'ctx> {
                             array_type: self.context.get_array_type(TypeHandle::U8, Some(value.len() as u64)),
                             value: value.clone(),
                         };
-                        let intermediate_constant = new_intermediate_constant(constant, &mut self.context);
+                        let intermediate_constant = new_intermediate_constant(constant, self.context);
                         let pointer = intermediate_constant.register().clone();
                         intermediate_constants.push(intermediate_constant);
 
@@ -2202,7 +2196,7 @@ impl<'ctx> Generator<'ctx> {
                     }
                 }
             }
-            ast::NodeKind::Path { segments } => {
+            ast::LocalNodeKind::Path { segments } => {
                 let path = self.context.get_absolute_path(node.span(), segments)?;
                 match self.context.get_path_value(&path, Some(&node.span()))? {
                     Value::Constant(constant) => constant,
@@ -2214,7 +2208,7 @@ impl<'ctx> Generator<'ctx> {
                     )))
                 }
             }
-            ast::NodeKind::ArrayLiteral { items } => {
+            ast::LocalNodeKind::ArrayLiteral { items } => {
                 if let Some(expected_type) = expected_type {
                     let &TypeRepr::Array { item_type, .. } = expected_type.repr(self.context) else {
                         return Err(Box::new(crate::Error::new(
@@ -2245,7 +2239,7 @@ impl<'ctx> Generator<'ctx> {
                     )));
                 }
             }
-            ast::NodeKind::StructureLiteral { structure_type, members: initializer_members } => {
+            ast::LocalNodeKind::StructureLiteral { structure_type, members: initializer_members } => {
                 let struct_type = self.context.interpret_node_as_type(structure_type)?;
 
                 let TypeRepr::Structure {
@@ -2320,7 +2314,7 @@ impl<'ctx> Generator<'ctx> {
                     struct_type,
                 }
             }
-            ast::NodeKind::Binary { operation, lhs, rhs } => match operation {
+            ast::LocalNodeKind::Binary { operation, lhs, rhs } => match operation {
                 ast::BinaryOperation::Subscript => {
                     let (value, mut constants) = self.fold_subscript_operation(lhs, rhs, constant_id, local_context)?;
                     intermediate_constants.append(&mut constants);
@@ -2328,7 +2322,7 @@ impl<'ctx> Generator<'ctx> {
                     value
                 }
                 ast::BinaryOperation::Convert => {
-                    let ast::NodeKind::Type(type_node) = rhs.kind() else {
+                    let ast::LocalNodeKind::Type(type_node) = rhs.kind() else {
                         // If parsing rules are followed, this should not occur
                         panic!("non-type rhs for 'as'");
                     };
@@ -2381,7 +2375,7 @@ impl<'ctx> Generator<'ctx> {
                     )));
                 }
             }
-            ast::NodeKind::Grouping { content } => {
+            ast::LocalNodeKind::Grouping { content } => {
                 // Fine to bypass validation steps since this is literally just parentheses
                 return self.fold_as_constant(content, constant_id, local_context, expected_type);
             }

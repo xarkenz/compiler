@@ -23,16 +23,16 @@ pub fn parse_module<T: BufRead>(scanner: &mut Scanner<T>, context: &mut GlobalCo
 }
 
 pub struct ParsedModule {
-    statements: Vec<Node>,
+    statements: Vec<GlobalNode>,
     namespace: NamespaceHandle,
 }
 
 impl ParsedModule {
-    pub fn statements(&self) -> &[Node] {
+    pub fn statements(&self) -> &[GlobalNode] {
         &self.statements
     }
 
-    pub fn statements_mut(&mut self) -> &mut [Node] {
+    pub fn statements_mut(&mut self) -> &mut [GlobalNode] {
         &mut self.statements
     }
 
@@ -188,7 +188,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
         }
     }
 
-    pub fn parse_operand(&mut self, allowed_ends: &[Token], strict_ends: bool) -> crate::Result<Box<Node>> {
+    pub fn parse_operand(&mut self, allowed_ends: &[Token], strict_ends: bool) -> crate::Result<Box<LocalNode>> {
         let start_span = self.current_span();
         let token = self.get_token()?;
 
@@ -201,16 +201,16 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.scan_token()?;
                     let type_node = self.parse_type(Some(&[Token::ParenRight]))?;
                     self.scan_token()?;
-                    operand = Box::new(Node::new(type_node.span(), NodeKind::Type(type_node)));
+                    operand = Box::new(LocalNode::new(type_node.span(), LocalNodeKind::Type(type_node)));
                 }
                 _ => {
                     operand = self.parse_expression(Some(Precedence::Prefix), allowed_ends, strict_ends)?;
                 }
             };
 
-            Ok(Box::new(Node::new(
+            Ok(Box::new(LocalNode::new(
                 start_span.expand_to(operand.span()),
-                NodeKind::Unary {
+                LocalNodeKind::Unary {
                     operation,
                     operand,
                 },
@@ -236,17 +236,17 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
                         let (span, segments, _) = self.parse_path(Some((start_span, first_segment)), false)?;
 
-                        Box::new(Node::new(
+                        Box::new(LocalNode::new(
                             span,
-                            NodeKind::Path {
+                            LocalNodeKind::Path {
                                 segments,
                             },
                         ))
                     }
                     else {
-                        Box::new(Node::new(
+                        Box::new(LocalNode::new(
                             start_span,
-                            NodeKind::Literal(literal),
+                            LocalNodeKind::Literal(literal),
                         ))
                     }
                 }
@@ -265,9 +265,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     let span = start_span.expand_to(self.current_span());
                     self.scan_token()?;
 
-                    Box::new(Node::new(
+                    Box::new(LocalNode::new(
                         span,
-                        NodeKind::ArrayLiteral {
+                        LocalNodeKind::ArrayLiteral {
                             items: items.into_boxed_slice(),
                         },
                     ))
@@ -279,9 +279,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         let span = start_span.expand_to(self.current_span());
                         self.scan_token()?;
 
-                        Box::new(Node::new(
+                        Box::new(LocalNode::new(
                             span,
-                            NodeKind::TupleLiteral {
+                            LocalNodeKind::TupleLiteral {
                                 items: Box::new([]),
                             },
                         ))
@@ -303,9 +303,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                             let span = start_span.expand_to(self.current_span());
                             self.scan_token()?;
 
-                            Box::new(Node::new(
+                            Box::new(LocalNode::new(
                                 span,
-                                NodeKind::TupleLiteral {
+                                LocalNodeKind::TupleLiteral {
                                     items: items.into_boxed_slice(),
                                 },
                             ))
@@ -315,9 +315,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                             let span = start_span.expand_to(self.current_span());
                             self.scan_token()?;
 
-                            Box::new(Node::new(
+                            Box::new(LocalNode::new(
                                 span,
-                                NodeKind::Grouping {
+                                LocalNodeKind::Grouping {
                                     content: first_item,
                                 },
                             ))
@@ -328,9 +328,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     // Path literal
                     let (span, segments, _) = self.parse_path(None, false)?;
 
-                    Box::new(Node::new(
+                    Box::new(LocalNode::new(
                         span,
-                        NodeKind::Path {
+                        LocalNodeKind::Path {
                             segments,
                         },
                     ))
@@ -367,9 +367,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         alternative = None;
                     }
 
-                    Box::new(Node::new(
+                    Box::new(LocalNode::new(
                         start_span.expand_to(end_span),
-                        NodeKind::Conditional {
+                        LocalNodeKind::Conditional {
                             condition,
                             consequent,
                             alternative,
@@ -391,9 +391,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.scan_token()?;
                     let body = self.parse_expression(None, allowed_ends, strict_ends)?;
 
-                    Box::new(Node::new(
+                    Box::new(LocalNode::new(
                         start_span.expand_to(body.span()),
-                        NodeKind::While {
+                        LocalNodeKind::While {
                             condition,
                             body,
                         },
@@ -402,17 +402,17 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 Token::Break => {
                     // Break expression
                     self.scan_token()?;
-                    Box::new(Node::new(
+                    Box::new(LocalNode::new(
                         start_span,
-                        NodeKind::Break,
+                        LocalNodeKind::Break,
                     ))
                 }
                 Token::Continue => {
                     // Continue expression
                     self.scan_token()?;
-                    Box::new(Node::new(
+                    Box::new(LocalNode::new(
                         start_span,
-                        NodeKind::Continue,
+                        LocalNodeKind::Continue,
                     ))
                 }
                 Token::Return => {
@@ -430,9 +430,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         value = Some(expression);
                     }
 
-                    Box::new(Node::new(
+                    Box::new(LocalNode::new(
                         span,
-                        NodeKind::Return {
+                        LocalNodeKind::Return {
                             value,
                         },
                     ))
@@ -449,9 +449,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
             // Greedily parse postfix operators, if any
             while let Some(operation) = UnaryOperation::from_postfix_token(self.get_token()?) {
-                operand = Box::new(Node::new(
+                operand = Box::new(LocalNode::new(
                     start_span.expand_to(self.current_span()),
-                    NodeKind::Unary {
+                    LocalNodeKind::Unary {
                         operation,
                         operand,
                     },
@@ -463,7 +463,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
         }
     }
 
-    fn parse_scope(&mut self, start_span: crate::Span) -> crate::Result<Box<Node>> {
+    fn parse_scope(&mut self, start_span: crate::Span) -> crate::Result<Box<LocalNode>> {
         let mut statements = Vec::new();
         let (span, tail) = loop {
             while let Some(Token::Semicolon) = self.current_token() {
@@ -503,16 +503,16 @@ impl<'a, T: BufRead> Parser<'a, T> {
             }
         };
 
-        Ok(Box::new(Node::new(
+        Ok(Box::new(LocalNode::new(
             span,
-            NodeKind::Scope {
+            LocalNodeKind::Scope {
                 statements: statements.into_boxed_slice(),
                 tail,
             },
         )))
     }
 
-    fn parse_local_variable(&mut self, start_span: crate::Span) -> crate::Result<Box<Node>> {
+    fn parse_local_variable(&mut self, start_span: crate::Span) -> crate::Result<Box<LocalNode>> {
         let is_mutable = if let Some(Token::Mut) = self.current_token() {
             self.scan_token()?;
             true
@@ -543,20 +543,18 @@ impl<'a, T: BufRead> Parser<'a, T> {
         };
         self.scan_token()?;
 
-        Ok(Box::new(Node::new(
+        Ok(Box::new(LocalNode::new(
             start_span.expand_to(end_span),
-            NodeKind::Let {
+            LocalNodeKind::Let {
                 name,
-                symbol_name: None,
                 value_type,
                 is_mutable,
                 value,
-                global_register: None,
             },
         )))
     }
 
-    pub fn parse_expression(&mut self, parent_precedence: Option<Precedence>, allowed_ends: &[Token], strict_ends: bool) -> crate::Result<Box<Node>> {
+    pub fn parse_expression(&mut self, parent_precedence: Option<Precedence>, allowed_ends: &[Token], strict_ends: bool) -> crate::Result<Box<LocalNode>> {
         let start_span = self.current_span();
         let mut lhs = self.parse_operand(allowed_ends, strict_ends)?;
 
@@ -584,9 +582,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 let (span, rhs) = match operation {
                     BinaryOperation::Convert => {
                         let type_node = self.parse_type(None)?;
-                        let rhs = Box::new(Node::new(
+                        let rhs = Box::new(LocalNode::new(
                             start_span.expand_to(type_node.span()),
-                            NodeKind::Type(type_node),
+                            LocalNodeKind::Type(type_node),
                         ));
                         (start_span.expand_to(rhs.span()), rhs)
                     }
@@ -602,9 +600,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     }
                 };
 
-                lhs = Box::new(Node::new(
+                lhs = Box::new(LocalNode::new(
                     span,
-                    NodeKind::Binary {
+                    LocalNodeKind::Binary {
                         operation,
                         lhs,
                         rhs,
@@ -635,9 +633,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 let span = start_span.expand_to(self.current_span());
                 self.scan_token()?;
 
-                lhs = Box::new(Node::new(
+                lhs = Box::new(LocalNode::new(
                     span,
-                    NodeKind::Call {
+                    LocalNodeKind::Call {
                         callee: lhs,
                         arguments: arguments.into_boxed_slice(),
                     },
@@ -670,9 +668,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 let span = start_span.expand_to(self.current_span());
                 self.scan_token()?;
 
-                lhs = Box::new(Node::new(
+                lhs = Box::new(LocalNode::new(
                     span,
-                    NodeKind::StructureLiteral {
+                    LocalNodeKind::StructureLiteral {
                         structure_type: lhs,
                         members: members.into_boxed_slice(),
                     },
@@ -886,7 +884,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
         }
     }
 
-    fn parse_global_variable(&mut self, start_span: crate::Span, is_foreign: bool, mut symbol_name: Option<Box<[u8]>>) -> crate::Result<Box<Node>> {
+    fn parse_global_variable(&mut self, start_span: crate::Span, is_foreign: bool, mut symbol_name: Option<Box<[u8]>>) -> crate::Result<Box<GlobalNode>> {
         let is_mutable = if let Some(Token::Mut) = self.current_token() {
             self.scan_token()?;
             true
@@ -917,20 +915,20 @@ impl<'a, T: BufRead> Parser<'a, T> {
         };
         self.scan_token()?;
 
-        Ok(Box::new(Node::new(
+        Ok(Box::new(GlobalNode::new(
             start_span.expand_to(end_span),
-            NodeKind::Let {
+            GlobalNodeKind::Let {
                 name,
                 symbol_name,
-                value_type: Some(value_type),
+                value_type,
                 is_mutable,
                 value,
-                global_register: None,
+                register: None,
             },
         )))
     }
 
-    fn parse_function_definition(&mut self, start_span: crate::Span, is_foreign: bool, mut symbol_name: Option<Box<[u8]>>) -> crate::Result<Box<Node>> {
+    fn parse_function_definition(&mut self, start_span: crate::Span, is_foreign: bool, mut symbol_name: Option<Box<[u8]>>) -> crate::Result<Box<GlobalNode>> {
         let name = self.expect_identifier()?;
         if is_foreign && symbol_name.is_none() {
             symbol_name = Some(name.as_bytes().into());
@@ -1012,21 +1010,21 @@ impl<'a, T: BufRead> Parser<'a, T> {
             None
         };
 
-        Ok(Box::new(Node::new(
+        Ok(Box::new(GlobalNode::new(
             start_span.expand_to(end_span),
-            NodeKind::Function {
+            GlobalNodeKind::Function {
                 name,
                 symbol_name,
                 parameters: parameters.into_boxed_slice(),
                 is_variadic,
                 return_type,
                 body,
-                global_register: None,
+                register: None,
             },
         )))
     }
 
-    fn parse_structure_definition(&mut self, context: &mut GlobalContext, start_span: crate::Span) -> crate::Result<Box<Node>> {
+    fn parse_structure_definition(&mut self, context: &mut GlobalContext, start_span: crate::Span) -> crate::Result<Box<GlobalNode>> {
         let name = self.expect_identifier()?;
 
         let self_type = context.outline_structure_type(name.clone())?;
@@ -1066,9 +1064,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
         context.unset_self_type();
 
-        Ok(Box::new(Node::new(
+        Ok(Box::new(GlobalNode::new(
             start_span.expand_to(end_span),
-            NodeKind::Structure {
+            GlobalNodeKind::Structure {
                 name,
                 members: members.map(Vec::into_boxed_slice),
                 self_type,
@@ -1076,7 +1074,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
         )))
     }
 
-    pub fn parse_statement(&mut self, global_context: &mut GlobalContext, is_implementation: bool, allow_empty: bool) -> crate::Result<Option<Box<Node>>> {
+    pub fn parse_global_statement(&mut self, global_context: &mut GlobalContext, is_implementation: bool, allow_empty: bool) -> crate::Result<Option<Box<GlobalNode>>> {
         let start_span = self.current_span();
 
         // Most statement types can be detected simply by the first token
@@ -1085,7 +1083,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                 self.scan_token()?;
                 // Returning None would imply that the end of the file was reached,
                 // so recursively try to parse a statement instead
-                self.parse_statement(global_context, is_implementation, allow_empty)
+                self.parse_global_statement(global_context, is_implementation, allow_empty)
             }
             Some(Token::Let) => {
                 self.scan_token()?;
@@ -1161,7 +1159,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                             )));
                         }
                         _ => {
-                            let statement = self.parse_statement(global_context, true, true)?
+                            let statement = self.parse_global_statement(global_context, true, true)?
                                 .ok_or_else(|| Box::new(crate::Error::new(
                                     Some(self.current_span()),
                                     crate::ErrorKind::ExpectedClosingBracket {
@@ -1173,9 +1171,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     }
                 };
 
-                Ok(Some(Box::new(Node::new(
+                Ok(Some(Box::new(GlobalNode::new(
                     span,
-                    NodeKind::Implement {
+                    GlobalNodeKind::Implement {
                         self_type,
                         statements: statements.into_boxed_slice(),
                     },
@@ -1192,9 +1190,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
                     global_context.queue_module_file(name.clone());
 
-                    return Ok(Some(Box::new(Node::new(
+                    return Ok(Some(Box::new(GlobalNode::new(
                         start_span.expand_to(name_span),
-                        NodeKind::ModuleFile {
+                        GlobalNodeKind::ModuleFile {
                             name,
                         },
                     ))));
@@ -1228,7 +1226,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
                             )));
                         }
                         _ => {
-                            let statement = self.parse_statement(global_context, false, true)?
+                            let statement = self.parse_global_statement(global_context, false, true)?
                                 .ok_or_else(|| Box::new(crate::Error::new(
                                     Some(self.current_span()),
                                     crate::ErrorKind::ExpectedClosingBracket {
@@ -1242,9 +1240,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
 
                 global_context.replace_current_module(parent_module);
 
-                Ok(Some(Box::new(Node::new(
+                Ok(Some(Box::new(GlobalNode::new(
                     span,
-                    NodeKind::Module {
+                    GlobalNodeKind::Module {
                         name,
                         statements: statements.into_boxed_slice(),
                         namespace,
@@ -1262,9 +1260,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     let path = global_context.get_absolute_path(path_span, &segments)?;
                     global_context.current_module_info_mut().add_glob_import(path);
 
-                    Ok(Some(Box::new(Node::new(
+                    Ok(Some(Box::new(GlobalNode::new(
                         start_span.expand_to(path_span),
-                        NodeKind::GlobImport {
+                        GlobalNodeKind::GlobImport {
                             segments,
                         },
                     ))))
@@ -1308,9 +1306,9 @@ impl<'a, T: BufRead> Parser<'a, T> {
                         Symbol::new(SymbolKind::Alias(path.clone())),
                     )?;
 
-                    Ok(Some(Box::new(Node::new(
+                    Ok(Some(Box::new(GlobalNode::new(
                         start_span.expand_to(end_span),
-                        NodeKind::Import {
+                        GlobalNodeKind::Import {
                             segments,
                             alias,
                         },
@@ -1339,7 +1337,7 @@ impl<'a, T: BufRead> Parser<'a, T> {
         }
     }
 
-    pub fn parse_top_level_statement(&mut self, context: &mut GlobalContext) -> crate::Result<Option<Box<Node>>> {
-        self.parse_statement(context, false, true)
+    pub fn parse_top_level_statement(&mut self, context: &mut GlobalContext) -> crate::Result<Option<Box<GlobalNode>>> {
+        self.parse_global_statement(context, false, true)
     }
 }

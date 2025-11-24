@@ -1,13 +1,5 @@
 source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\\test_collections\\main.cupr"
 
-%"::test_collections::AVLTree" = type { %"::test_collections::AVLTreeNode"*, i32({}*, {}*)* }
-
-%"::test_collections::BTree" = type { i64, i64, i32({}*, {}*)*, %"::test_collections::BTreeNode"* }
-
-%"::test_collections::BTreeNode" = type { i1, i64, %"::test_collections::BTreeNodeKey"*, %"::test_collections::BTreeNode"* }
-
-%"::test_collections::BTreeLeaf" = type { i1, i64, {}** }
-
 %"::test_collections::LinkedListNode" = type { {}*, %"::test_collections::LinkedListNode"* }
 
 %"::test_collections::BTreeNodeKey" = type { {}*, %"::test_collections::BTreeNode"* }
@@ -15,6 +7,14 @@ source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\
 %"::test_collections::LinkedList" = type { %"::test_collections::LinkedListNode"* }
 
 %"::test_collections::AVLTreeNode" = type { {}*, %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"*, i32 }
+
+%"::test_collections::BTreeLeaf" = type { i1, i64, {}** }
+
+%"::test_collections::BTreeNode" = type { i1, i64, %"::test_collections::BTreeNodeKey"*, %"::test_collections::BTreeNode"* }
+
+%"::test_collections::AVLTree" = type { %"::test_collections::AVLTreeNode"*, i32({}*, {}*)* }
+
+%"::test_collections::BTree" = type { i64, i64, i32({}*, {}*)*, %"::test_collections::BTreeNode"* }
 
 declare i32 @printf(i8*, ...)
 

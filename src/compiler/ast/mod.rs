@@ -99,7 +99,7 @@ impl UnaryOperation {
         None
     }
 
-    pub fn to_string_with_operand(&self, operand: &NodeKind) -> String {
+    pub fn to_string_with_operand(&self, operand: &LocalNodeKind) -> String {
         match self {
             Self::Positive => format!("+{operand}"),
             Self::Negative => format!("-{operand}"),
@@ -212,7 +212,7 @@ impl BinaryOperation {
         }
     }
 
-    pub fn to_string_with_operands(&self, lhs: &NodeKind, rhs: &NodeKind) -> String {
+    pub fn to_string_with_operands(&self, lhs: &LocalNodeKind, rhs: &LocalNodeKind) -> String {
         match self {
             Self::Subscript => format!("{lhs}[{rhs}]"),
             Self::Access => format!("{lhs}.{rhs}"),
@@ -293,7 +293,7 @@ pub enum TypeNodeKind {
     },
     Array {
         item_type: Box<TypeNode>,
-        length: Option<Box<Node>>,
+        length: Option<Box<LocalNode>>,
     },
     Tuple {
         item_types: Box<[TypeNode]>,
@@ -393,22 +393,7 @@ impl std::fmt::Display for TypeNode {
 }
 
 #[derive(Clone, Debug)]
-pub struct FunctionParameterNode {
-    pub span: crate::Span,
-    pub name: Box<str>,
-    pub type_node: Box<TypeNode>,
-    pub is_mutable: bool,
-}
-
-#[derive(Clone, Debug)]
-pub struct StructureMemberNode {
-    pub span: crate::Span,
-    pub name: Box<str>,
-    pub type_node: Box<TypeNode>,
-}
-
-#[derive(Clone, Debug)]
-pub enum NodeKind {
+pub enum LocalNodeKind {
     Literal(Literal),
     Type(Box<TypeNode>),
     Path {
@@ -416,92 +401,57 @@ pub enum NodeKind {
     },
     Unary {
         operation: UnaryOperation,
-        operand: Box<Node>,
+        operand: Box<LocalNode>,
     },
     Binary {
         operation: BinaryOperation,
-        lhs: Box<Node>,
-        rhs: Box<Node>,
+        lhs: Box<LocalNode>,
+        rhs: Box<LocalNode>,
     },
     Call {
-        callee: Box<Node>,
-        arguments: Box<[Node]>,
+        callee: Box<LocalNode>,
+        arguments: Box<[LocalNode]>,
     },
     ArrayLiteral {
-        items: Box<[Node]>,
+        items: Box<[LocalNode]>,
     },
     TupleLiteral {
-        items: Box<[Node]>,
+        items: Box<[LocalNode]>,
     },
     StructureLiteral {
-        structure_type: Box<Node>,
-        members: Box<[(Box<str>, Node)]>,
+        structure_type: Box<LocalNode>,
+        members: Box<[(Box<str>, LocalNode)]>,
     },
     Grouping {
-        content: Box<Node>,
+        content: Box<LocalNode>,
     },
     Scope {
-        statements: Box<[Node]>,
-        tail: Option<Box<Node>>,
+        statements: Box<[LocalNode]>,
+        tail: Option<Box<LocalNode>>,
     },
     Conditional {
-        condition: Box<Node>,
-        consequent: Box<Node>,
-        alternative: Option<Box<Node>>,
+        condition: Box<LocalNode>,
+        consequent: Box<LocalNode>,
+        alternative: Option<Box<LocalNode>>,
     },
     While {
-        condition: Box<Node>,
-        body: Box<Node>,
+        condition: Box<LocalNode>,
+        body: Box<LocalNode>,
     },
     Break,
     Continue,
     Return {
-        value: Option<Box<Node>>,
+        value: Option<Box<LocalNode>>,
     },
     Let {
         name: Box<str>,
-        symbol_name: Option<Box<[u8]>>,
-        value_type: Option<Box<TypeNode>>,
         is_mutable: bool,
-        value: Option<Box<Node>>,
-        global_register: Option<GlobalRegister>,
-    },
-    Function {
-        name: Box<str>,
-        symbol_name: Option<Box<[u8]>>,
-        parameters: Box<[FunctionParameterNode]>,
-        is_variadic: bool,
-        return_type: Box<TypeNode>,
-        body: Option<Box<Node>>,
-        global_register: Option<GlobalRegister>,
-    },
-    Structure {
-        name: Box<str>,
-        members: Option<Box<[StructureMemberNode]>>,
-        self_type: TypeHandle,
-    },
-    Implement {
-        self_type: Box<TypeNode>,
-        statements: Box<[Node]>,
-    },
-    Module {
-        name: Box<str>,
-        statements: Box<[Node]>,
-        namespace: NamespaceHandle,
-    },
-    ModuleFile {
-        name: Box<str>,
-    },
-    Import {
-        segments: Box<[PathSegment]>,
-        alias: Option<Box<str>>,
-    },
-    GlobImport {
-        segments: Box<[PathSegment]>,
+        value_type: Option<Box<TypeNode>>,
+        value: Option<Box<LocalNode>>,
     },
 }
 
-impl std::fmt::Display for NodeKind {
+impl std::fmt::Display for LocalNodeKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Literal(literal) => {
@@ -530,16 +480,15 @@ impl std::fmt::Display for NodeKind {
                 }
                 write!(f, "))")
             }
-            Self::ArrayLiteral { items } => {
-                write!(f, "[")?;
-                let mut items_iter = items.iter();
-                if let Some(item) = items_iter.next() {
-                    write!(f, "{item}")?;
-                    for item in items_iter {
+            Self::ArrayLiteral { items } => match items.as_ref() {
+                [] => write!(f, "[]"),
+                [item, items @ ..] => {
+                    write!(f, "[{item}")?;
+                    for item in items {
                         write!(f, ", {item}")?;
                     }
+                    write!(f, "]")
                 }
-                write!(f, "]")
             }
             Self::TupleLiteral { items } => match items.as_ref() {
                 [] => write!(f, "()"),
@@ -602,10 +551,7 @@ impl std::fmt::Display for NodeKind {
                     write!(f, " return;")
                 }
             }
-            Self::Let { name, symbol_name, value_type, is_mutable, value, .. } => {
-                if let Some(symbol_name) = symbol_name {
-                    write!(f, " foreign(\"{}\")", String::from_utf8_lossy(symbol_name))?;
-                }
+            Self::Let { name, is_mutable, value_type, value, .. } => {
                 if *is_mutable {
                     write!(f, " let mut {name}")?;
                 }
@@ -614,6 +560,184 @@ impl std::fmt::Display for NodeKind {
                 }
                 if let Some(value_type) = value_type {
                     write!(f, ": {value_type}")?;
+                }
+                if let Some(value) = value {
+                    write!(f, " = {value};")
+                }
+                else {
+                    write!(f, ";")
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct LocalNode {
+    span: crate::Span,
+    kind: LocalNodeKind,
+}
+
+impl LocalNode {
+    pub fn new(span: crate::Span, kind: LocalNodeKind) -> Self {
+        Self {
+            span,
+            kind,
+        }
+    }
+
+    pub fn span(&self) -> crate::Span {
+        self.span
+    }
+
+    pub fn kind(&self) -> &LocalNodeKind {
+        &self.kind
+    }
+
+    pub fn kind_mut(&mut self) -> &mut LocalNodeKind {
+        &mut self.kind
+    }
+
+    pub fn as_name(&self) -> crate::Result<&str> {
+        match self.kind() {
+            LocalNodeKind::Literal(Literal::Name(name)) => {
+                Ok(name)
+            }
+            _ => {
+                Err(Box::new(crate::Error::new(
+                    Some(self.span()),
+                    crate::ErrorKind::ExpectedIdentifier,
+                )))
+            }
+        }
+    }
+
+    pub fn as_tuple_member(&self, member_count: i32) -> crate::Result<i32> {
+        match self.kind() {
+            &LocalNodeKind::Literal(Literal::Integer(value, None)) => {
+                if value >= 0 && value < member_count as i128 {
+                    Ok(value as i32)
+                }
+                else {
+                    Err(Box::new(crate::Error::new(
+                        Some(self.span()),
+                        crate::ErrorKind::TupleMemberOutOfRange {
+                            member: value.to_string(),
+                            member_count,
+                        },
+                    )))
+                }
+            }
+            _ => {
+                Err(Box::new(crate::Error::new(
+                    Some(self.span()),
+                    crate::ErrorKind::ExpectedTupleMember,
+                )))
+            }
+        }
+    }
+
+    pub fn requires_semicolon(&self) -> bool {
+        match self.kind() {
+            LocalNodeKind::Scope { .. } => {
+                false
+            }
+            LocalNodeKind::Conditional { consequent, alternative, .. } => {
+                if let Some(alternative) = alternative {
+                    alternative.requires_semicolon()
+                }
+                else {
+                    consequent.requires_semicolon()
+                }
+            }
+            LocalNodeKind::While { body, .. } => {
+                body.requires_semicolon()
+            }
+            _ => {
+                true
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for LocalNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.kind)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FunctionParameterNode {
+    pub span: crate::Span,
+    pub name: Box<str>,
+    pub is_mutable: bool,
+    pub type_node: Box<TypeNode>,
+}
+
+#[derive(Clone, Debug)]
+pub struct StructureMemberNode {
+    pub span: crate::Span,
+    pub name: Box<str>,
+    pub type_node: Box<TypeNode>,
+}
+
+#[derive(Clone, Debug)]
+pub enum GlobalNodeKind {
+    Let {
+        name: Box<str>,
+        symbol_name: Option<Box<[u8]>>,
+        is_mutable: bool,
+        value_type: Box<TypeNode>,
+        value: Option<Box<LocalNode>>,
+        register: Option<GlobalRegister>,
+    },
+    Function {
+        name: Box<str>,
+        symbol_name: Option<Box<[u8]>>,
+        parameters: Box<[FunctionParameterNode]>,
+        is_variadic: bool,
+        return_type: Box<TypeNode>,
+        body: Option<Box<LocalNode>>,
+        register: Option<GlobalRegister>,
+    },
+    Structure {
+        name: Box<str>,
+        members: Option<Box<[StructureMemberNode]>>,
+        self_type: TypeHandle,
+    },
+    Implement {
+        self_type: Box<TypeNode>,
+        statements: Box<[GlobalNode]>,
+    },
+    Module {
+        name: Box<str>,
+        statements: Box<[GlobalNode]>,
+        namespace: NamespaceHandle,
+    },
+    ModuleFile {
+        name: Box<str>,
+    },
+    Import {
+        segments: Box<[PathSegment]>,
+        alias: Option<Box<str>>,
+    },
+    GlobImport {
+        segments: Box<[PathSegment]>,
+    },
+}
+
+impl std::fmt::Display for GlobalNodeKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Let { name, symbol_name, is_mutable, value_type, value, .. } => {
+                if let Some(symbol_name) = symbol_name {
+                    write!(f, " foreign(\"{}\")", String::from_utf8_lossy(symbol_name))?;
+                }
+                if *is_mutable {
+                    write!(f, " let mut {name}: {value_type}")?;
+                }
+                else {
+                    write!(f, " let {name}: {value_type}")?;
                 }
                 if let Some(value) = value {
                     write!(f, " = {value};")
@@ -705,13 +829,13 @@ impl std::fmt::Display for NodeKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct Node {
+pub struct GlobalNode {
     span: crate::Span,
-    kind: NodeKind,
+    kind: GlobalNodeKind,
 }
 
-impl Node {
-    pub fn new(span: crate::Span, kind: NodeKind) -> Self {
+impl GlobalNode {
+    pub fn new(span: crate::Span, kind: GlobalNodeKind) -> Self {
         Self {
             span,
             kind,
@@ -722,83 +846,16 @@ impl Node {
         self.span
     }
 
-    pub fn kind(&self) -> &NodeKind {
+    pub fn kind(&self) -> &GlobalNodeKind {
         &self.kind
     }
 
-    pub fn kind_mut(&mut self) -> &mut NodeKind {
+    pub fn kind_mut(&mut self) -> &mut GlobalNodeKind {
         &mut self.kind
     }
 }
 
-impl Node {
-    pub fn as_name(&self) -> crate::Result<&str> {
-        match self.kind() {
-            NodeKind::Literal(Literal::Name(name)) => {
-                Ok(name)
-            }
-            _ => {
-                Err(Box::new(crate::Error::new(
-                    Some(self.span()),
-                    crate::ErrorKind::ExpectedIdentifier,
-                )))
-            }
-        }
-    }
-
-    pub fn as_tuple_member(&self, member_count: i32) -> crate::Result<i32> {
-        match self.kind() {
-            &NodeKind::Literal(Literal::Integer(value, None)) => {
-                if value >= 0 && value < member_count as i128 {
-                    Ok(value as i32)
-                }
-                else {
-                    Err(Box::new(crate::Error::new(
-                        Some(self.span()),
-                        crate::ErrorKind::TupleMemberOutOfRange {
-                            member: value.to_string(),
-                            member_count,
-                        },
-                    )))
-                }
-            }
-            _ => {
-                Err(Box::new(crate::Error::new(
-                    Some(self.span()),
-                    crate::ErrorKind::ExpectedTupleMember,
-                )))
-            }
-        }
-    }
-
-    pub fn requires_semicolon(&self) -> bool {
-        match self.kind() {
-            NodeKind::Scope { .. } |
-            NodeKind::Function { .. } |
-            NodeKind::Structure { .. } |
-            NodeKind::Implement { .. } |
-            NodeKind::Module { .. } => {
-                false
-            }
-            NodeKind::Conditional { consequent, alternative, .. } => {
-                if let Some(alternative) = alternative {
-                    alternative.requires_semicolon()
-                }
-                else {
-                    consequent.requires_semicolon()
-                }
-            }
-            NodeKind::While { body, .. } => {
-                body.requires_semicolon()
-            }
-            _ => {
-                true
-            }
-        }
-    }
-}
-
-impl std::fmt::Display for Node {
+impl std::fmt::Display for GlobalNode {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", self.kind)
     }

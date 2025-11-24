@@ -1,10 +1,10 @@
 source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\\std\\main.cupr"
 
-%"::std::string::String" = type { %"::std::string::MutStr", i64 }
-
 %"::std::string::Str" = type { i8*, i64 }
 
 %"::std::string::MutStr" = type { i8*, i64 }
+
+%"::std::string::String" = type { %"::std::string::MutStr", i64 }
 
 declare void @free(i8*)
 

@@ -1,4 +1,4 @@
-use crate::ast::{Node, NodeKind, PathSegment, TypeNode, TypeNodeKind};
+use crate::ast::{GlobalNode, GlobalNodeKind, LocalNode, LocalNodeKind, PathSegment, TypeNode, TypeNodeKind};
 use crate::ast::parse::ParsedModule;
 use crate::ir::value::{Constant, GlobalRegister, IntegerValue, LocalRegister, Value};
 use crate::package::{PackageContext, PackageManager};
@@ -272,7 +272,7 @@ impl GlobalContext {
                     length: match length {
                         Some(node) => {
                             // Must be an integer literal (for now)
-                            if let &NodeKind::Literal(Literal::Integer(raw, _)) = node.kind() {
+                            if let &LocalNodeKind::Literal(Literal::Integer(raw, _)) = node.kind() {
                                 // Must be an acceptable usize value
                                 let Some(value) = IntegerValue::from_unknown_type(raw, TypeHandle::USIZE, self.target()) else {
                                     return Err(Box::new(crate::Error::new(
@@ -324,18 +324,18 @@ impl GlobalContext {
         }
     }
 
-    pub fn type_path_for_node(&self, node: &Node) -> crate::Result<AbsolutePath> {
+    pub fn type_path_for_node(&self, node: &LocalNode) -> crate::Result<AbsolutePath> {
         match node.kind() {
-            NodeKind::Type(type_node) => {
+            LocalNodeKind::Type(type_node) => {
                 self.type_path_for_type_node(type_node)
             }
-            NodeKind::Path { segments, .. } => {
+            LocalNodeKind::Path { segments, .. } => {
                 self.get_absolute_path(node.span(), segments)
             }
-            NodeKind::Literal(Literal::Name(name)) => {
+            LocalNodeKind::Literal(Literal::Name(name)) => {
                 Ok(self.current_module_info().path().child(name.clone()))
             }
-            NodeKind::Literal(Literal::PrimitiveType(primitive_type)) => {
+            LocalNodeKind::Literal(Literal::PrimitiveType(primitive_type)) => {
                 let base_type = PathBaseType::Primitive(*primitive_type);
                 Ok(AbsolutePath::at_base_type(Box::new(base_type)))
             }
@@ -353,7 +353,7 @@ impl GlobalContext {
         self.get_path_type(&type_path, Some(&type_node.span()))
     }
 
-    pub fn interpret_node_as_type(&mut self, node: &Node) -> crate::Result<TypeHandle> {
+    pub fn interpret_node_as_type(&mut self, node: &LocalNode) -> crate::Result<TypeHandle> {
         let type_path = self.type_path_for_node(node)?;
         self.get_path_type(&type_path, Some(&node.span()))
     }
@@ -597,7 +597,7 @@ impl GlobalContext {
 
     pub fn process_global_statements<'a, I>(&mut self, global_statements: I) -> crate::Result<()>
     where
-        I: IntoIterator<Item = &'a mut Node>,
+        I: IntoIterator<Item = &'a mut GlobalNode>,
     {
         for global_statement in global_statements {
             self.process_global_statement(global_statement)?;
@@ -606,34 +606,25 @@ impl GlobalContext {
         Ok(())
     }
 
-    pub fn process_global_statement(&mut self, node: &mut Node) -> crate::Result<()> {
-        let node_span = node.span();
+    pub fn process_global_statement(&mut self, node: &mut GlobalNode) -> crate::Result<()> {
         match node.kind_mut() {
-            NodeKind::Let { name, symbol_name, value_type, is_mutable, value, global_register } => {
-                let Some(value_type) = value_type else {
-                    return Err(Box::new(crate::Error::new(
-                        Some(node_span),
-                        crate::ErrorKind::MustSpecifyTypeForGlobal {
-                            name: self.current_namespace_info().path().child(name.clone()).to_string(),
-                        },
-                    )));
-                };
+            GlobalNodeKind::Let { name, symbol_name, value_type, is_mutable, value, register } => {
                 let value_type = self.interpret_type_node(value_type)?;
 
                 let identifier = self.get_global_identifier(name, symbol_name.as_ref());
                 let pointer_type = self.get_pointer_type(value_type, PointerSemantics::for_symbol(*is_mutable));
-                let register = GlobalRegister::new(identifier, pointer_type);
+                let global_register = GlobalRegister::new(identifier, pointer_type);
 
                 let mut symbol = Symbol::new(SymbolKind::Value(Value::Constant(Constant::Indirect {
                     pointee_type: value_type,
-                    pointer: Box::new(Constant::Register(register.clone())),
+                    pointer: Box::new(Constant::Register(global_register.clone())),
                 })));
                 symbol.set_external(value.is_none());
                 self.current_namespace_info_mut().define(name, symbol)?;
 
-                *global_register = Some(register);
+                *register = Some(global_register);
             }
-            NodeKind::Function { name, symbol_name, parameters, is_variadic, return_type, body, global_register } => {
+            GlobalNodeKind::Function { name, symbol_name, parameters, is_variadic, return_type, body, register } => {
                 let parameter_types = parameters
                     .iter()
                     .map(|parameter| {
@@ -645,15 +636,15 @@ impl GlobalContext {
                 let function_type = self.get_function_type(&signature);
 
                 let identifier = self.get_global_identifier(name, symbol_name.as_ref());
-                let register = GlobalRegister::new(identifier, function_type);
+                let global_register = GlobalRegister::new(identifier, function_type);
 
-                let mut symbol = Symbol::new(SymbolKind::Value(Value::from(register.clone())));
+                let mut symbol = Symbol::new(SymbolKind::Value(Value::from(global_register.clone())));
                 symbol.set_external(body.is_none());
                 self.current_namespace_info_mut().define(name, symbol)?;
 
-                *global_register = Some(register);
+                *register = Some(global_register);
             }
-            NodeKind::Structure { name, members, self_type } => {
+            GlobalNodeKind::Structure { name, members, self_type } => {
                 if let Some(members) = members {
                     self.set_self_type(*self_type);
 
@@ -687,7 +678,7 @@ impl GlobalContext {
                     );
                 }
             }
-            NodeKind::Implement { self_type, statements, .. } => {
+            GlobalNodeKind::Implement { self_type, statements, .. } => {
                 let self_type = self.interpret_type_node(self_type)?;
                 self.set_self_type(self_type);
 
@@ -697,7 +688,7 @@ impl GlobalContext {
 
                 self.unset_self_type();
             }
-            NodeKind::Module { statements, namespace, .. } => {
+            GlobalNodeKind::Module { statements, namespace, .. } => {
                 let parent_module = self.replace_current_module(*namespace);
 
                 for statement in statements {
