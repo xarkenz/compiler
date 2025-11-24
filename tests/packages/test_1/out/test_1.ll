@@ -1,16 +1,16 @@
 source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\\test_1\\main.cupr"
 
+%"::test_1::Student" = type { i8*, i32, [4 x i32] }
+
+%"::libc::stdio::CFile" = type opaque
+
 %"::std::string::Str" = type { i8*, i64 }
+
+%"::std::string::MutStr" = type { i8*, i64 }
 
 %"::std::string::String" = type { %"::std::string::MutStr", i64 }
 
 %"::test_1::Node" = type { i8*, %"::test_1::Node"* }
-
-%"::std::string::MutStr" = type { i8*, i64 }
-
-%"::test_1::Student" = type { i8*, i32, [4 x i32] }
-
-%"::libc::stdio::CFile" = type opaque
 
 declare %"::libc::stdio::CFile"* @fopen(i8*, i8*)
 
@@ -40,7 +40,7 @@ declare %"::std::string::Str" @"::std::string::String::as_str"(%"::std::string::
 
 declare void @"::std::string::String::del"(%"::std::string::String")
 
-@.const.test_1.0 = private unnamed_addr constant [10 x i8] c"day01.txt\00"
+@.const.test_1.0 = private unnamed_addr constant [17 x i8] c"test_1/day01.txt\00"
 
 @.const.test_1.1 = private unnamed_addr constant [2 x i8] c"r\00"
 
@@ -135,7 +135,7 @@ define i32 @"::test_1::gcd"(i32 %0, i32 %1) {
 
 define void @"::test_1::aoc_01_p1"() {
 .block.0:
-	%0 = call %"::libc::stdio::CFile"*(i8*, i8*) @fopen(i8* bitcast ([10 x i8]* @.const.test_1.0 to i8*), i8* bitcast ([2 x i8]* @.const.test_1.1 to i8*))
+	%0 = call %"::libc::stdio::CFile"*(i8*, i8*) @fopen(i8* bitcast ([17 x i8]* @.const.test_1.0 to i8*), i8* bitcast ([2 x i8]* @.const.test_1.1 to i8*))
 	%input = alloca %"::libc::stdio::CFile"*
 	store %"::libc::stdio::CFile"* %0, %"::libc::stdio::CFile"** %input
 	%1 = load %"::libc::stdio::CFile"*, %"::libc::stdio::CFile"** %input

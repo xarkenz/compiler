@@ -1,10 +1,80 @@
+implement u8 {
+    foreign("llvm.umin.i8")
+    function min(a: Self, b: Self) -> Self;
+
+    foreign("llvm.umax.i8")
+    function max(a: Self, b: Self) -> Self;
+}
+
+implement i8 {
+    foreign("llvm.smin.i8")
+    function min(a: Self, b: Self) -> Self;
+
+    foreign("llvm.smax.i8")
+    function max(a: Self, b: Self) -> Self;
+}
+
+implement u16 {
+    foreign("llvm.umin.i16")
+    function min(a: Self, b: Self) -> Self;
+
+    foreign("llvm.umax.i16")
+    function max(a: Self, b: Self) -> Self;
+}
+
+implement i16 {
+    foreign("llvm.smin.i16")
+    function min(a: Self, b: Self) -> Self;
+
+    foreign("llvm.smax.i16")
+    function max(a: Self, b: Self) -> Self;
+}
+
+implement u32 {
+    foreign("llvm.umin.i32")
+    function min(a: Self, b: Self) -> Self;
+
+    foreign("llvm.umax.i32")
+    function max(a: Self, b: Self) -> Self;
+}
+
+implement i32 {
+    foreign("llvm.smin.i32")
+    function min(a: Self, b: Self) -> Self;
+
+    foreign("llvm.smax.i32")
+    function max(a: Self, b: Self) -> Self;
+}
+
+implement u64 {
+    foreign("llvm.umin.i64")
+    function min(a: Self, b: Self) -> Self;
+
+    foreign("llvm.umax.i64")
+    function max(a: Self, b: Self) -> Self;
+}
+
+implement i64 {
+    foreign("llvm.smin.i64")
+    function min(a: Self, b: Self) -> Self;
+
+    foreign("llvm.smax.i64")
+    function max(a: Self, b: Self) -> Self;
+}
+
+// TODO: implementations that don't assume pointer size lol
 implement usize {
-    function max(self: Self, other: Self) -> Self {
-        if (self > other) {
-            self
-        }
-        else {
-            other
-        }
-    }
+    foreign("llvm.umin.i64")
+    function min(a: Self, b: Self) -> Self;
+
+    foreign("llvm.umax.i64")
+    function max(a: Self, b: Self) -> Self;
+}
+
+implement isize {
+    foreign("llvm.smin.i64")
+    function min(a: Self, b: Self) -> Self;
+
+    foreign("llvm.smax.i64")
+    function max(a: Self, b: Self) -> Self;
 }

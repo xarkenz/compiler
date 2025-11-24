@@ -50,11 +50,13 @@ impl<'ctx> Generator<'ctx> {
         match node.kind() {
             ast::NodeKind::Let { value, global_register, .. } => {
                 let global_register = global_register.as_ref().expect("register should be valid after fill phase");
-                self.generate_global_let_statement(value.as_deref(), global_register)
-            }
-            ast::NodeKind::Constant { value, global_register, .. } => {
-                let global_register = global_register.as_ref().expect("register should be valid after fill phase");
-                self.generate_global_constant_statement(value, global_register)
+                if let Some(value) = value {
+                    self.generate_global_let_statement(value, global_register)
+                }
+                else {
+                    // The work has already been done for us
+                    Ok(Value::Void)
+                }
             }
             ast::NodeKind::Function { name, parameters, body, global_register, .. } => {
                 let global_register = global_register.as_ref().expect("register should be valid after fill phase");
@@ -220,9 +222,6 @@ impl<'ctx> Generator<'ctx> {
             ast::NodeKind::Let { name, value_type, is_mutable, value, .. } => {
                 self.generate_local_let_statement(node.span(), name, value_type.as_deref(), *is_mutable, value.as_deref(), local_context)?
             }
-            ast::NodeKind::Constant { name, value_type, value, .. } => {
-                self.generate_local_constant_statement(name, value_type, value, local_context)?
-            }
             _ => {
                 return Err(Box::new(crate::Error::new(
                     Some(node.span()),
@@ -246,7 +245,7 @@ impl<'ctx> Generator<'ctx> {
         self.next_anonymous_constant_id += 1;
 
         let identifier = format!(".const.{}.{id}", self.context.package().info().name());
-        GlobalRegister::new(identifier.into_boxed_str(), pointer_type)
+        GlobalRegister::new(identifier.as_bytes().into(), pointer_type)
     }
 
     pub fn enforce_type(&mut self, value: Value, expected_type: TypeHandle, span: crate::Span, local_context: &mut LocalContext) -> crate::Result<Value> {
@@ -1985,34 +1984,13 @@ impl<'ctx> Generator<'ctx> {
         Ok(Value::Void)
     }
 
-    fn generate_local_constant_statement(&mut self, name: &str, type_node: &ast::TypeNode, value: &ast::Node, local_context: &mut LocalContext) -> crate::Result<Value> {
-        let value_type = self.context.interpret_type_node(type_node)?;
-        let value = self.generate_constant_node(value, Some(local_context), Some(value_type))?;
-
-        let pointer_type = self.context.get_pointer_type(value_type, PointerSemantics::ImmutableSymbol);
-        let pointer = local_context.define_indirect_constant_symbol(name.into(), pointer_type, value_type);
-
-        self.context.package_mut().output_mut().add_global_variable(GlobalVariable::new(
-            pointer,
-            GlobalVariableKind::Constant,
-            value,
-        ));
-
-        Ok(Value::Void)
-    }
-
-    fn generate_global_let_statement(&mut self, value: Option<&ast::Node>, global_register: &GlobalRegister) -> crate::Result<Value> {
+    fn generate_global_let_statement(&mut self, value: &ast::Node, global_register: &GlobalRegister) -> crate::Result<Value> {
         // The fill phase has done most of the work for us already
         let TypeRepr::Pointer { pointee_type, semantics } = *self.context.type_repr(global_register.get_type()) else {
             panic!("invalid global value register type");
         };
 
-        let value = if let Some(node) = value {
-            self.generate_constant_node(node, None, Some(pointee_type))?
-        }
-        else {
-            Constant::ZeroInitializer(pointee_type)
-        };
+        let value = self.generate_constant_node(value, None, Some(pointee_type))?;
 
         self.context.package_mut().output_mut().add_global_variable(GlobalVariable::new(
             global_register.clone(),
@@ -2021,23 +1999,6 @@ impl<'ctx> Generator<'ctx> {
                 PointerSemantics::ImmutableSymbol => GlobalVariableKind::Constant,
                 PointerSemantics::Mutable => GlobalVariableKind::Mutable,
             },
-            value,
-        ));
-
-        Ok(Value::Void)
-    }
-
-    fn generate_global_constant_statement(&mut self, value: &ast::Node, global_register: &GlobalRegister) -> crate::Result<Value> {
-        // The fill phase has done most of the work for us already
-        let TypeRepr::Pointer { pointee_type, .. } = *self.context.type_repr(global_register.get_type()) else {
-            panic!("invalid global value register type");
-        };
-
-        let value = self.generate_constant_node(value, None, Some(pointee_type))?;
-
-        self.context.package_mut().output_mut().add_global_variable(GlobalVariable::new(
-            global_register.clone(),
-            GlobalVariableKind::Constant,
             value,
         ));
 
@@ -2139,7 +2100,7 @@ impl<'ctx> Generator<'ctx> {
     pub fn fold_as_constant(&mut self, node: &ast::Node, constant_id: &mut usize, local_context: Option<&LocalContext>, expected_type: Option<TypeHandle>) -> crate::Result<(Constant, Vec<GlobalVariable>)> {
         let mut new_intermediate_constant = |constant: Constant, context: &mut GlobalContext| {
             let pointer = GlobalRegister::new(
-                format!(".const.{}.{constant_id}", context.package().info().name()).into_boxed_str(),
+                format!(".const.{}.{constant_id}", context.package().info().name()).as_bytes().into(),
                 context.get_pointer_type(constant.get_type(), PointerSemantics::Immutable),
             );
             *constant_id += 1;

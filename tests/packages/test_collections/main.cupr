@@ -1,13 +1,4 @@
 implement i32 {
-    function max(self: Self, other: Self) -> Self {
-        if (self > other) {
-            self
-        }
-        else {
-            other
-        }
-    }
-
     function cmp(self: *Self, other: *Self) -> i32 {
         if (*self < *other) {
             -1

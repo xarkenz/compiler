@@ -24,7 +24,7 @@ function gcd(mut a: u32, mut b: u32) -> u32 {
 }
 
 function aoc_01_p1() {
-    let mut input = libc::fopen("day01.txt", "r");
+    let mut input = libc::fopen("test_1/day01.txt", "r");
     if (input == null) {
         libc::puts("unable to open input file");
         return;

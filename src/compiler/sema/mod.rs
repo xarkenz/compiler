@@ -609,7 +609,7 @@ impl GlobalContext {
     pub fn process_global_statement(&mut self, node: &mut Node) -> crate::Result<()> {
         let node_span = node.span();
         match node.kind_mut() {
-            NodeKind::Let { name, value_type, is_mutable, global_register, .. } => {
+            NodeKind::Let { name, symbol_name, value_type, is_mutable, value, global_register } => {
                 let Some(value_type) = value_type else {
                     return Err(Box::new(crate::Error::new(
                         Some(node_span),
@@ -619,13 +619,21 @@ impl GlobalContext {
                     )));
                 };
                 let value_type = self.interpret_type_node(value_type)?;
-                *global_register = Some(self.define_global_variable(name, value_type, *is_mutable)?);
+
+                let identifier = self.get_global_identifier(name, symbol_name.as_ref());
+                let pointer_type = self.get_pointer_type(value_type, PointerSemantics::for_symbol(*is_mutable));
+                let register = GlobalRegister::new(identifier, pointer_type);
+
+                let mut symbol = Symbol::new(SymbolKind::Value(Value::Constant(Constant::Indirect {
+                    pointee_type: value_type,
+                    pointer: Box::new(Constant::Register(register.clone())),
+                })));
+                symbol.set_external(value.is_none());
+                self.current_namespace_info_mut().define(name, symbol)?;
+
+                *global_register = Some(register);
             }
-            NodeKind::Constant { name, value_type, global_register, .. } => {
-                let value_type = self.interpret_type_node(value_type)?;
-                *global_register = Some(self.define_global_variable(name, value_type, false)?);
-            }
-            NodeKind::Function { name, parameters, is_variadic, return_type, global_register, is_foreign, .. } => {
+            NodeKind::Function { name, symbol_name, parameters, is_variadic, return_type, body, global_register } => {
                 let parameter_types = parameters
                     .iter()
                     .map(|parameter| {
@@ -636,42 +644,20 @@ impl GlobalContext {
                 let signature = FunctionSignature::new(return_type, parameter_types, *is_variadic);
                 let function_type = self.get_function_type(&signature);
 
-                let identifier = if *is_foreign {
-                    name.clone()
-                } else {
-                    self.current_namespace_info()
-                        .path()
-                        .child(name.clone())
-                        .to_string()
-                        .into_boxed_str()
-                };
+                let identifier = self.get_global_identifier(name, symbol_name.as_ref());
                 let register = GlobalRegister::new(identifier, function_type);
 
-                self.current_namespace_info_mut().define(
-                    name,
-                    Symbol::new(SymbolKind::Value(Value::Constant(Constant::Register(register.clone())))),
-                )?;
+                let mut symbol = Symbol::new(SymbolKind::Value(Value::from(register.clone())));
+                symbol.set_external(body.is_none());
+                self.current_namespace_info_mut().define(name, symbol)?;
 
                 *global_register = Some(register);
             }
-            NodeKind::Structure { name, members, self_type, is_foreign } => {
-                if *is_foreign {
-                    self.type_registry.update_type_repr(
-                        *self_type,
-                        TypeRepr::OpaqueStructure {
-                            name: name.clone(),
-                            is_external: false,
-                        },
-                        &self.target,
-                        self.package.fill_phase_complete(),
-                    );
-                }
-                else {
+            NodeKind::Structure { name, members, self_type } => {
+                if let Some(members) = members {
                     self.set_self_type(*self_type);
 
                     let members = crate::Result::from_iter(members
-                        .as_ref()
-                        .unwrap()
                         .iter()
                         .map(|member| Ok(StructureMember {
                             name: member.name.clone(),
@@ -689,6 +675,16 @@ impl GlobalContext {
                     );
 
                     self.unset_self_type();
+                } else {
+                    self.type_registry.update_type_repr(
+                        *self_type,
+                        TypeRepr::OpaqueStructure {
+                            name: name.clone(),
+                            is_external: false,
+                        },
+                        &self.target,
+                        self.package.fill_phase_complete(),
+                    );
                 }
             }
             NodeKind::Implement { self_type, statements, .. } => {
@@ -716,24 +712,20 @@ impl GlobalContext {
         Ok(())
     }
 
-    fn define_global_variable(&mut self, name: &str, value_type: TypeHandle, is_mutable: bool) -> crate::Result<GlobalRegister> {
-        let identifier = self.current_module_info()
-            .path()
-            .child(name)
-            .to_string()
-            .into_boxed_str();
-        let pointer_type = self.get_pointer_type(value_type, PointerSemantics::for_symbol(is_mutable));
-        let register = GlobalRegister::new(identifier, pointer_type);
-
-        self.current_namespace_info_mut().define(
-            name,
-            Symbol::new(SymbolKind::Value(Value::Constant(Constant::Indirect {
-                pointee_type: value_type,
-                pointer: Box::new(Constant::Register(register.clone())),
-            }))),
-        )?;
-
-        Ok(register)
+    fn get_global_identifier(&self, name: &str, symbol_name: Option<&Box<[u8]>>) -> Box<[u8]> {
+        match symbol_name {
+            Some(symbol_name) => {
+                symbol_name.clone()
+            }
+            None => {
+                self.current_namespace_info()
+                    .path()
+                    .child(name)
+                    .to_string()
+                    .as_bytes()
+                    .into()
+            }
+        }
     }
 
     pub fn complete_fill_phase(&mut self) -> crate::Result<()> {

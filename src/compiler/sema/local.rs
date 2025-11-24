@@ -21,7 +21,7 @@ impl LocalContext {
         Self {
             function,
             function_path,
-            current_block: BasicBlock::new(BlockLabel::new(".block.0".into())),
+            current_block: BasicBlock::new(BlockLabel::new(b".block.0".as_slice().into())),
             break_stack: Vec::new(),
             continue_stack: Vec::new(),
             symbol_versions: HashMap::new(),
@@ -117,8 +117,8 @@ impl LocalContext {
             .and_modify(|version| *version += 1)
             .or_insert(0);
         let identifier = match version {
-            0 => name.clone(),
-            1.. => format!("{name}-{version}").into_boxed_str(),
+            0 => name.as_bytes().into(),
+            1.. => format!("{name}-{version}").as_bytes().into(),
         };
         let register = LocalRegister::new(identifier, pointer_type);
         let value = Value::Indirect {
@@ -136,8 +136,8 @@ impl LocalContext {
             .and_modify(|version| *version += 1)
             .or_insert(0);
         let identifier = match version {
-            0 => format!("{}.{name}", self.function_path()).into_boxed_str(),
-            1.. => format!("{}.{name}-{version}", self.function_path()).into_boxed_str(),
+            0 => format!("{}.{name}", self.function_path()).as_bytes().into(),
+            1.. => format!("{}.{name}-{version}", self.function_path()).as_bytes().into(),
         };
         let register = GlobalRegister::new(identifier, pointer_type);
         let value = Value::Constant(Constant::Indirect {
@@ -158,14 +158,14 @@ impl LocalContext {
         let id = self.next_anonymous_register_id;
         self.next_anonymous_register_id += 1;
 
-        LocalRegister::new(id.to_string().into_boxed_str(), value_type)
+        LocalRegister::new(id.to_string().as_bytes().into(), value_type)
     }
 
     pub fn new_block_label(&mut self) -> BlockLabel {
         let id = self.next_basic_block_id;
         self.next_basic_block_id += 1;
 
-        BlockLabel::new(format!(".block.{id}").into_boxed_str())
+        BlockLabel::new(format!(".block.{id}").as_bytes().into())
     }
 
     pub fn finish(mut self) -> FunctionDefinition {

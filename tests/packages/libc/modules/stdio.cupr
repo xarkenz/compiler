@@ -1,4 +1,8 @@
-foreign struct CFile;
+struct CFile { .. }
+
+foreign let stdin: *mut CFile;
+foreign let stdout: *mut CFile;
+foreign let stderr: *mut CFile;
 
 foreign function fopen(filename: *[u8], mode: *[u8]) -> *mut CFile;
 

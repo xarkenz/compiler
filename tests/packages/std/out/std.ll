@@ -1,37 +1,18 @@
 source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\\std\\main.cupr"
 
-%"::std::string::MutStr" = type { i8*, i64 }
-
 %"::std::string::String" = type { %"::std::string::MutStr", i64 }
 
 %"::std::string::Str" = type { i8*, i64 }
 
+%"::std::string::MutStr" = type { i8*, i64 }
+
 declare void @free(i8*)
+
+declare i64 @llvm.umax.i64(i64, i64)
 
 declare i8* @malloc(i64)
 
 declare i8* @memcpy(i8*, i8*, i64)
-
-define i64 @"<usize>::max"(i64 %0, i64 %1) {
-.block.0:
-	%self = alloca i64
-	store i64 %0, i64* %self
-	%other = alloca i64
-	store i64 %1, i64* %other
-	%2 = load i64, i64* %self
-	%3 = load i64, i64* %other
-	%4 = icmp ugt i64 %2, %3
-	br i1 %4, label %.block.1, label %.block.2
-.block.1:
-	%5 = load i64, i64* %self
-	br label %.block.3
-.block.2:
-	%6 = load i64, i64* %other
-	br label %.block.3
-.block.3:
-		%7 = phi i64 [ %5, %.block.1 ], [ %6, %.block.2 ]
-	ret i64 %7
-}
 
 define void @"<u8>::swap"(i8* %0, i8* %1) {
 .block.0:
@@ -155,7 +136,7 @@ define void @"::std::string::String::grow_by"(%"::std::string::String"* %0, i64 
 	%9 = load i64, i64* %8
 	%10 = mul nuw i64 %9, 2
 	%11 = load i64, i64* %required_capacity
-	%12 = call i64(i64, i64) @"<usize>::max"(i64 %10, i64 %11)
+	%12 = call i64(i64, i64) @llvm.umax.i64(i64 %10, i64 %11)
 	%capacity = alloca i64
 	store i64 %12, i64* %capacity
 	%13 = load i64, i64* %capacity

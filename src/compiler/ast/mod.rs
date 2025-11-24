@@ -460,20 +460,15 @@ pub enum NodeKind {
     },
     Let {
         name: Box<str>,
+        symbol_name: Option<Box<[u8]>>,
         value_type: Option<Box<TypeNode>>,
         is_mutable: bool,
         value: Option<Box<Node>>,
         global_register: Option<GlobalRegister>,
     },
-    Constant {
-        name: Box<str>,
-        value_type: Box<TypeNode>,
-        value: Box<Node>,
-        global_register: Option<GlobalRegister>,
-    },
     Function {
         name: Box<str>,
-        is_foreign: bool,
+        symbol_name: Option<Box<[u8]>>,
         parameters: Box<[FunctionParameterNode]>,
         is_variadic: bool,
         return_type: Box<TypeNode>,
@@ -482,7 +477,6 @@ pub enum NodeKind {
     },
     Structure {
         name: Box<str>,
-        is_foreign: bool,
         members: Option<Box<[StructureMemberNode]>>,
         self_type: TypeHandle,
     },
@@ -608,7 +602,10 @@ impl std::fmt::Display for NodeKind {
                     write!(f, " return;")
                 }
             }
-            Self::Let { name, value_type, is_mutable, value, .. } => {
+            Self::Let { name, symbol_name, value_type, is_mutable, value, .. } => {
+                if let Some(symbol_name) = symbol_name {
+                    write!(f, " foreign(\"{}\")", String::from_utf8_lossy(symbol_name))?;
+                }
                 if *is_mutable {
                     write!(f, " let mut {name}")?;
                 }
@@ -625,12 +622,9 @@ impl std::fmt::Display for NodeKind {
                     write!(f, ";")
                 }
             }
-            Self::Constant { name, value_type, value, .. } => {
-                write!(f, " let const {name}: {value_type} = {value};")
-            }
-            Self::Function { name, parameters, is_variadic, return_type, body, is_foreign, .. } => {
-                if *is_foreign {
-                    write!(f, " foreign")?;
+            Self::Function { name, parameters, is_variadic, return_type, body, symbol_name, .. } => {
+                if let Some(symbol_name) = symbol_name {
+                    write!(f, " foreign(\"{}\")", String::from_utf8_lossy(symbol_name))?;
                 }
                 write!(f, " function {name}(")?;
                 let mut parameters_iter = parameters.iter();
@@ -660,10 +654,7 @@ impl std::fmt::Display for NodeKind {
                     write!(f, ") -> {return_type};")
                 }
             }
-            Self::Structure { name, members, is_foreign, .. } => {
-                if *is_foreign {
-                    write!(f, " foreign")?;
-                }
+            Self::Structure { name, members, .. } => {
                 if let Some(members) = members {
                     write!(f, " struct {name} {{")?;
                     let mut members_iter = members.iter();
@@ -677,7 +668,7 @@ impl std::fmt::Display for NodeKind {
                     write!(f, "}}")
                 }
                 else {
-                    write!(f, " struct {name};")
+                    write!(f, " struct {name} {{ .. }}")
                 }
             }
             Self::Implement { self_type, statements } => {

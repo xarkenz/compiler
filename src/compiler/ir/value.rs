@@ -262,23 +262,27 @@ impl StringValue {
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
+
+    pub fn raw_bytes(&self) -> &[u8] {
+        self.bytes.strip_suffix(&[0]).unwrap_or(&self.bytes)
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct LocalRegister {
-    identifier: Box<str>,
+    identifier: Box<[u8]>,
     value_type: TypeHandle,
 }
 
 impl LocalRegister {
-    pub fn new(identifier: Box<str>, value_type: TypeHandle) -> Self {
+    pub fn new(identifier: Box<[u8]>, value_type: TypeHandle) -> Self {
         Self {
             identifier,
             value_type,
         }
     }
 
-    pub fn identifier(&self) -> &str {
+    pub fn identifier(&self) -> &[u8] {
         &self.identifier
     }
 
@@ -293,19 +297,19 @@ impl LocalRegister {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct GlobalRegister {
-    identifier: Box<str>,
+    identifier: Box<[u8]>,
     value_type: TypeHandle,
 }
 
 impl GlobalRegister {
-    pub fn new(identifier: Box<str>, value_type: TypeHandle) -> Self {
+    pub fn new(identifier: Box<[u8]>, value_type: TypeHandle) -> Self {
         Self {
             identifier,
             value_type,
         }
     }
 
-    pub fn identifier(&self) -> &str {
+    pub fn identifier(&self) -> &[u8] {
         &self.identifier
     }
 
@@ -320,17 +324,17 @@ impl GlobalRegister {
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct BlockLabel {
-    identifier: Box<str>,
+    identifier: Box<[u8]>,
 }
 
 impl BlockLabel {
-    pub fn new(identifier: Box<str>) -> Self {
+    pub fn new(identifier: Box<[u8]>) -> Self {
         Self {
             identifier,
         }
     }
 
-    pub fn identifier(&self) -> &str {
+    pub fn identifier(&self) -> &[u8] {
         &self.identifier
     }
 }

@@ -122,6 +122,7 @@ pub enum ErrorKind {
         allowed_tokens: Vec<token::Token>,
     },
     ExpectedIdentifier,
+    ExpectedString,
     ExpectedTupleMember,
     TupleMemberOutOfRange {
         member: String,
@@ -293,6 +294,7 @@ impl std::fmt::Display for ErrorKind {
                 write!(f, "; got '{got_token}'")
             }
             Self::ExpectedIdentifier => write!(f, "expected an identifier"),
+            Self::ExpectedString => write!(f, "expected a quoted string"),
             Self::ExpectedTupleMember => write!(f, "expected a tuple member"),
             Self::TupleMemberOutOfRange { member, member_count } => write!(f, "member '{member}' is out of range for a tuple with {member_count} members"),
             Self::ExpectedOperand { got_token } => write!(f, "expected an operand, got '{got_token}'"),

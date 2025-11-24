@@ -1,26 +1,28 @@
 source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\\test_collections\\main.cupr"
 
-%"::test_collections::BTreeNode" = type { i1, i64, %"::test_collections::BTreeNodeKey"*, %"::test_collections::BTreeNode"* }
-
-%"::test_collections::LinkedListNode" = type { {}*, %"::test_collections::LinkedListNode"* }
-
 %"::test_collections::AVLTree" = type { %"::test_collections::AVLTreeNode"*, i32({}*, {}*)* }
-
-%"::test_collections::BTreeLeaf" = type { i1, i64, {}** }
 
 %"::test_collections::BTree" = type { i64, i64, i32({}*, {}*)*, %"::test_collections::BTreeNode"* }
 
-%"::test_collections::AVLTreeNode" = type { {}*, %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"*, i32 }
+%"::test_collections::BTreeNode" = type { i1, i64, %"::test_collections::BTreeNodeKey"*, %"::test_collections::BTreeNode"* }
+
+%"::test_collections::BTreeLeaf" = type { i1, i64, {}** }
+
+%"::test_collections::LinkedListNode" = type { {}*, %"::test_collections::LinkedListNode"* }
+
+%"::test_collections::BTreeNodeKey" = type { {}*, %"::test_collections::BTreeNode"* }
 
 %"::test_collections::LinkedList" = type { %"::test_collections::LinkedListNode"* }
 
-%"::test_collections::BTreeNodeKey" = type { {}*, %"::test_collections::BTreeNode"* }
+%"::test_collections::AVLTreeNode" = type { {}*, %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"*, i32 }
 
 declare i32 @printf(i8*, ...)
 
 declare i8* @malloc(i64)
 
 declare void @free(i8*)
+
+declare i32 @llvm.smax.i32(i32, i32)
 
 @.const.test_collections.0 = private unnamed_addr constant [3 x i8] c"%d\00"
 
@@ -61,27 +63,6 @@ declare void @free(i8*)
 @.const.test_collections.18 = private unnamed_addr constant [11 x i8] c"heapsort: \00"
 
 @.const.test_collections.19 = private unnamed_addr constant [2 x i8] c"\0A\00"
-
-define i32 @"<i32>::max"(i32 %0, i32 %1) {
-.block.0:
-	%self = alloca i32
-	store i32 %0, i32* %self
-	%other = alloca i32
-	store i32 %1, i32* %other
-	%2 = load i32, i32* %self
-	%3 = load i32, i32* %other
-	%4 = icmp sgt i32 %2, %3
-	br i1 %4, label %.block.1, label %.block.2
-.block.1:
-	%5 = load i32, i32* %self
-	br label %.block.3
-.block.2:
-	%6 = load i32, i32* %other
-	br label %.block.3
-.block.3:
-		%7 = phi i32 [ %5, %.block.1 ], [ %6, %.block.2 ]
-	ret i32 %7
-}
 
 define i32 @"<i32>::cmp"(i32* %0, i32* %1) {
 .block.0:
@@ -276,7 +257,7 @@ define void @"::test_collections::AVLTreeNode::recompute_height"(%"::test_collec
 	%8 = getelementptr inbounds %"::test_collections::AVLTreeNode", %"::test_collections::AVLTreeNode"* %7, i32 0, i32 2
 	%9 = load %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"** %8
 	%10 = call i32(%"::test_collections::AVLTreeNode"*) @"::test_collections::AVLTreeNode::get_height"(%"::test_collections::AVLTreeNode"* %9)
-	%11 = call i32(i32, i32) @"<i32>::max"(i32 %6, i32 %10)
+	%11 = call i32(i32, i32) @llvm.smax.i32(i32 %6, i32 %10)
 	%12 = add nsw i32 1, %11
 	store i32 %12, i32* %2
 	ret void

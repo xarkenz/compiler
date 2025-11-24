@@ -5,3 +5,6 @@ main_path = "main.cupr"
 
 [dependency.libc]
 path = "../libc"
+
+[dependency.std]
+path = "../std"

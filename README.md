@@ -156,21 +156,34 @@ continue to the next iteration of the nearest loop. In the future, these will ac
 
 The `return` statement returns a value from the current function (or no value, if the function is `void`).
 
-#### Foreign
+#### Foreign Functions and Variables
 
 Functions and global variables declared with the `foreign` keyword prevent the compiler from including the full path
-for their name, thus allowing linkage with other libraries. This is used for the `main` function so it is recognized
-by `libc`. If the `foreign` keyword is not used for `main`, even if it is located in the root module, its internal
+for their name, thus allowing linkage with other libraries. Foreign functions may be declared as external by omitting
+the function body, and foreign global variables may be declared as external by omitting the value.
+
+For example, this is frequently used for the `main` function so it is recognized by `libc` as the entry point.
+If the `foreign` keyword is not used for `main`, even if it is located in the root module, its internal
 symbol name will be `::main` (a prefix of `::` indicates the root module).
 
-Structure types can also be declared `foreign` to indicate that they are *opaque*; that is, the composition of the
-structure is not known. For example, `FILE` in C might be represented as follows:
+When declaring a foreign function or variable, the symbol given to the function is the literal name of the function or
+variable by default. This can be overridden by including a string in parentheses after the `foreign` keyword:
 
-```rust
-foreign struct CFile;
+```
+foreign("my_symbol_1") function my_function();
+foreign("my_symbol_2") let my_variable: i32;
 ```
 
-Foreign structures can only be used via pointer since size and alignment information is not known.
+#### Opaque Structures
+
+Structure types can also be declared *opaque* to indicate that the composition of the  structure is not known.
+For example, `FILE` in C might be represented as follows (the `..` is literal):
+
+```rust
+struct CFile { .. }
+```
+
+Opaque structures can only be used behind a pointer since size and alignment information is not known.
 
 #### Methods
 

@@ -25,21 +25,21 @@ impl LLVMDisplay for crate::ir::value::StringValue {
 impl LLVMDisplay for crate::ir::value::LocalRegister {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>, context: &GlobalContext) -> std::fmt::Result {
         let _ = context;
-        write!(f, "%{}", IdentifierDisplay(self.identifier().as_bytes()))
+        write!(f, "%{}", IdentifierDisplay(self.identifier()))
     }
 }
 
 impl LLVMDisplay for crate::ir::value::GlobalRegister {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>, context: &GlobalContext) -> std::fmt::Result {
         let _ = context;
-        write!(f, "@{}", IdentifierDisplay(self.identifier().as_bytes()))
+        write!(f, "@{}", IdentifierDisplay(self.identifier()))
     }
 }
 
 impl LLVMDisplay for crate::ir::value::BlockLabel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>, context: &GlobalContext) -> std::fmt::Result {
         let _ = context;
-        write!(f, "%{}", IdentifierDisplay(self.identifier().as_bytes()))
+        write!(f, "%{}", IdentifierDisplay(self.identifier()))
     }
 }
 

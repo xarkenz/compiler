@@ -180,7 +180,7 @@ impl LLVMDisplay for crate::ir::FunctionDefinition {
 
 impl LLVMDisplay for crate::ir::instr::BasicBlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>, context: &GlobalContext) -> std::fmt::Result {
-        writeln!(f, "{}:", self.label().identifier())?;
+        writeln!(f, "{}:", IdentifierDisplay(self.label().identifier()))?;
         for phi in self.phis() {
             writeln!(f, "\t{}", phi.llvm(context))?;
         }
