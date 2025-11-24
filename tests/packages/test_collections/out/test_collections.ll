@@ -1,5 +1,67 @@
 source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\\test_collections\\main.cupr"
 
+%"::test_collections::BTreeNode" = type { i1, i64, %"::test_collections::BTreeNodeKey"*, %"::test_collections::BTreeNode"* }
+
+%"::test_collections::LinkedListNode" = type { {}*, %"::test_collections::LinkedListNode"* }
+
+%"::test_collections::AVLTree" = type { %"::test_collections::AVLTreeNode"*, i32({}*, {}*)* }
+
+%"::test_collections::BTreeLeaf" = type { i1, i64, {}** }
+
+%"::test_collections::BTree" = type { i64, i64, i32({}*, {}*)*, %"::test_collections::BTreeNode"* }
+
+%"::test_collections::AVLTreeNode" = type { {}*, %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"*, i32 }
+
+%"::test_collections::LinkedList" = type { %"::test_collections::LinkedListNode"* }
+
+%"::test_collections::BTreeNodeKey" = type { {}*, %"::test_collections::BTreeNode"* }
+
+declare i32 @printf(i8*, ...)
+
+declare i8* @malloc(i64)
+
+declare void @free(i8*)
+
+@.const.test_collections.0 = private unnamed_addr constant [3 x i8] c"%d\00"
+
+@.const.test_collections.1 = private unnamed_addr constant [2 x i8] c"(\00"
+
+@.const.test_collections.2 = private unnamed_addr constant [2 x i8] c" \00"
+
+@.const.test_collections.3 = private unnamed_addr constant [2 x i8] c" \00"
+
+@.const.test_collections.4 = private unnamed_addr constant [2 x i8] c")\00"
+
+@.const.test_collections.5 = private unnamed_addr constant [2 x i8] c"\0A\00"
+
+@.const.test_collections.6 = private unnamed_addr constant [3 x i8] c"[]\00"
+
+@.const.test_collections.7 = private unnamed_addr constant [4 x i8] c"[%d\00"
+
+@.const.test_collections.8 = private unnamed_addr constant [5 x i8] c", %d\00"
+
+@.const.test_collections.9 = private unnamed_addr constant [2 x i8] c"]\00"
+
+@.const.test_collections.10 = private unnamed_addr constant [10 x i8] c"push: %d\0A\00"
+
+@.const.test_collections.11 = private unnamed_addr constant [9 x i8] c"pop: %d\0A\00"
+
+@.const.test_collections.12 = private unnamed_addr constant [12 x i8] c"insert: %d\0A\00"
+
+@.const.test_collections.13 = private unnamed_addr constant [4 x i8] c"yes\00"
+
+@.const.test_collections.14 = private unnamed_addr constant [3 x i8] c"no\00"
+
+@.const.test_collections.15 = private unnamed_addr constant [17 x i8] c"contains %d: %s\0A\00"
+
+@.const.test_collections.16 = private unnamed_addr constant [11 x i8] c"unsorted: \00"
+
+@.const.test_collections.17 = private unnamed_addr constant [2 x i8] c"\0A\00"
+
+@.const.test_collections.18 = private unnamed_addr constant [11 x i8] c"heapsort: \00"
+
+@.const.test_collections.19 = private unnamed_addr constant [2 x i8] c"\0A\00"
+
 define i32 @"<i32>::max"(i32 %0, i32 %1) {
 .block.0:
 	%self = alloca i32
@@ -17,7 +79,7 @@ define i32 @"<i32>::max"(i32 %0, i32 %1) {
 	%6 = load i32, i32* %other
 	br label %.block.3
 .block.3:
-	%7 = phi i32 [ %5, %.block.1 ], [ %6, %.block.2 ]
+		%7 = phi i32 [ %5, %.block.1 ], [ %6, %.block.2 ]
 	ret i32 %7
 }
 
@@ -48,10 +110,10 @@ define i32 @"<i32>::cmp"(i32* %0, i32* %1) {
 .block.5:
 	br label %.block.6
 .block.6:
-	%13 = phi i32 [ 1, %.block.4 ], [ 0, %.block.5 ]
+		%13 = phi i32 [ 1, %.block.4 ], [ 0, %.block.5 ]
 	br label %.block.3
 .block.3:
-	%14 = phi i32 [ %7, %.block.1 ], [ %13, %.block.6 ]
+		%14 = phi i32 [ %7, %.block.1 ], [ %13, %.block.6 ]
 	ret i32 %14
 }
 
@@ -61,15 +123,9 @@ define void @"<i32>::print"(i32* %0) {
 	store i32* %0, i32** %self
 	%1 = load i32*, i32** %self
 	%2 = load i32, i32* %1
-	%3 = call i32(i8*, ...) @printf(i8* bitcast ([3 x i8]* @.const.0 to i8*), i32 %2)
+	%3 = call i32(i8*, ...) @printf(i8* bitcast ([3 x i8]* @.const.test_collections.0 to i8*), i32 %2)
 	ret void
 }
-
-@.const.0 = private unnamed_addr constant [3 x i8] c"%d\00"
-
-%"::test_collections::LinkedListNode" = type { {}*, %"::test_collections::LinkedListNode"* }
-
-%"::test_collections::LinkedList" = type { %"::test_collections::LinkedListNode"* }
 
 define %"::test_collections::LinkedList" @"::test_collections::LinkedList::new"() {
 .block.0:
@@ -95,7 +151,7 @@ define {}* @"::test_collections::LinkedList::front"(%"::test_collections::Linked
 	%9 = load {}*, {}** %8
 	br label %.block.3
 .block.3:
-	%10 = phi {}* [ null, %.block.1 ], [ %9, %.block.2 ]
+		%10 = phi {}* [ null, %.block.1 ], [ %9, %.block.2 ]
 	ret {}* %10
 }
 
@@ -162,11 +218,9 @@ define {}* @"::test_collections::LinkedList::pop_front"(%"::test_collections::Li
 	%18 = load {}*, {}** %value
 	br label %.block.3
 .block.3:
-	%19 = phi {}* [ null, %.block.1 ], [ %18, %.block.2 ]
+		%19 = phi {}* [ null, %.block.1 ], [ %18, %.block.2 ]
 	ret {}* %19
 }
-
-%"::test_collections::AVLTreeNode" = type { {}*, %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"*, i32 }
 
 define %"::test_collections::AVLTreeNode"* @"::test_collections::AVLTreeNode::alloc"({}* %0) {
 .block.0:
@@ -204,7 +258,7 @@ define i32 @"::test_collections::AVLTreeNode::get_height"(%"::test_collections::
 	%6 = load i32, i32* %5
 	br label %.block.3
 .block.3:
-	%7 = phi i32 [ %3, %.block.1 ], [ %6, %.block.2 ]
+		%7 = phi i32 [ %3, %.block.1 ], [ %6, %.block.2 ]
 	ret i32 %7
 }
 
@@ -373,10 +427,10 @@ define %"::test_collections::AVLTreeNode"* @"::test_collections::AVLTreeNode::ba
 	%60 = load %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"** %self
 	br label %.block.12
 .block.12:
-	%61 = phi %"::test_collections::AVLTreeNode"* [ %58, %.block.11 ], [ %60, %.block.9 ]
+		%61 = phi %"::test_collections::AVLTreeNode"* [ %58, %.block.11 ], [ %60, %.block.9 ]
 	br label %.block.7
 .block.7:
-	%62 = phi %"::test_collections::AVLTreeNode"* [ %34, %.block.6 ], [ %61, %.block.12 ]
+		%62 = phi %"::test_collections::AVLTreeNode"* [ %34, %.block.6 ], [ %61, %.block.12 ]
 	ret %"::test_collections::AVLTreeNode"* %62
 }
 
@@ -390,36 +444,29 @@ define void @"::test_collections::AVLTreeNode::print"(%"::test_collections::AVLT
 	%3 = icmp ne %"::test_collections::AVLTreeNode"* %2, null
 	br i1 %3, label %.block.1, label %.block.2
 .block.1:
-	%4 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.1 to i8*))
+	%4 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.test_collections.1 to i8*))
 	%5 = load %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"** %self
 	%6 = getelementptr inbounds %"::test_collections::AVLTreeNode", %"::test_collections::AVLTreeNode"* %5, i32 0, i32 1
 	%7 = load %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"** %6
 	%8 = load void({}*)*, void({}*)** %printer
 	call void(%"::test_collections::AVLTreeNode"*, void({}*)*) @"::test_collections::AVLTreeNode::print"(%"::test_collections::AVLTreeNode"* %7, void({}*)* %8)
-	%9 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.2 to i8*))
+	%9 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.test_collections.2 to i8*))
 	%10 = load void({}*)*, void({}*)** %printer
 	%11 = load %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"** %self
 	%12 = getelementptr inbounds %"::test_collections::AVLTreeNode", %"::test_collections::AVLTreeNode"* %11, i32 0, i32 0
 	%13 = load {}*, {}** %12
 	call void({}*) %10({}* %13)
-	%14 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.3 to i8*))
+	%14 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.test_collections.3 to i8*))
 	%15 = load %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"** %self
 	%16 = getelementptr inbounds %"::test_collections::AVLTreeNode", %"::test_collections::AVLTreeNode"* %15, i32 0, i32 2
 	%17 = load %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"** %16
 	%18 = load void({}*)*, void({}*)** %printer
 	call void(%"::test_collections::AVLTreeNode"*, void({}*)*) @"::test_collections::AVLTreeNode::print"(%"::test_collections::AVLTreeNode"* %17, void({}*)* %18)
-	%19 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.4 to i8*))
+	%19 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.test_collections.4 to i8*))
 	br label %.block.2
 .block.2:
 	ret void
 }
-
-@.const.1 = private unnamed_addr constant [2 x i8] c"(\00"
-@.const.2 = private unnamed_addr constant [2 x i8] c" \00"
-@.const.3 = private unnamed_addr constant [2 x i8] c" \00"
-@.const.4 = private unnamed_addr constant [2 x i8] c")\00"
-
-%"::test_collections::AVLTree" = type { %"::test_collections::AVLTreeNode"*, i32({}*, {}*)* }
 
 define %"::test_collections::AVLTree" @"::test_collections::AVLTree::new"(i32({}*, {}*)* %0) {
 .block.0:
@@ -596,17 +643,9 @@ define void @"::test_collections::AVLTree::print"(%"::test_collections::AVLTree"
 	%4 = load %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"** %3
 	%5 = load void({}*)*, void({}*)** %printer
 	call void(%"::test_collections::AVLTreeNode"*, void({}*)*) @"::test_collections::AVLTreeNode::print"(%"::test_collections::AVLTreeNode"* %4, void({}*)* %5)
-	%6 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.5 to i8*))
+	%6 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.test_collections.5 to i8*))
 	ret void
 }
-
-@.const.5 = private unnamed_addr constant [2 x i8] c"\0A\00"
-
-%"::test_collections::BTreeNodeKey" = type { {}*, %"::test_collections::BTreeNode"* }
-
-%"::test_collections::BTreeNode" = type { i1, i64, %"::test_collections::BTreeNodeKey"*, %"::test_collections::BTreeNode"* }
-
-%"::test_collections::BTreeLeaf" = type { i1, i64, {}** }
 
 define %"::test_collections::BTreeLeaf"* @"::test_collections::BTreeLeaf::alloc"(i64 %0, {}* %1) {
 .block.0:
@@ -639,8 +678,6 @@ define %"::test_collections::BTreeLeaf"* @"::test_collections::BTreeLeaf::alloc"
 	%16 = load %"::test_collections::BTreeLeaf"*, %"::test_collections::BTreeLeaf"** %alloc
 	ret %"::test_collections::BTreeLeaf"* %16
 }
-
-%"::test_collections::BTree" = type { i64, i64, i32({}*, {}*)*, %"::test_collections::BTreeNode"* }
 
 define %"::test_collections::BTree" @"::test_collections::BTree::new"(i64 %0, i64 %1, i32({}*, {}*)* %2) {
 .block.0:
@@ -746,7 +783,7 @@ define void @"::test_collections::max_percolate_down"({}** %0, i64 %1, i32({}*, 
 	%30 = icmp sgt i32 %29, 0
 	br label %.block.7
 .block.7:
-	%31 = phi i1 [ true, %.block.5 ], [ %30, %.block.6 ]
+		%31 = phi i1 [ true, %.block.5 ], [ %30, %.block.6 ]
 	br i1 %31, label %.block.8, label %.block.9
 .block.8:
 	%32 = load i64, i64* %left
@@ -755,7 +792,7 @@ define void @"::test_collections::max_percolate_down"({}** %0, i64 %1, i32({}*, 
 	%33 = load i64, i64* %right
 	br label %.block.10
 .block.10:
-	%34 = phi i64 [ %32, %.block.8 ], [ %33, %.block.9 ]
+		%34 = phi i64 [ %32, %.block.8 ], [ %33, %.block.9 ]
 	%max = alloca i64
 	store i64 %34, i64* %max
 	%35 = load i32({}*, {}*)*, i32({}*, {}*)** %comparator
@@ -867,14 +904,14 @@ define void @"::test_collections::print_i32_ptr_array"(i32** %0, i64 %1) {
 	%3 = icmp eq i64 %2, 0
 	br i1 %3, label %.block.1, label %.block.2
 .block.1:
-	%4 = call i32(i8*, ...) @printf(i8* bitcast ([3 x i8]* @.const.6 to i8*))
+	%4 = call i32(i8*, ...) @printf(i8* bitcast ([3 x i8]* @.const.test_collections.6 to i8*))
 	ret void
 .block.2:
 	%5 = load i32**, i32*** %array
 	%6 = getelementptr inbounds i32*, i32** %5, i32 0
 	%7 = load i32*, i32** %6
 	%8 = load i32, i32* %7
-	%9 = call i32(i8*, ...) @printf(i8* bitcast ([4 x i8]* @.const.7 to i8*), i32 %8)
+	%9 = call i32(i8*, ...) @printf(i8* bitcast ([4 x i8]* @.const.test_collections.7 to i8*), i32 %8)
 	%index = alloca i64
 	store i64 1, i64* %index
 	br label %.block.3
@@ -889,20 +926,15 @@ define void @"::test_collections::print_i32_ptr_array"(i32** %0, i64 %1) {
 	%15 = getelementptr inbounds i32*, i32** %14, i64 %13
 	%16 = load i32*, i32** %15
 	%17 = load i32, i32* %16
-	%18 = call i32(i8*, ...) @printf(i8* bitcast ([5 x i8]* @.const.8 to i8*), i32 %17)
+	%18 = call i32(i8*, ...) @printf(i8* bitcast ([5 x i8]* @.const.test_collections.8 to i8*), i32 %17)
 	%19 = load i64, i64* %index
 	%20 = add nuw i64 %19, 1
 	store i64 %20, i64* %index
 	br label %.block.3
 .block.5:
-	%21 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.9 to i8*))
+	%21 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.test_collections.9 to i8*))
 	ret void
 }
-
-@.const.6 = private unnamed_addr constant [3 x i8] c"[]\00"
-@.const.7 = private unnamed_addr constant [4 x i8] c"[%d\00"
-@.const.8 = private unnamed_addr constant [5 x i8] c", %d\00"
-@.const.9 = private unnamed_addr constant [2 x i8] c"]\00"
 
 define i32 @main() {
 .block.0:
@@ -922,7 +954,7 @@ define i32 @main() {
 	%3 = load i64, i64* %i
 	%4 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i64 %3
 	%5 = load i32, i32* %4
-	%6 = call i32(i8*, ...) @printf(i8* bitcast ([10 x i8]* @.const.10 to i8*), i32 %5)
+	%6 = call i32(i8*, ...) @printf(i8* bitcast ([10 x i8]* @.const.test_collections.10 to i8*), i32 %5)
 	%7 = load i64, i64* %i
 	%8 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i64 %7
 	%9 = bitcast i32* %8 to {}*
@@ -943,7 +975,7 @@ define i32 @main() {
 .block.5:
 	%15 = load i32*, i32** %value
 	%16 = load i32, i32* %15
-	%17 = call i32(i8*, ...) @printf(i8* bitcast ([9 x i8]* @.const.11 to i8*), i32 %16)
+	%17 = call i32(i8*, ...) @printf(i8* bitcast ([9 x i8]* @.const.test_collections.11 to i8*), i32 %16)
 	br label %.block.4
 .block.6:
 	%18 = call %"::test_collections::AVLTree"(i32({}*, {}*)*) @"::test_collections::AVLTree::new"(i32({}*, {}*)* bitcast (i32(i32*, i32*)* @"<i32>::cmp" to i32({}*, {}*)*))
@@ -965,7 +997,7 @@ define i32 @main() {
 	%24 = load i64, i64* %idx
 	%25 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i64 %24
 	%26 = load i32, i32* %25
-	%27 = call i32(i8*, ...) @printf(i8* bitcast ([12 x i8]* @.const.12 to i8*), i32 %26)
+	%27 = call i32(i8*, ...) @printf(i8* bitcast ([12 x i8]* @.const.test_collections.12 to i8*), i32 %26)
 	%28 = load i64, i64* %idx
 	%29 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i64 %28
 	%30 = bitcast i32* %29 to {}*
@@ -997,14 +1029,14 @@ define i32 @main() {
 .block.14:
 	br label %.block.15
 .block.15:
-	%42 = phi i8* [ bitcast ([4 x i8]* @.const.13 to i8*), %.block.13 ], [ bitcast ([3 x i8]* @.const.14 to i8*), %.block.14 ]
+		%42 = phi i8* [ bitcast ([4 x i8]* @.const.test_collections.13 to i8*), %.block.13 ], [ bitcast ([3 x i8]* @.const.test_collections.14 to i8*), %.block.14 ]
 	%is_contained = alloca i8*
 	store i8* %42, i8** %is_contained
 	%43 = load i64, i64* %i-2
 	%44 = getelementptr inbounds [15 x i32], [15 x i32]* %keys, i32 0, i64 %43
 	%45 = load i32, i32* %44
 	%46 = load i8*, i8** %is_contained
-	%47 = call i32(i8*, ...) @printf(i8* bitcast ([17 x i8]* @.const.15 to i8*), i32 %45, i8* %46)
+	%47 = call i32(i8*, ...) @printf(i8* bitcast ([17 x i8]* @.const.test_collections.15 to i8*), i32 %45, i8* %46)
 	%48 = load i64, i64* %i-2
 	%49 = add nuw i64 %48, 1
 	store i64 %49, i64* %i-2
@@ -1042,35 +1074,16 @@ define i32 @main() {
 	store i64 %65, i64* %index
 	br label %.block.16
 .block.18:
-	%66 = call i32(i8*, ...) @printf(i8* bitcast ([11 x i8]* @.const.16 to i8*))
+	%66 = call i32(i8*, ...) @printf(i8* bitcast ([11 x i8]* @.const.test_collections.16 to i8*))
 	%67 = bitcast [15 x i32*]* %heap_sort_test to i32**
 	call void(i32**, i64) @"::test_collections::print_i32_ptr_array"(i32** %67, i64 15)
-	%68 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.17 to i8*))
+	%68 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.test_collections.17 to i8*))
 	%69 = bitcast [15 x i32*]* %heap_sort_test to {}**
 	call void({}**, i64, i32({}*, {}*)*) @"::test_collections::heap_sort"({}** %69, i64 15, i32({}*, {}*)* bitcast (i32(i32*, i32*)* @"<i32>::cmp" to i32({}*, {}*)*))
-	%70 = call i32(i8*, ...) @printf(i8* bitcast ([11 x i8]* @.const.18 to i8*))
+	%70 = call i32(i8*, ...) @printf(i8* bitcast ([11 x i8]* @.const.test_collections.18 to i8*))
 	%71 = bitcast [15 x i32*]* %heap_sort_test to i32**
 	call void(i32**, i64) @"::test_collections::print_i32_ptr_array"(i32** %71, i64 15)
-	%72 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.19 to i8*))
+	%72 = call i32(i8*, ...) @printf(i8* bitcast ([2 x i8]* @.const.test_collections.19 to i8*))
 	ret i32 0
 }
-
-@.const.10 = private unnamed_addr constant [10 x i8] c"push: %d\0A\00"
-@.const.11 = private unnamed_addr constant [9 x i8] c"pop: %d\0A\00"
-@.const.12 = private unnamed_addr constant [12 x i8] c"insert: %d\0A\00"
-@.const.13 = private unnamed_addr constant [4 x i8] c"yes\00"
-@.const.14 = private unnamed_addr constant [3 x i8] c"no\00"
-@.const.15 = private unnamed_addr constant [17 x i8] c"contains %d: %s\0A\00"
-@.const.16 = private unnamed_addr constant [11 x i8] c"unsorted: \00"
-@.const.17 = private unnamed_addr constant [2 x i8] c"\0A\00"
-@.const.18 = private unnamed_addr constant [11 x i8] c"heapsort: \00"
-@.const.19 = private unnamed_addr constant [2 x i8] c"\0A\00"
-
-; ==== External definitions from other packages ====
-
-declare i32 @printf(i8*, ...)
-
-declare i8* @malloc(i64)
-
-declare void @free(i8*)
 

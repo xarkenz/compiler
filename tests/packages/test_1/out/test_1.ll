@@ -1,5 +1,81 @@
 source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\\test_1\\main.cupr"
 
+%"::std::string::Str" = type { i8*, i64 }
+
+%"::std::string::String" = type { %"::std::string::MutStr", i64 }
+
+%"::test_1::Node" = type { i8*, %"::test_1::Node"* }
+
+%"::std::string::MutStr" = type { i8*, i64 }
+
+%"::test_1::Student" = type { i8*, i32, [4 x i32] }
+
+%"::libc::stdio::CFile" = type opaque
+
+declare %"::libc::stdio::CFile"* @fopen(i8*, i8*)
+
+declare i32 @puts(i8*)
+
+declare i8* @fgets(i8*, i32, %"::libc::stdio::CFile"*)
+
+declare i32 @isdigit(i32)
+
+declare i64 @strlen(i8*)
+
+declare i32 @fclose(%"::libc::stdio::CFile"*)
+
+declare i32 @printf(i8*, ...)
+
+declare i8* @malloc(i64)
+
+declare void @free(i8*)
+
+declare %"::std::string::String" @"::std::string::String::new"()
+
+declare void @"::std::string::String::push"(%"::std::string::String"*, i8)
+
+declare void @"::std::string::String::insert"(%"::std::string::String"*, i64, i8)
+
+declare %"::std::string::Str" @"::std::string::String::as_str"(%"::std::string::String"*)
+
+declare void @"::std::string::String::del"(%"::std::string::String")
+
+@.const.test_1.0 = private unnamed_addr constant [10 x i8] c"day01.txt\00"
+
+@.const.test_1.1 = private unnamed_addr constant [2 x i8] c"r\00"
+
+@.const.test_1.2 = private unnamed_addr constant [26 x i8] c"unable to open input file\00"
+
+@.const.test_1.3 = private unnamed_addr constant [38 x i8] c"[01p1] Sum of calibration values: %d\0A\00"
+
+@.const.test_1.4 = private unnamed_addr constant [10 x i8] c"Reversed:\00"
+
+@.const.test_1.5 = private unnamed_addr constant [4 x i8] c"%s\0A\00"
+
+@.const.test_1.6 = private unnamed_addr constant [9 x i8] c"Joe Mama\00"
+
+@.const.test_1.7 = private unnamed_addr constant [10 x i8] c"Name: %s\0A\00"
+
+@.const.test_1.8 = private unnamed_addr constant [9 x i8] c"Age: %u\0A\00"
+
+@.const.test_1.9 = private unnamed_addr constant [24 x i8] c"Grades: %u, %u, %u, %u\0A\00"
+
+@"::test_1::static_mut_var" = global i32 5
+
+@.const.test_1.10 = private unnamed_addr constant [14 x i8] c"I am a string\00"
+
+@"::test_1::static_var" = constant i8* bitcast ([14 x i8]* @.const.test_1.10 to i8*)
+
+@.const.test_1.11 = private unnamed_addr constant [8 x i8] c"Value 1\00"
+
+@.const.test_1.12 = private unnamed_addr constant [8 x i8] c"Value 2\00"
+
+@.const.test_1.13 = private unnamed_addr constant [8 x i8] c"Value 3\00"
+
+@.const.test_1.14 = private unnamed_addr constant [8 x i8] c"Value 4\00"
+
+@.const.test_1.15 = private unnamed_addr constant [22 x i8] c"i64::to_string: \22%s\22\0A\00"
+
 define i32 @"::test_1::fibonacci"(i32 %0) {
 .block.0:
 	%limit = alloca i32
@@ -59,14 +135,14 @@ define i32 @"::test_1::gcd"(i32 %0, i32 %1) {
 
 define void @"::test_1::aoc_01_p1"() {
 .block.0:
-	%0 = call %"::libc::stdio::CFile"*(i8*, i8*) @fopen(i8* bitcast ([10 x i8]* @.const.0 to i8*), i8* bitcast ([2 x i8]* @.const.1 to i8*))
+	%0 = call %"::libc::stdio::CFile"*(i8*, i8*) @fopen(i8* bitcast ([10 x i8]* @.const.test_1.0 to i8*), i8* bitcast ([2 x i8]* @.const.test_1.1 to i8*))
 	%input = alloca %"::libc::stdio::CFile"*
 	store %"::libc::stdio::CFile"* %0, %"::libc::stdio::CFile"** %input
 	%1 = load %"::libc::stdio::CFile"*, %"::libc::stdio::CFile"** %input
 	%2 = icmp eq %"::libc::stdio::CFile"* %1, null
 	br i1 %2, label %.block.1, label %.block.2
 .block.1:
-	%3 = call i32(i8*) @puts(i8* bitcast ([26 x i8]* @.const.2 to i8*))
+	%3 = call i32(i8*) @puts(i8* bitcast ([26 x i8]* @.const.test_1.2 to i8*))
 	ret void
 .block.2:
 	%calibration_sum = alloca i32
@@ -142,16 +218,9 @@ define void @"::test_1::aoc_01_p1"() {
 	%43 = load %"::libc::stdio::CFile"*, %"::libc::stdio::CFile"** %input
 	%44 = call i32(%"::libc::stdio::CFile"*) @fclose(%"::libc::stdio::CFile"* %43)
 	%45 = load i32, i32* %calibration_sum
-	%46 = call i32(i8*, ...) @printf(i8* bitcast ([38 x i8]* @.const.3 to i8*), i32 %45)
+	%46 = call i32(i8*, ...) @printf(i8* bitcast ([38 x i8]* @.const.test_1.3 to i8*), i32 %45)
 	ret void
 }
-
-@.const.0 = private unnamed_addr constant [10 x i8] c"day01.txt\00"
-@.const.1 = private unnamed_addr constant [2 x i8] c"r\00"
-@.const.2 = private unnamed_addr constant [26 x i8] c"unable to open input file\00"
-@.const.3 = private unnamed_addr constant [38 x i8] c"[01p1] Sum of calibration values: %d\0A\00"
-
-%"::test_1::Node" = type { i8*, %"::test_1::Node"* }
 
 define void @"::test_1::omg_linked_list"(i8** %0, i64 %1) {
 .block.0:
@@ -194,7 +263,7 @@ define void @"::test_1::omg_linked_list"(i8** %0, i64 %1) {
 	store i64 %19, i64* %index
 	br label %.block.1
 .block.3:
-	%20 = call i32(i8*) @puts(i8* bitcast ([10 x i8]* @.const.4 to i8*))
+	%20 = call i32(i8*) @puts(i8* bitcast ([10 x i8]* @.const.test_1.4 to i8*))
 	br label %.block.4
 .block.4:
 	%21 = load %"::test_1::Node"*, %"::test_1::Node"** %head
@@ -207,7 +276,7 @@ define void @"::test_1::omg_linked_list"(i8** %0, i64 %1) {
 	%24 = load %"::test_1::Node"*, %"::test_1::Node"** %node-1
 	%25 = getelementptr inbounds %"::test_1::Node", %"::test_1::Node"* %24, i32 0, i32 0
 	%26 = load i8*, i8** %25
-	%27 = call i32(i8*, ...) @printf(i8* bitcast ([4 x i8]* @.const.5 to i8*), i8* %26)
+	%27 = call i32(i8*, ...) @printf(i8* bitcast ([4 x i8]* @.const.test_1.5 to i8*), i8* %26)
 	%28 = load %"::test_1::Node"*, %"::test_1::Node"** %node-1
 	%29 = getelementptr inbounds %"::test_1::Node", %"::test_1::Node"* %28, i32 0, i32 1
 	%30 = load %"::test_1::Node"*, %"::test_1::Node"** %29
@@ -219,11 +288,6 @@ define void @"::test_1::omg_linked_list"(i8** %0, i64 %1) {
 .block.6:
 	ret void
 }
-
-@.const.4 = private unnamed_addr constant [10 x i8] c"Reversed:\00"
-@.const.5 = private unnamed_addr constant [4 x i8] c"%s\0A\00"
-
-%"::test_1::Student" = type { i8*, i32, [4 x i32] }
 
 define void @"::test_1::student_stuff"() {
 .block.0:
@@ -240,7 +304,7 @@ define void @"::test_1::student_stuff"() {
 	store i32 %2, i32* %4
 	%5 = load [4 x i32], [4 x i32]* %3
 	%6 = alloca %"::test_1::Student"
-	store %"::test_1::Student" { i8* bitcast ([9 x i8]* @.const.6 to i8*), i32 undef, [4 x i32] undef }, %"::test_1::Student"* %6
+	store %"::test_1::Student" { i8* bitcast ([9 x i8]* @.const.test_1.6 to i8*), i32 undef, [4 x i32] undef }, %"::test_1::Student"* %6
 	%7 = getelementptr inbounds %"::test_1::Student", %"::test_1::Student"* %6, i32 0, i32 1
 	store i32 %0, i32* %7
 	%8 = getelementptr inbounds %"::test_1::Student", %"::test_1::Student"* %6, i32 0, i32 2
@@ -250,10 +314,10 @@ define void @"::test_1::student_stuff"() {
 	store %"::test_1::Student" %9, %"::test_1::Student"* %joe
 	%10 = getelementptr inbounds %"::test_1::Student", %"::test_1::Student"* %joe, i32 0, i32 0
 	%11 = load i8*, i8** %10
-	%12 = call i32(i8*, ...) @printf(i8* bitcast ([10 x i8]* @.const.7 to i8*), i8* %11)
+	%12 = call i32(i8*, ...) @printf(i8* bitcast ([10 x i8]* @.const.test_1.7 to i8*), i8* %11)
 	%13 = getelementptr inbounds %"::test_1::Student", %"::test_1::Student"* %joe, i32 0, i32 1
 	%14 = load i32, i32* %13
-	%15 = call i32(i8*, ...) @printf(i8* bitcast ([9 x i8]* @.const.8 to i8*), i32 %14)
+	%15 = call i32(i8*, ...) @printf(i8* bitcast ([9 x i8]* @.const.test_1.8 to i8*), i32 %14)
 	%16 = getelementptr inbounds %"::test_1::Student", %"::test_1::Student"* %joe, i32 0, i32 2
 	%17 = getelementptr inbounds [4 x i32], [4 x i32]* %16, i32 0, i32 0
 	%18 = load i32, i32* %17
@@ -266,14 +330,9 @@ define void @"::test_1::student_stuff"() {
 	%25 = getelementptr inbounds %"::test_1::Student", %"::test_1::Student"* %joe, i32 0, i32 2
 	%26 = getelementptr inbounds [4 x i32], [4 x i32]* %25, i32 0, i32 3
 	%27 = load i32, i32* %26
-	%28 = call i32(i8*, ...) @printf(i8* bitcast ([24 x i8]* @.const.9 to i8*), i32 %18, i32 %21, i32 %24, i32 %27)
+	%28 = call i32(i8*, ...) @printf(i8* bitcast ([24 x i8]* @.const.test_1.9 to i8*), i32 %18, i32 %21, i32 %24, i32 %27)
 	ret void
 }
-
-@.const.6 = private unnamed_addr constant [9 x i8] c"Joe Mama\00"
-@.const.7 = private unnamed_addr constant [10 x i8] c"Name: %s\0A\00"
-@.const.8 = private unnamed_addr constant [9 x i8] c"Age: %u\0A\00"
-@.const.9 = private unnamed_addr constant [24 x i8] c"Grades: %u, %u, %u, %u\0A\00"
 
 define %"::std::string::String" @"<i64>::to_string"(i64 %0) {
 .block.0:
@@ -329,17 +388,12 @@ define %"::std::string::String" @"<i64>::to_string"(i64 %0) {
 	ret %"::std::string::String" %18
 }
 
-@"::test_1::static_mut_var" = global i32 5
-
-@.const.10 = private unnamed_addr constant [14 x i8] c"I am a string\00"
-@"::test_1::static_var" = global i8* bitcast ([14 x i8]* @.const.10 to i8*)
-
 define i32 @main() {
 .block.0:
 	call void() @"::test_1::aoc_01_p1"()
 	call void() @"::test_1::student_stuff"()
 	%values = alloca [4 x i8*]
-	store [4 x i8*] [ i8* bitcast ([8 x i8]* @.const.11 to i8*), i8* bitcast ([8 x i8]* @.const.12 to i8*), i8* bitcast ([8 x i8]* @.const.13 to i8*), i8* bitcast ([8 x i8]* @.const.14 to i8*) ], [4 x i8*]* %values
+	store [4 x i8*] [ i8* bitcast ([8 x i8]* @.const.test_1.11 to i8*), i8* bitcast ([8 x i8]* @.const.test_1.12 to i8*), i8* bitcast ([8 x i8]* @.const.test_1.13 to i8*), i8* bitcast ([8 x i8]* @.const.test_1.14 to i8*) ], [4 x i8*]* %values
 	%0 = bitcast [4 x i8*]* %values to i8**
 	call void(i8**, i64) @"::test_1::omg_linked_list"(i8** %0, i64 4)
 	%1 = call %"::std::string::String"() @"::std::string::String::new"()
@@ -374,53 +428,9 @@ define i32 @main() {
 	%9 = getelementptr inbounds %"::std::string::String", %"::std::string::String"* %number_string, i32 0, i32 0
 	%10 = getelementptr inbounds %"::std::string::MutStr", %"::std::string::MutStr"* %9, i32 0, i32 0
 	%11 = load i8*, i8** %10
-	%12 = call i32(i8*, ...) @printf(i8* bitcast ([22 x i8]* @.const.15 to i8*), i8* %11)
+	%12 = call i32(i8*, ...) @printf(i8* bitcast ([22 x i8]* @.const.test_1.15 to i8*), i8* %11)
 	%13 = load %"::std::string::String", %"::std::string::String"* %number_string
 	call void(%"::std::string::String") @"::std::string::String::del"(%"::std::string::String" %13)
 	ret i32 0
 }
-
-@.const.11 = private unnamed_addr constant [8 x i8] c"Value 1\00"
-@.const.12 = private unnamed_addr constant [8 x i8] c"Value 2\00"
-@.const.13 = private unnamed_addr constant [8 x i8] c"Value 3\00"
-@.const.14 = private unnamed_addr constant [8 x i8] c"Value 4\00"
-@.const.15 = private unnamed_addr constant [22 x i8] c"i64::to_string: \22%s\22\0A\00"
-
-; ==== External definitions from other packages ====
-
-%"::std::string::String" = type { %"::std::string::MutStr", i64 }
-
-%"::std::string::MutStr" = type { i8*, i64 }
-
-declare %"::libc::stdio::CFile"* @fopen(i8*, i8*)
-
-%"::libc::stdio::CFile" = type opaque
-
-declare i32 @puts(i8*)
-
-declare i8* @fgets(i8*, i32, %"::libc::stdio::CFile"*)
-
-declare i32 @isdigit(i32)
-
-declare i64 @strlen(i8*)
-
-declare i32 @fclose(%"::libc::stdio::CFile"*)
-
-declare i32 @printf(i8*, ...)
-
-declare i8* @malloc(i64)
-
-declare void @free(i8*)
-
-declare %"::std::string::String" @"::std::string::String::new"()
-
-declare void @"::std::string::String::push"(%"::std::string::String"*, i8)
-
-declare void @"::std::string::String::insert"(%"::std::string::String"*, i64, i8)
-
-declare %"::std::string::Str" @"::std::string::String::as_str"(%"::std::string::String"*)
-
-%"::std::string::Str" = type { i8*, i64 }
-
-declare void @"::std::string::String::del"(%"::std::string::String")
 

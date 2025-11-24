@@ -1,6 +1,7 @@
 pub mod parse;
 
-use crate::sema::{NamespaceHandle, PointerSemantics, Register, TypeHandle};
+use crate::ir::value::GlobalRegister;
+use crate::sema::{NamespaceHandle, PointerSemantics, TypeHandle};
 use crate::token::*;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -462,13 +463,13 @@ pub enum NodeKind {
         value_type: Option<Box<TypeNode>>,
         is_mutable: bool,
         value: Option<Box<Node>>,
-        global_register: Option<Register>,
+        global_register: Option<GlobalRegister>,
     },
     Constant {
         name: Box<str>,
         value_type: Box<TypeNode>,
         value: Box<Node>,
-        global_register: Option<Register>,
+        global_register: Option<GlobalRegister>,
     },
     Function {
         name: Box<str>,
@@ -477,7 +478,7 @@ pub enum NodeKind {
         is_variadic: bool,
         return_type: Box<TypeNode>,
         body: Option<Box<Node>>,
-        global_register: Option<Register>,
+        global_register: Option<GlobalRegister>,
     },
     Structure {
         name: Box<str>,

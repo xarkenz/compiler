@@ -2,5 +2,3 @@ source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\
 
 %"::libc::stdio::CFile" = type opaque
 
-; ==== External definitions from other packages ====
-

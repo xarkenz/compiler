@@ -1,4 +1,5 @@
-use crate::sema::{FloatType, IntegerType, PrimitiveType, StringValue};
+use crate::ir::value::{FloatType, IntegerType, StringValue};
+use crate::sema::PrimitiveType;
 
 pub mod scan;
 

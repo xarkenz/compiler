@@ -1,7 +1,9 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use clap::Parser as ClapParser;
 use crate::ast::parse::parse_module;
 use crate::gen::Generator;
+use crate::llvm::LLVMDisplay;
 use crate::sema::GlobalContext;
 use crate::target::TargetInfo;
 use crate::token::scan::Scanner;
@@ -62,15 +64,33 @@ pub fn invoke(args: &CompilerArgs) -> Result<(), Box<(crate::Error, Vec<PathBuf>
         println!("Processing definitions...");
         context.process_package(&mut parsed_modules).map_err(error(&context))?;
 
-        // Code generation and emission
+        // Generating IR
         let source_paths = context.package().source_paths().to_vec();
-        let output_path = context.package().info().get_output_path();
-        println!("Generating output at '{}'...", output_path.display());
-        Generator::from_path(&output_path, &mut context)
-            .and_then(|generator| generator.generate_package(&parsed_modules))
+        println!("Compiling output...");
+        Generator::new(&mut context).generate_package(&parsed_modules)
             .map_err(|error| Box::new((*error, source_paths)))?;
 
-        println!("LLVM IR successfully written to '{}'.", output_path.display());
+        // Writing LLVM IR to file
+        let output_path = context.package().info().get_output_path();
+        println!("Writing LLVM IR to '{}'...", output_path.display());
+        let mut output = std::fs::File::create(&output_path)
+            .map_err(|cause| error(&context)(Box::new(crate::Error::new(
+                None,
+                crate::ErrorKind::OutputFileOpen {
+                    filename: output_path.display().to_string(),
+                    cause,
+                },
+            ))))?;
+        write!(output, "{}", context.package().output().llvm(&context))
+            .map_err(|cause| error(&context)(Box::new(crate::Error::new(
+                None,
+                crate::ErrorKind::OutputFileWrite {
+                    filename: output_path.display().to_string(),
+                    cause,
+                },
+            ))))?;
+
+        println!("Finished.");
 
         if !context.start_next_package() {
             break;

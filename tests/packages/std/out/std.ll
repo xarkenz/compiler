@@ -1,5 +1,17 @@
 source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\\std\\main.cupr"
 
+%"::std::string::MutStr" = type { i8*, i64 }
+
+%"::std::string::String" = type { %"::std::string::MutStr", i64 }
+
+%"::std::string::Str" = type { i8*, i64 }
+
+declare void @free(i8*)
+
+declare i8* @malloc(i64)
+
+declare i8* @memcpy(i8*, i8*, i64)
+
 define i64 @"<usize>::max"(i64 %0, i64 %1) {
 .block.0:
 	%self = alloca i64
@@ -17,7 +29,7 @@ define i64 @"<usize>::max"(i64 %0, i64 %1) {
 	%6 = load i64, i64* %other
 	br label %.block.3
 .block.3:
-	%7 = phi i64 [ %5, %.block.1 ], [ %6, %.block.2 ]
+		%7 = phi i64 [ %5, %.block.1 ], [ %6, %.block.2 ]
 	ret i64 %7
 }
 
@@ -41,8 +53,6 @@ define void @"<u8>::swap"(i8* %0, i8* %1) {
 	ret void
 }
 
-%"::std::string::Str" = type { i8*, i64 }
-
 define { i8*, i64 } @"::std::string::Str::raw_parts"(%"::std::string::Str"* %0) {
 .block.0:
 	%self = alloca %"::std::string::Str"*
@@ -62,8 +72,6 @@ define { i8*, i64 } @"::std::string::Str::raw_parts"(%"::std::string::Str"* %0) 
 	ret { i8*, i64 } %10
 }
 
-%"::std::string::MutStr" = type { i8*, i64 }
-
 define %"::std::string::Str" @"::std::string::MutStr::as_str"(%"::std::string::MutStr"* %0) {
 .block.0:
 	%self = alloca %"::std::string::MutStr"*
@@ -82,8 +90,6 @@ define %"::std::string::Str" @"::std::string::MutStr::as_str"(%"::std::string::M
 	%10 = load %"::std::string::Str", %"::std::string::Str"* %7
 	ret %"::std::string::Str" %10
 }
-
-%"::std::string::String" = type { %"::std::string::MutStr", i64 }
 
 define %"::std::string::String" @"::std::string::String::new"() {
 .block.0:
@@ -287,12 +293,4 @@ define void @"::std::string::String::insert"(%"::std::string::String"* %0, i64 %
 	store i64 %40, i64* %38
 	ret void
 }
-
-; ==== External definitions from other packages ====
-
-declare void @free(i8*)
-
-declare i8* @malloc(i64)
-
-declare i8* @memcpy(i8*, i8*, i64)
 

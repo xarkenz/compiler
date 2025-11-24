@@ -1,32 +1,45 @@
 use super::*;
-use crate::sema::Value;
+use std::collections::HashSet;
+use crate::ir::CompilationUnit;
+use crate::sema::AbsolutePath;
 
 pub struct PackageContext {
     info: Rc<PackageInfo>,
+    output: CompilationUnit,
     current_module: NamespaceHandle,
     current_self_type: Option<TypeHandle>,
     source_paths: Vec<PathBuf>,
     parse_queue: VecDeque<SimplePath>,
     fill_phase_complete: bool,
-    external_values: Vec<Value>,
+    known_external_paths: HashSet<AbsolutePath>,
 }
 
 impl PackageContext {
     pub fn new(info: Rc<PackageInfo>, package_root_module: NamespaceHandle) -> Self {
+        let output = CompilationUnit::new(info.main_path());
         let main_module_path = SimplePath::empty().into_child(info.name());
         Self {
             info,
+            output,
             current_module: package_root_module,
             current_self_type: None,
             source_paths: Vec::new(),
             parse_queue: VecDeque::from([main_module_path]),
             fill_phase_complete: false,
-            external_values: Vec::new(),
+            known_external_paths: HashSet::new(),
         }
     }
 
     pub fn info(&self) -> &PackageInfo {
         &self.info
+    }
+
+    pub fn output(&self) -> &CompilationUnit {
+        &self.output
+    }
+
+    pub fn output_mut(&mut self) -> &mut CompilationUnit {
+        &mut self.output
     }
 
     pub fn source_paths(&self) -> &[PathBuf] {
@@ -110,17 +123,7 @@ impl PackageContext {
         }
     }
 
-    pub fn external_values(&self) -> &[Value] {
-        &self.external_values
-    }
-
-    pub fn use_external_value(&mut self, value: &Value) -> bool {
-        if self.external_values.contains(value) {
-            false
-        }
-        else {
-            self.external_values.push(value.clone());
-            true
-        }
+    pub fn register_external_path(&mut self, path: AbsolutePath) -> bool {
+        self.known_external_paths.insert(path)
     }
 }

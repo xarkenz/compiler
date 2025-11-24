@@ -1,40 +1,21 @@
-pub mod llvm;
-
-use llvm::*;
-use crate::token;
 use crate::ast;
+use crate::ir::{FunctionDefinition, GlobalVariable, GlobalVariableKind};
+use crate::ir::instr::{Instruction, PhiInstruction, TerminatorInstruction};
+use crate::ir::value::*;
 use crate::sema::*;
+use crate::token;
 
-use std::io::Write;
-use std::path::Path;
-
-pub struct Generator<'ctx, W: Write> {
-    emitter: Emitter<W>,
+pub struct Generator<'ctx> {
     context: &'ctx mut GlobalContext,
     next_anonymous_constant_id: usize,
 }
 
-impl<'ctx> Generator<'ctx, std::fs::File> {
-    pub fn from_path(path: impl AsRef<Path>, context: &'ctx mut GlobalContext) -> crate::Result<Self> {
-        Ok(Self::new(Emitter::from_path(path)?, context))
-    }
-}
-
-impl<'ctx, W: Write> Generator<'ctx, W> {
-    pub fn new(emitter: Emitter<W>, context: &'ctx mut GlobalContext) -> Self {
+impl<'ctx> Generator<'ctx> {
+    pub fn new(context: &'ctx mut GlobalContext) -> Self {
         Self {
-            emitter,
             context,
             next_anonymous_constant_id: 0,
         }
-    }
-
-    pub fn emitter(&self) -> &Emitter<W> {
-        &self.emitter
-    }
-
-    pub fn emitter_mut(&mut self) -> &mut Emitter<W> {
-        &mut self.emitter
     }
 
     pub fn context(&self) -> &GlobalContext {
@@ -46,8 +27,6 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
     }
 
     pub fn generate_package<'a>(mut self, modules: impl IntoIterator<Item = &'a ast::parse::ParsedModule>) -> crate::Result<()> {
-        self.emitter.emit_preamble(self.context.package().info().main_path())?;
-
         for parsed_module in modules {
             let parent_module = self.context.replace_current_module(parsed_module.namespace());
 
@@ -56,7 +35,7 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
             self.context.replace_current_module(parent_module);
         }
 
-        self.emitter.emit_postamble(&self.context)
+        Ok(())
     }
 
     pub fn generate_global_statements<'a>(&mut self, global_statements: impl IntoIterator<Item = &'a ast::Node>) -> crate::Result<()> {
@@ -183,7 +162,9 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                         crate::ErrorKind::InvalidBreak,
                     )))?;
 
-                self.emitter.emit_unconditional_branch(break_label)?;
+                local_context.set_terminator(TerminatorInstruction::Branch {
+                    to_label: break_label.clone(),
+                });
 
                 Value::Break
             }
@@ -194,13 +175,16 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                         crate::ErrorKind::InvalidContinue,
                     )))?;
 
-                self.emitter.emit_unconditional_branch(continue_label)?;
+                local_context.set_terminator(TerminatorInstruction::Branch {
+                    to_label: continue_label.clone(),
+                });
 
                 Value::Continue
             }
             ast::NodeKind::Return { value } => {
                 let return_type = local_context.return_type();
 
+                let return_value;
                 if let Some(value) = value {
                     if return_type == TypeHandle::VOID {
                         return Err(Box::new(crate::Error::new(
@@ -212,9 +196,7 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                     }
                     else {
                         let value = self.generate_local_node(value, local_context, Some(return_type))?;
-                        let value = self.coerce_to_rvalue(value, local_context)?;
-
-                        self.emitter.emit_return(&value, self.context)?;
+                        return_value = self.coerce_to_rvalue(value, local_context)?;
                     }
                 }
                 else if return_type != TypeHandle::VOID {
@@ -226,8 +208,12 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                     )));
                 }
                 else {
-                    self.emitter.emit_return(&Value::Void, self.context)?;
+                    return_value = Value::Void;
                 }
+
+                local_context.set_terminator(TerminatorInstruction::Return {
+                    value: return_value,
+                });
 
                 Value::Never
             }
@@ -248,23 +234,19 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         if let Some(expected_type) = expected_type {
             self.enforce_type(result, expected_type, node.span(), local_context)
                 // For debugging purposes. This information is often useful
-                .inspect_err(|_| println!("problematic node: {node:?}"))
+                .inspect_err(|_| eprintln!("problematic node: {node:?}"))
         }
         else {
             Ok(result)
         }
     }
 
-    pub fn new_anonymous_constant(&mut self, pointer_type: TypeHandle) -> Register {
+    pub fn new_anonymous_constant(&mut self, pointer_type: TypeHandle) -> GlobalRegister {
         let id = self.next_anonymous_constant_id;
         self.next_anonymous_constant_id += 1;
 
-        Register::new_global(format!(".const.{id}"), pointer_type)
-    }
-
-    pub fn start_new_block(&mut self, label: &Label, local_context: &mut LocalContext) -> crate::Result<()> {
-        local_context.set_current_block_label(label.clone());
-        self.emitter.emit_label(label)
+        let identifier = format!(".const.{}.{id}", self.context.package().info().name());
+        GlobalRegister::new(identifier.into_boxed_str(), pointer_type)
     }
 
     pub fn enforce_type(&mut self, value: Value, expected_type: TypeHandle, span: crate::Span, local_context: &mut LocalContext) -> crate::Result<Value> {
@@ -324,7 +306,12 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
             else {
                 let value = self.coerce_to_rvalue(value, local_context)?;
                 let result = local_context.new_anonymous_register(to_type);
-                self.emitter.emit_conversion(operation, &result, &value, self.context)?;
+
+                local_context.add_instruction(Instruction::Convert {
+                    operation,
+                    result: result.clone(),
+                    value,
+                });
 
                 Ok(Value::Register(result))
             }
@@ -374,7 +361,11 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         }
 
         let result = local_context.new_anonymous_register(pointee_type);
-        self.emitter.emit_load(&result, &pointer, self.context)?;
+
+        local_context.add_instruction(Instruction::Load {
+            result: result.clone(),
+            pointer,
+        });
 
         Ok(Value::Register(result))
     }
@@ -446,7 +437,11 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                 };
                 let pointer = self.new_anonymous_constant(constant.get_type());
 
-                self.emitter.emit_anonymous_constant(&pointer, &constant, self.context)?;
+                self.context.package_mut().output_mut().add_global_variable(GlobalVariable::new(
+                    pointer.clone(),
+                    GlobalVariableKind::AnonymousConstant,
+                    constant,
+                ));
 
                 Value::Constant(Constant::Register(pointer))
             }
@@ -495,28 +490,39 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         let array_pointer_type = self.context.get_pointer_type(array_type, PointerSemantics::Immutable);
         let array_pointer = local_context.new_anonymous_register(array_pointer_type);
 
-        self.emitter.emit_local_allocation(&array_pointer, self.context)?;
+        local_context.add_instruction(Instruction::StackAllocate {
+            result: array_pointer.clone(),
+        });
 
         let array_pointer = Value::Register(array_pointer);
 
         // Store the constant items, if any
         if non_constant_items.len() < items.len() {
-            let initial_value = Value::Constant(Constant::Array {
-                array_type,
-                items: constant_items,
+            local_context.add_instruction(Instruction::Store {
+                value: Value::Constant(Constant::Array {
+                    array_type,
+                    items: constant_items,
+                }),
+                pointer: array_pointer.clone(),
             });
-
-            self.emitter.emit_store(&initial_value, &array_pointer, self.context)?;
         }
 
-        for (index, item) in non_constant_items {
-            let item_pointer_type = self.context.get_pointer_type(item.get_type(), PointerSemantics::Mutable);
+        for (index, item_value) in non_constant_items {
+            let item_pointer_type = self.context.get_pointer_type(item_value.get_type(), PointerSemantics::Mutable);
             let item_pointer = local_context.new_anonymous_register(item_pointer_type);
-            let zero = Value::from(IntegerValue::new(IntegerType::I32, 0));
-            let index = Value::from(IntegerValue::new(IntegerType::Usize, index as i128));
 
-            self.emitter.emit_get_element_pointer(&item_pointer, &array_pointer, &[zero, index], self.context)?;
-            self.emitter.emit_store(&item, &Value::Register(item_pointer), self.context)?;
+            local_context.add_instruction(Instruction::GetElementPointer {
+                result: item_pointer.clone(),
+                pointer: array_pointer.clone(),
+                indices: [
+                    Value::from(IntegerValue::new(IntegerType::I32, 0)),
+                    Value::from(IntegerValue::new(IntegerType::Usize, index as i128))
+                ].into(),
+            });
+            local_context.add_instruction(Instruction::Store {
+                value: item_value,
+                pointer: item_pointer.into(),
+            });
         }
 
         Ok(Value::Indirect {
@@ -570,28 +576,39 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         let tuple_pointer_type = self.context.get_pointer_type(tuple_type, PointerSemantics::Immutable);
         let tuple_pointer = local_context.new_anonymous_register(tuple_pointer_type);
 
-        self.emitter.emit_local_allocation(&tuple_pointer, self.context)?;
+        local_context.add_instruction(Instruction::StackAllocate {
+            result: tuple_pointer.clone(),
+        });
 
         let tuple_pointer = Value::Register(tuple_pointer);
 
         // Store the constant items, if any
         if non_constant_items.len() < items.len() {
-            let initial_value = Value::Constant(Constant::Tuple {
-                tuple_type,
-                items: constant_items,
+            local_context.add_instruction(Instruction::Store {
+                value: Value::Constant(Constant::Tuple {
+                    tuple_type,
+                    items: constant_items,
+                }),
+                pointer: tuple_pointer.clone(),
             });
-
-            self.emitter.emit_store(&initial_value, &tuple_pointer, self.context)?;
         }
 
-        for (index, item) in non_constant_items {
-            let item_pointer_type = self.context.get_pointer_type(item.get_type(), PointerSemantics::Mutable);
+        for (index, item_value) in non_constant_items {
+            let item_pointer_type = self.context.get_pointer_type(item_value.get_type(), PointerSemantics::Mutable);
             let item_pointer = local_context.new_anonymous_register(item_pointer_type);
-            let zero = Value::from(IntegerValue::new(IntegerType::I32, 0));
-            let index = Value::from(IntegerValue::new(IntegerType::I32, index as i128));
 
-            self.emitter.emit_get_element_pointer(&item_pointer, &tuple_pointer, &[zero, index], self.context)?;
-            self.emitter.emit_store(&item, &Value::Register(item_pointer), self.context)?;
+            local_context.add_instruction(Instruction::GetElementPointer {
+                result: item_pointer.clone(),
+                pointer: tuple_pointer.clone(),
+                indices: [
+                    Value::from(IntegerValue::new(IntegerType::I32, 0)),
+                    Value::from(IntegerValue::new(IntegerType::I32, index as i128))
+                ].into(),
+            });
+            local_context.add_instruction(Instruction::Store {
+                value: item_value,
+                pointer: item_pointer.into(),
+            });
         }
 
         Ok(Value::Indirect {
@@ -618,7 +635,10 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
 
         // This was probably already handled, but it can't hurt
         if is_external {
-            self.context.use_external_value(&Value::Constant(Constant::Type(struct_type)));
+            self.context.use_external(
+                struct_type.path(self.context).clone(),
+                Constant::Type(struct_type),
+            );
         }
 
         let mut initializer_members = initializer_members.to_vec();
@@ -679,28 +699,39 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         let structure_pointer_type = self.context.get_pointer_type(struct_type, PointerSemantics::Immutable);
         let structure_pointer = local_context.new_anonymous_register(structure_pointer_type);
 
-        self.emitter.emit_local_allocation(&structure_pointer, self.context)?;
+        local_context.add_instruction(Instruction::StackAllocate {
+            result: structure_pointer.clone(),
+        });
 
         let structure_pointer = Value::Register(structure_pointer);
 
         // Store the constant members, if any
         if non_constant_members.len() < members.len() {
-            let initial_value = Value::Constant(Constant::Structure {
-                struct_type,
-                members: constant_members,
+            local_context.add_instruction(Instruction::Store {
+                value: Value::Constant(Constant::Structure {
+                    struct_type,
+                    members: constant_members,
+                }),
+                pointer: structure_pointer.clone(),
             });
-
-            self.emitter.emit_store(&initial_value, &structure_pointer, self.context)?;
         }
 
-        for (index, member) in non_constant_members {
-            let member_pointer_type = self.context.get_pointer_type(member.get_type(), PointerSemantics::Mutable);
+        for (index, member_value) in non_constant_members {
+            let member_pointer_type = self.context.get_pointer_type(member_value.get_type(), PointerSemantics::Mutable);
             let member_pointer = local_context.new_anonymous_register(member_pointer_type);
-            let zero = Value::from(IntegerValue::new(IntegerType::I32, 0));
-            let index = Value::from(IntegerValue::new(IntegerType::I32, index as i128));
 
-            self.emitter.emit_get_element_pointer(&member_pointer, &structure_pointer, &[zero, index], self.context)?;
-            self.emitter.emit_store(&member, &Value::Register(member_pointer), self.context)?;
+            local_context.add_instruction(Instruction::GetElementPointer {
+                result: member_pointer.clone(),
+                pointer: structure_pointer.clone(),
+                indices: [
+                    Value::from(IntegerValue::new(IntegerType::I32, 0)),
+                    Value::from(IntegerValue::new(IntegerType::I32, index as i128))
+                ].into(),
+            });
+            local_context.add_instruction(Instruction::Store {
+                value: member_value,
+                pointer: member_pointer.into(),
+            });
         }
 
         Ok(Value::Indirect {
@@ -721,7 +752,10 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                 let operand = self.coerce_to_rvalue(operand, local_context)?;
                 let result = local_context.new_anonymous_register(expected_type.unwrap_or_else(|| operand.get_type()));
 
-                self.emitter.emit_negation(&result, &operand, self.context)?;
+                local_context.add_instruction(Instruction::Negate {
+                    result: result.clone(),
+                    operand,
+                });
 
                 Value::Register(result)
             }
@@ -730,7 +764,10 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                 let operand = self.coerce_to_rvalue(operand, local_context)?;
                 let result = local_context.new_anonymous_register(expected_type.unwrap_or_else(|| operand.get_type()));
 
-                self.emitter.emit_inversion(&result, &operand, self.context)?;
+                local_context.add_instruction(Instruction::Not {
+                    result: result.clone(),
+                    operand,
+                });
 
                 Value::Register(result)
             }
@@ -739,7 +776,10 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                 let operand = self.coerce_to_rvalue(operand, local_context)?;
                 let result = local_context.new_anonymous_register(TypeHandle::BOOL);
 
-                self.emitter.emit_inversion(&result, &operand, self.context)?;
+                local_context.add_instruction(Instruction::Not {
+                    result: result.clone(),
+                    operand,
+                });
 
                 Value::Register(result)
             }
@@ -866,112 +906,176 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
             ast::BinaryOperation::Add => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_addition(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::Add {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
             ast::BinaryOperation::Subtract => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_subtraction(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::Subtract {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
             ast::BinaryOperation::Multiply => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_multiplication(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::Multiply {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
             ast::BinaryOperation::Divide => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_division(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::Divide {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
             ast::BinaryOperation::Remainder => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_remainder(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::Remainder {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
             ast::BinaryOperation::ShiftLeft => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_shift_left(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::ShiftLeft {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
             ast::BinaryOperation::ShiftRight => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_shift_right(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::ShiftRight {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
             ast::BinaryOperation::BitwiseAnd => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_bitwise_and(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::And {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
             ast::BinaryOperation::BitwiseOr => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_bitwise_or(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::Or {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
             ast::BinaryOperation::BitwiseXor => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_bitwise_xor(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::Xor {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
             ast::BinaryOperation::Equal => {
                 let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
-                self.emitter.emit_cmp_equal(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::CompareEqual {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
             ast::BinaryOperation::NotEqual => {
                 let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
-                self.emitter.emit_cmp_not_equal(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::CompareNotEqual {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
             ast::BinaryOperation::LessThan => {
                 let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
-                self.emitter.emit_cmp_less_than(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::CompareLessThan {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
             ast::BinaryOperation::LessEqual => {
                 let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
-                self.emitter.emit_cmp_less_equal(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::CompareLessEqual {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
             ast::BinaryOperation::GreaterThan => {
                 let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
-                self.emitter.emit_cmp_greater_than(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::CompareGreaterThan {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
             ast::BinaryOperation::GreaterEqual => {
                 let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
-                self.emitter.emit_cmp_greater_equal(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::CompareGreaterEqual {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
 
                 Value::Register(result)
             }
@@ -982,23 +1086,30 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                 let lhs_true_label = local_context.new_block_label();
                 let tail_label = local_context.new_block_label();
 
-                self.emitter.emit_conditional_branch(&lhs, &lhs_true_label, &tail_label, self.context)?;
-                let short_circuit_label = local_context.current_block_label().clone();
-                self.start_new_block(&lhs_true_label, local_context)?;
+                local_context.set_terminator(TerminatorInstruction::ConditionalBranch {
+                    condition: lhs,
+                    consequent_label: lhs_true_label.clone(),
+                    alternative_label: tail_label.clone(),
+                });
+                let short_circuit_label = local_context.start_new_block(lhs_true_label).clone();
 
                 let rhs = self.generate_local_node(rhs_node, local_context, Some(TypeHandle::BOOL))?;
                 let rhs = self.coerce_to_rvalue(rhs, local_context)?;
 
-                self.emitter.emit_unconditional_branch(&tail_label)?;
-                let rhs_output_label = local_context.current_block_label().clone();
-                self.start_new_block(&tail_label, local_context)?;
+                local_context.set_terminator(TerminatorInstruction::Branch {
+                    to_label: tail_label.clone(),
+                });
+                let rhs_output_label = local_context.start_new_block(tail_label).clone();
 
                 let result = local_context.new_anonymous_register(TypeHandle::BOOL);
 
-                self.emitter.emit_phi(&result, [
-                    (&Value::from(false), &short_circuit_label),
-                    (&rhs, &rhs_output_label),
-                ], self.context)?;
+                local_context.add_phi(PhiInstruction {
+                    result: result.clone(),
+                    inputs: [
+                        (Value::from(false), short_circuit_label),
+                        (rhs, rhs_output_label),
+                    ].into(),
+                });
 
                 Value::Register(result)
             }
@@ -1009,23 +1120,30 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                 let lhs_false_label = local_context.new_block_label();
                 let tail_label = local_context.new_block_label();
 
-                self.emitter.emit_conditional_branch(&lhs, &tail_label, &lhs_false_label, self.context)?;
-                let short_circuit_label = local_context.current_block_label().clone();
-                self.start_new_block(&lhs_false_label, local_context)?;
+                local_context.set_terminator(TerminatorInstruction::ConditionalBranch {
+                    condition: lhs,
+                    consequent_label: tail_label.clone(),
+                    alternative_label: lhs_false_label.clone(),
+                });
+                let short_circuit_label = local_context.start_new_block(lhs_false_label).clone();
 
                 let rhs = self.generate_local_node(rhs_node, local_context, Some(TypeHandle::BOOL))?;
                 let rhs = self.coerce_to_rvalue(rhs, local_context)?;
 
-                self.emitter.emit_unconditional_branch(&tail_label)?;
-                let rhs_output_label = local_context.current_block_label().clone();
-                self.start_new_block(&tail_label, local_context)?;
+                local_context.set_terminator(TerminatorInstruction::Branch {
+                    to_label: tail_label.clone(),
+                });
+                let rhs_output_label = local_context.start_new_block(tail_label).clone();
 
                 let result = local_context.new_anonymous_register(TypeHandle::BOOL);
 
-                self.emitter.emit_phi(&result, [
-                    (&Value::from(true), &short_circuit_label),
-                    (&rhs, &rhs_output_label),
-                ], self.context)?;
+                local_context.add_phi(PhiInstruction {
+                    result: result.clone(),
+                    inputs: [
+                        (Value::from(true), short_circuit_label),
+                        (rhs, rhs_output_label),
+                    ].into(),
+                });
 
                 Value::Register(result)
             }
@@ -1035,97 +1153,170 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                 let rhs = self.generate_local_node(rhs_node, local_context, Some(pointee_type))?;
                 let rhs = self.coerce_to_rvalue(rhs, local_context)?;
 
-                self.emitter.emit_store(&rhs, &pointer, self.context)?;
+                local_context.add_instruction(Instruction::Store {
+                    value: rhs.clone(),
+                    pointer,
+                });
 
                 rhs
-            }
-            ast::BinaryOperation::MultiplyAssign => {
-                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
-
-                self.emitter.emit_multiplication(&result, &lhs, &rhs, self.context)?;
-                let result = Value::Register(result);
-                self.emitter.emit_store(&result, &pointer, self.context)?;
-
-                result
-            }
-            ast::BinaryOperation::DivideAssign => {
-                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
-
-                self.emitter.emit_division(&result, &lhs, &rhs, self.context)?;
-                let result = Value::Register(result);
-                self.emitter.emit_store(&result, &pointer, self.context)?;
-
-                result
-            }
-            ast::BinaryOperation::RemainderAssign => {
-                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
-
-                self.emitter.emit_remainder(&result, &lhs, &rhs, self.context)?;
-                let result = Value::Register(result);
-                self.emitter.emit_store(&result, &pointer, self.context)?;
-
-                result
             }
             ast::BinaryOperation::AddAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_addition(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::Add {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
                 let result = Value::Register(result);
-                self.emitter.emit_store(&result, &pointer, self.context)?;
+                local_context.add_instruction(Instruction::Store {
+                    value: result.clone(),
+                    pointer,
+                });
 
                 result
             }
             ast::BinaryOperation::SubtractAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_subtraction(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::Subtract {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
                 let result = Value::Register(result);
-                self.emitter.emit_store(&result, &pointer, self.context)?;
+                local_context.add_instruction(Instruction::Store {
+                    value: result.clone(),
+                    pointer,
+                });
+
+                result
+            }
+            ast::BinaryOperation::MultiplyAssign => {
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
+
+                local_context.add_instruction(Instruction::Multiply {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
+                let result = Value::Register(result);
+                local_context.add_instruction(Instruction::Store {
+                    value: result.clone(),
+                    pointer,
+                });
+
+                result
+            }
+            ast::BinaryOperation::DivideAssign => {
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
+
+                local_context.add_instruction(Instruction::Divide {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
+                let result = Value::Register(result);
+                local_context.add_instruction(Instruction::Store {
+                    value: result.clone(),
+                    pointer,
+                });
+
+                result
+            }
+            ast::BinaryOperation::RemainderAssign => {
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
+
+                local_context.add_instruction(Instruction::Remainder {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
+                let result = Value::Register(result);
+                local_context.add_instruction(Instruction::Store {
+                    value: result.clone(),
+                    pointer,
+                });
 
                 result
             }
             ast::BinaryOperation::ShiftLeftAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_shift_left(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::ShiftLeft {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
                 let result = Value::Register(result);
-                self.emitter.emit_store(&result, &pointer, self.context)?;
+                local_context.add_instruction(Instruction::Store {
+                    value: result.clone(),
+                    pointer,
+                });
 
                 result
             }
             ast::BinaryOperation::ShiftRightAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_shift_right(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::ShiftRight {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
                 let result = Value::Register(result);
-                self.emitter.emit_store(&result, &pointer, self.context)?;
+                local_context.add_instruction(Instruction::Store {
+                    value: result.clone(),
+                    pointer,
+                });
 
                 result
             }
             ast::BinaryOperation::BitwiseAndAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_bitwise_and(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::And {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
                 let result = Value::Register(result);
-                self.emitter.emit_store(&result, &pointer, self.context)?;
-
-                result
-            }
-            ast::BinaryOperation::BitwiseXorAssign => {
-                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
-
-                self.emitter.emit_bitwise_xor(&result, &lhs, &rhs, self.context)?;
-                let result = Value::Register(result);
-                self.emitter.emit_store(&result, &pointer, self.context)?;
+                local_context.add_instruction(Instruction::Store {
+                    value: result.clone(),
+                    pointer,
+                });
 
                 result
             }
             ast::BinaryOperation::BitwiseOrAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
-                self.emitter.emit_bitwise_or(&result, &lhs, &rhs, self.context)?;
+                local_context.add_instruction(Instruction::Or {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
                 let result = Value::Register(result);
-                self.emitter.emit_store(&result, &pointer, self.context)?;
+                local_context.add_instruction(Instruction::Store {
+                    value: result.clone(),
+                    pointer,
+                });
+
+                result
+            }
+            ast::BinaryOperation::BitwiseXorAssign => {
+                let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
+
+                local_context.add_instruction(Instruction::Xor {
+                    result: result.clone(),
+                    lhs,
+                    rhs,
+                });
+                let result = Value::Register(result);
+                local_context.add_instruction(Instruction::Store {
+                    value: result.clone(),
+                    pointer,
+                });
 
                 result
             }
@@ -1169,12 +1360,15 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                     };
                     let element_pointer_type = self.context.get_pointer_type(item_type, semantics);
                     let element_pointer = local_context.new_anonymous_register(element_pointer_type);
-                    let indices = match length {
-                        Some(..) => vec![Value::from(IntegerValue::new(IntegerType::I32, 0)), rhs],
-                        None => vec![rhs],
-                    };
 
-                    self.emitter.emit_get_element_pointer(&element_pointer, &pointer, &indices, self.context)?;
+                    local_context.add_instruction(Instruction::GetElementPointer {
+                        result: element_pointer.clone(),
+                        pointer: *pointer,
+                        indices: match length {
+                            Some(..) => [Value::from(IntegerValue::new(IntegerType::I32, 0)), rhs].into(),
+                            None => [rhs].into(),
+                        },
+                    });
 
                     Ok(Value::Indirect {
                         pointer: Box::new(Value::Register(element_pointer)),
@@ -1197,13 +1391,19 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                         let array_pointer = local_context.new_anonymous_register(pointee_type);
                         let element_pointer_type = self.context.get_pointer_type(item_type, semantics);
                         let element_pointer = local_context.new_anonymous_register(element_pointer_type);
-                        let indices = match length {
-                            Some(..) => vec![Value::from(IntegerValue::new(IntegerType::I32, 0)), rhs],
-                            None => vec![rhs],
-                        };
 
-                        self.emitter.emit_load(&array_pointer, &pointer, self.context)?;
-                        self.emitter.emit_get_element_pointer(&element_pointer, &Value::Register(array_pointer), &indices, self.context)?;
+                        local_context.add_instruction(Instruction::Load {
+                            result: array_pointer.clone(),
+                            pointer: *pointer,
+                        });
+                        local_context.add_instruction(Instruction::GetElementPointer {
+                            result: element_pointer.clone(),
+                            pointer: array_pointer.into(),
+                            indices: match length {
+                                Some(..) => [Value::from(IntegerValue::new(IntegerType::I32, 0)), rhs].into(),
+                                None => [rhs].into(),
+                            },
+                        });
 
                         Ok(Value::Indirect {
                             pointer: Box::new(Value::Register(element_pointer)),
@@ -1220,12 +1420,15 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                         // *[T; N], *[T]
                         let element_pointer_type = self.context.get_pointer_type(item_type, semantics);
                         let element_pointer = local_context.new_anonymous_register(element_pointer_type);
-                        let indices = match length {
-                            Some(_) => vec![Value::from(IntegerValue::new(IntegerType::I32, 0)), rhs],
-                            None => vec![rhs],
-                        };
 
-                        self.emitter.emit_get_element_pointer(&element_pointer, &Value::Register(register), &indices, self.context)?;
+                        local_context.add_instruction(Instruction::GetElementPointer {
+                            result: element_pointer.clone(),
+                            pointer: register.into(),
+                            indices: match length {
+                                Some(..) => [Value::from(IntegerValue::new(IntegerType::I32, 0)), rhs].into(),
+                                None => [rhs].into(),
+                            },
+                        });
 
                         Ok(Value::Indirect {
                             pointer: Box::new(Value::Register(element_pointer)),
@@ -1240,7 +1443,7 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         }
     }
 
-    fn fold_subscript_operation(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, constant_id: &mut usize, local_context: Option<&LocalContext>) -> crate::Result<(Constant, Vec<(Register, Constant)>)> {
+    fn fold_subscript_operation(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, constant_id: &mut usize, local_context: Option<&LocalContext>) -> crate::Result<(Constant, Vec<GlobalVariable>)> {
         let (lhs, mut intermediate_constants) = self.fold_as_constant(lhs_node, constant_id, local_context, None)?;
         let (rhs, mut constants) = self.fold_as_constant(rhs_node, constant_id, local_context, None)?;
         intermediate_constants.append(&mut constants);
@@ -1346,12 +1549,15 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                     let item_type = item_types[item_index as usize];
                     let item_pointer_type = self.context.get_pointer_type(item_type, semantics);
                     let item_pointer = local_context.new_anonymous_register(item_pointer_type);
-                    let indices = &[
-                        Value::from(IntegerValue::new(IntegerType::I32, 0)),
-                        Value::from(IntegerValue::new(IntegerType::I32, item_index as i128)),
-                    ];
 
-                    self.emitter.emit_get_element_pointer(&item_pointer, &pointer, indices, self.context)?;
+                    local_context.add_instruction(Instruction::GetElementPointer {
+                        result: item_pointer.clone(),
+                        pointer: *pointer,
+                        indices: [
+                            Value::from(IntegerValue::new(IntegerType::I32, 0)),
+                            Value::from(IntegerValue::new(IntegerType::I32, item_index as i128)),
+                        ].into(),
+                    });
 
                     Ok(Value::Indirect {
                         pointer: Box::new(Value::Register(item_pointer)),
@@ -1379,12 +1585,15 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                         )))?;
                     let member_pointer_type = self.context.get_pointer_type(member_type, semantics);
                     let member_pointer = local_context.new_anonymous_register(member_pointer_type);
-                    let indices = &[
-                        Value::from(IntegerValue::new(IntegerType::I32, 0)),
-                        Value::from(IntegerValue::new(IntegerType::I32, member_index as i128)),
-                    ];
 
-                    self.emitter.emit_get_element_pointer(&member_pointer, &pointer, indices, self.context)?;
+                    local_context.add_instruction(Instruction::GetElementPointer {
+                        result: member_pointer.clone(),
+                        pointer: *pointer,
+                        indices: [
+                            Value::from(IntegerValue::new(IntegerType::I32, 0)),
+                            Value::from(IntegerValue::new(IntegerType::I32, member_index as i128)),
+                        ].into(),
+                    });
 
                     Ok(Value::Indirect {
                         pointer: Box::new(Value::Register(member_pointer)),
@@ -1397,7 +1606,7 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         }
     }
 
-    fn generate_arithmetic_operands(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(Register, Value, Value)> {
+    fn generate_arithmetic_operands(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(LocalRegister, Value, Value)> {
         let lhs = self.generate_local_node(lhs_node, local_context, expected_type)?;
         let lhs = self.coerce_to_rvalue(lhs, local_context)?;
 
@@ -1409,7 +1618,7 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         Ok((result, lhs, rhs))
     }
 
-    fn generate_comparison_operands(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext) -> crate::Result<(Register, Value, Value)> {
+    fn generate_comparison_operands(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext) -> crate::Result<(LocalRegister, Value, Value)> {
         let lhs = self.generate_local_node(lhs_node, local_context, None)?;
         let lhs = self.coerce_to_rvalue(lhs, local_context)?;
 
@@ -1421,7 +1630,7 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         Ok((result, lhs, rhs))
     }
 
-    fn generate_assignment_operands(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(Register, Value, Value, Value)> {
+    fn generate_assignment_operands(&mut self, lhs_node: &ast::Node, rhs_node: &ast::Node, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(LocalRegister, Value, Value, Value)> {
         let lhs = self.generate_local_node(lhs_node, local_context, expected_type)?;
         let (pointer, pointee_type) = lhs.into_mutable_lvalue(lhs_node.span(), self.context)?;
 
@@ -1431,7 +1640,10 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         let lhs = local_context.new_anonymous_register(pointee_type);
         let result = local_context.new_anonymous_register(pointee_type);
 
-        self.emitter.emit_load(&lhs, &pointer, self.context)?;
+        local_context.add_instruction(Instruction::Load {
+            result: lhs.clone(),
+            pointer: pointer.clone(),
+        });
 
         Ok((result, pointer, Value::Register(lhs), rhs))
     }
@@ -1522,9 +1734,14 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                         let self_pointer_type = self.context.get_pointer_type(self_value.get_type(), PointerSemantics::Immutable);
                         let self_pointer = local_context.new_anonymous_register(self_pointer_type);
 
-                        self.emitter.emit_local_allocation(&self_pointer, self.context)?;
+                        local_context.add_instruction(Instruction::StackAllocate {
+                            result: self_pointer.clone(),
+                        });
                         let self_value_pointer = Value::Register(self_pointer);
-                        self.emitter.emit_store(self_value, &self_value_pointer, self.context)?;
+                        local_context.add_instruction(Instruction::Store {
+                            value: self_value.clone(),
+                            pointer: self_value_pointer.clone(),
+                        });
 
                         self_value_pointer
                     }
@@ -1563,20 +1780,32 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
 
         // Generate the function call itself, which will look different depending on return type
         if signature.return_type() == TypeHandle::NEVER {
-            self.emitter.emit_function_call(None, &callee, &argument_values, self.context)?;
-            self.emitter.emit_unreachable()?;
+            local_context.add_instruction(Instruction::Call {
+                result: None,
+                callee,
+                arguments: argument_values.into_boxed_slice(),
+            });
+            local_context.set_terminator(TerminatorInstruction::Unreachable);
 
             Ok(Value::Never)
         }
         else if signature.return_type() == TypeHandle::VOID {
-            self.emitter.emit_function_call(None, &callee, &argument_values, self.context)?;
+            local_context.add_instruction(Instruction::Call {
+                result: None,
+                callee,
+                arguments: argument_values.into_boxed_slice(),
+            });
 
             Ok(Value::Void)
         }
         else {
             let result = local_context.new_anonymous_register(signature.return_type());
 
-            self.emitter.emit_function_call(Some(&result), &callee, &argument_values, self.context)?;
+            local_context.add_instruction(Instruction::Call {
+                result: Some(result.clone()),
+                callee,
+                arguments: argument_values.into_boxed_slice(),
+            });
 
             Ok(Value::Register(result))
         }
@@ -1589,37 +1818,45 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         let consequent_label = local_context.new_block_label();
         let alternative_label = local_context.new_block_label();
 
-        self.emitter.emit_conditional_branch(&condition, &consequent_label, &alternative_label, self.context)?;
+        local_context.set_terminator(TerminatorInstruction::ConditionalBranch {
+            condition,
+            consequent_label: consequent_label.clone(),
+            alternative_label: alternative_label.clone(),
+        });
 
         if let Some(alternative) = alternative {
             let mut tail_label = None;
 
-            self.start_new_block(&consequent_label, local_context)?;
+            local_context.start_new_block(consequent_label);
+
             let consequent_value = self.generate_local_node(consequent, local_context, expected_type)?;
             let consequent_type = consequent_value.get_type();
             if consequent_type != TypeHandle::NEVER {
                 let tail_label = tail_label.get_or_insert_with(|| local_context.new_block_label());
-                self.emitter.emit_unconditional_branch(tail_label)?;
+                local_context.set_terminator(TerminatorInstruction::Branch {
+                    to_label: tail_label.clone(),
+                });
             }
-            let consequent_end_label = local_context.current_block_label().clone();
 
             let expected_type = expected_type.or_else(|| {
                 (consequent_type != TypeHandle::NEVER).then_some(consequent_type)
             });
 
-            self.start_new_block(&alternative_label, local_context)?;
+            let consequent_end_label = local_context.start_new_block(alternative_label).clone();
+
             let alternative_value = self.generate_local_node(alternative, local_context, expected_type)?;
             let alternative_type = alternative_value.get_type();
             if alternative_type != TypeHandle::NEVER {
                 let tail_label = tail_label.get_or_insert_with(|| local_context.new_block_label());
-                self.emitter.emit_unconditional_branch(tail_label)?;
+                local_context.set_terminator(TerminatorInstruction::Branch {
+                    to_label: tail_label.clone(),
+                });
             }
-            let alternative_end_label = local_context.current_block_label().clone();
 
             let result_type = expected_type.unwrap_or(alternative_type);
 
             if let Some(tail_label) = tail_label {
-                self.start_new_block(&tail_label, local_context)?;
+                let alternative_end_label = local_context.start_new_block(tail_label).clone();
 
                 if result_type == TypeHandle::VOID {
                     Ok(Value::Void)
@@ -1627,10 +1864,13 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                 else {
                     let result = local_context.new_anonymous_register(result_type);
 
-                    self.emitter.emit_phi(&result, [
-                        (&consequent_value, &consequent_end_label),
-                        (&alternative_value, &alternative_end_label),
-                    ], self.context)?;
+                    local_context.add_phi(PhiInstruction {
+                        result: result.clone(),
+                        inputs: [
+                            (consequent_value, consequent_end_label),
+                            (alternative_value, alternative_end_label),
+                        ].into(),
+                    });
 
                     Ok(Value::Register(result))
                 }
@@ -1640,13 +1880,16 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
             }
         }
         else {
-            self.start_new_block(&consequent_label, local_context)?;
+            local_context.start_new_block(consequent_label);
+
             let consequent_value = self.generate_local_node(consequent, local_context, Some(TypeHandle::VOID))?;
             if consequent_value.get_type() != TypeHandle::NEVER {
-                self.emitter.emit_unconditional_branch(&alternative_label)?;
+                local_context.set_terminator(TerminatorInstruction::Branch {
+                    to_label: alternative_label.clone(),
+                });
             }
 
-            self.start_new_block(&alternative_label, local_context)?;
+            local_context.start_new_block(alternative_label);
 
             Ok(Value::Void)
         }
@@ -1656,9 +1899,11 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         // TODO: handling never, break/continue vs. return
         let condition_label = local_context.new_block_label();
 
-        self.emitter.emit_unconditional_branch(&condition_label)?;
+        local_context.set_terminator(TerminatorInstruction::Branch {
+            to_label: condition_label.clone(),
+        });
 
-        self.start_new_block(&condition_label, local_context)?;
+        local_context.start_new_block(condition_label.clone());
 
         let condition = self.generate_local_node(condition, local_context, Some(TypeHandle::BOOL))?;
         let condition = self.coerce_to_rvalue(condition, local_context)?;
@@ -1669,13 +1914,22 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         local_context.push_break_label(tail_label.clone());
         local_context.push_continue_label(condition_label.clone());
 
-        self.emitter.emit_conditional_branch(&condition, &body_label, &tail_label, self.context)?;
+        local_context.set_terminator(TerminatorInstruction::ConditionalBranch {
+            condition,
+            consequent_label: body_label.clone(),
+            alternative_label: tail_label.clone(),
+        });
 
-        self.start_new_block(&body_label, local_context)?;
-        self.generate_local_node(body, local_context, Some(TypeHandle::VOID))?;
-        self.emitter.emit_unconditional_branch(&condition_label)?;
+        local_context.start_new_block(body_label);
 
-        self.start_new_block(&tail_label, local_context)?;
+        let body_value = self.generate_local_node(body, local_context, Some(TypeHandle::VOID))?;
+        if body_value.get_type() != TypeHandle::NEVER {
+            local_context.set_terminator(TerminatorInstruction::Branch {
+                to_label: condition_label.clone(),
+            });
+        }
+
+        local_context.start_new_block(tail_label);
 
         local_context.pop_break_label();
         local_context.pop_continue_label();
@@ -1718,9 +1972,14 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         let pointer_type = self.context.get_pointer_type(value_type, semantics);
         let pointer = local_context.define_indirect_symbol(name.into(), pointer_type, value_type);
 
-        self.emitter.emit_local_allocation(&pointer, self.context)?;
-        if let Some(value) = &value {
-            self.emitter.emit_store(value, &Value::Register(pointer), self.context)?;
+        local_context.add_instruction(Instruction::StackAllocate {
+            result: pointer.clone(),
+        });
+        if let Some(value) = value {
+            local_context.add_instruction(Instruction::Store {
+                value,
+                pointer: pointer.into(),
+            });
         }
 
         Ok(Value::Void)
@@ -1733,30 +1992,42 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         let pointer_type = self.context.get_pointer_type(value_type, PointerSemantics::ImmutableSymbol);
         let pointer = local_context.define_indirect_constant_symbol(name.into(), pointer_type, value_type);
 
-        self.emitter.emit_global_allocation(&pointer, &value, true, self.context)?;
+        self.context.package_mut().output_mut().add_global_variable(GlobalVariable::new(
+            pointer,
+            GlobalVariableKind::Constant,
+            value,
+        ));
 
         Ok(Value::Void)
     }
 
-    fn generate_global_let_statement(&mut self, value: Option<&ast::Node>, global_register: &Register) -> crate::Result<Value> {
+    fn generate_global_let_statement(&mut self, value: Option<&ast::Node>, global_register: &GlobalRegister) -> crate::Result<Value> {
         // The fill phase has done most of the work for us already
-        let TypeRepr::Pointer { pointee_type, .. } = *self.context.type_repr(global_register.get_type()) else {
+        let TypeRepr::Pointer { pointee_type, semantics } = *self.context.type_repr(global_register.get_type()) else {
             panic!("invalid global value register type");
         };
 
-        let init_value = if let Some(node) = value {
+        let value = if let Some(node) = value {
             self.generate_constant_node(node, None, Some(pointee_type))?
         }
         else {
             Constant::ZeroInitializer(pointee_type)
         };
 
-        self.emitter.emit_global_allocation(global_register, &init_value, false, self.context)?;
+        self.context.package_mut().output_mut().add_global_variable(GlobalVariable::new(
+            global_register.clone(),
+            match semantics {
+                PointerSemantics::Immutable |
+                PointerSemantics::ImmutableSymbol => GlobalVariableKind::Constant,
+                PointerSemantics::Mutable => GlobalVariableKind::Mutable,
+            },
+            value,
+        ));
 
         Ok(Value::Void)
     }
 
-    fn generate_global_constant_statement(&mut self, value: &ast::Node, global_register: &Register) -> crate::Result<Value> {
+    fn generate_global_constant_statement(&mut self, value: &ast::Node, global_register: &GlobalRegister) -> crate::Result<Value> {
         // The fill phase has done most of the work for us already
         let TypeRepr::Pointer { pointee_type, .. } = *self.context.type_repr(global_register.get_type()) else {
             panic!("invalid global value register type");
@@ -1764,12 +2035,16 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
 
         let value = self.generate_constant_node(value, None, Some(pointee_type))?;
 
-        self.emitter.emit_global_allocation(global_register, &value, true, self.context)?;
+        self.context.package_mut().output_mut().add_global_variable(GlobalVariable::new(
+            global_register.clone(),
+            GlobalVariableKind::Constant,
+            value,
+        ));
 
         Ok(Value::Void)
     }
 
-    fn generate_function_definition(&mut self, name: &str, parameters: &[ast::FunctionParameterNode], body: &ast::Node, function_register: &Register) -> crate::Result<Value> {
+    fn generate_function_definition(&mut self, name: &str, parameters: &[ast::FunctionParameterNode], body: &ast::Node, function_register: &GlobalRegister) -> crate::Result<Value> {
         // The fill phase has done a lot of the initial work for us already
         let TypeRepr::Function { signature } = self.context.type_repr(function_register.get_type()) else {
             panic!("invalid global value register type");
@@ -1777,46 +2052,48 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         let signature = signature.clone();
 
         let mut local_context = LocalContext::new(
+            FunctionDefinition::new(
+                function_register.clone(),
+                signature.return_type(),
+                signature.is_variadic(),
+            ),
             self.context.current_namespace_info().path().child(name),
-            signature.return_type(),
         );
 
-        let (parameter_registers, parameter_pointers): (Vec<Register>, Vec<Register>) = parameters.iter()
-            .zip(signature.parameter_types())
-            .map(|(ast::FunctionParameterNode { name, is_mutable, .. }, &parameter_type)| {
-                let input_register = local_context.new_anonymous_register(parameter_type);
+        for (parameter, &parameter_type) in std::iter::zip(parameters, signature.parameter_types()) {
+            let parameter_register = local_context.new_anonymous_register(parameter_type);
+            local_context.function_mut().add_parameter_register(parameter_register.clone());
 
-                let semantics = PointerSemantics::for_symbol(*is_mutable);
-                let pointer_type = self.context.get_pointer_type(parameter_type, semantics);
-                let pointer = local_context.define_indirect_symbol(name.clone(), pointer_type, parameter_type);
+            let semantics = PointerSemantics::for_symbol(parameter.is_mutable);
+            let pointer_type = self.context.get_pointer_type(parameter_type, semantics);
+            let pointer = local_context.define_indirect_symbol(parameter.name.clone(), pointer_type, parameter_type);
 
-                (input_register, pointer)
-            })
-            .collect();
-
-        self.emitter.emit_function_enter(function_register, &parameter_registers, self.context)?;
-        self.emitter.emit_label(local_context.current_block_label())?;
-
-        for (input_register, pointer) in std::iter::zip(parameter_registers, parameter_pointers) {
-            self.emitter.emit_local_allocation(&pointer, self.context)?;
-            self.emitter.emit_store(&Value::Register(input_register), &Value::Register(pointer), self.context)?;
+            local_context.add_instruction(Instruction::StackAllocate {
+                result: pointer.clone(),
+            });
+            local_context.add_instruction(Instruction::Store {
+                value: parameter_register.into(),
+                pointer: pointer.into(),
+            });
         }
 
         let body_result = self.generate_local_node(body, &mut local_context, Some(signature.return_type()))?;
 
         // Insert a return instruction if necessary
         if body_result.get_type() != TypeHandle::NEVER {
-            self.emitter.emit_return(&body_result, self.context)?;
+            local_context.set_terminator(TerminatorInstruction::Return {
+                value: body_result,
+            });
         }
 
-        self.emitter.emit_function_exit()?;
+        self.context.package_mut().output_mut().add_function_definition(local_context.finish());
 
         Ok(Value::Void)
     }
 
     fn generate_structure_definition(&mut self, self_type: TypeHandle) -> crate::Result<Value> {
         // The fill phase has done basically all of the work for us already
-        self.emitter.emit_type_definition(self_type, self.context)?;
+        self.context.package_mut().output_mut().add_type_declaration(self_type);
 
         Ok(Value::Void)
     }
@@ -1852,21 +2129,25 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
         let (constant, intermediate_constants) = self.fold_as_constant(node, &mut constant_id,  local_context, expected_type)?;
         self.next_anonymous_constant_id = constant_id;
 
-        for (pointer, intermediate_constant) in &intermediate_constants {
-            self.emitter.emit_anonymous_constant(pointer, intermediate_constant, self.context)?;
+        for intermediate_constant in intermediate_constants {
+            self.context.package_mut().output_mut().add_global_variable(intermediate_constant);
         }
 
         Ok(constant)
     }
 
-    pub fn fold_as_constant(&mut self, node: &ast::Node, constant_id: &mut usize, local_context: Option<&LocalContext>, expected_type: Option<TypeHandle>) -> crate::Result<(Constant, Vec<(Register, Constant)>)> {
+    pub fn fold_as_constant(&mut self, node: &ast::Node, constant_id: &mut usize, local_context: Option<&LocalContext>, expected_type: Option<TypeHandle>) -> crate::Result<(Constant, Vec<GlobalVariable>)> {
         let mut new_intermediate_constant = |constant: Constant, context: &mut GlobalContext| {
-            let pointer = Register::new_global(
-                format!(".const.{constant_id}"),
+            let pointer = GlobalRegister::new(
+                format!(".const.{}.{constant_id}", context.package().info().name()).into_boxed_str(),
                 context.get_pointer_type(constant.get_type(), PointerSemantics::Immutable),
             );
             *constant_id += 1;
-            (pointer, constant)
+            GlobalVariable::new(
+                pointer,
+                GlobalVariableKind::AnonymousConstant,
+                constant,
+            )
         };
 
         let mut intermediate_constants = Vec::new();
@@ -1949,8 +2230,9 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
                             array_type: self.context.get_array_type(TypeHandle::U8, Some(value.len() as u64)),
                             value: value.clone(),
                         };
-                        let (pointer, constant) = new_intermediate_constant(constant, &mut self.context);
-                        intermediate_constants.push((pointer.clone(), constant));
+                        let intermediate_constant = new_intermediate_constant(constant, &mut self.context);
+                        let pointer = intermediate_constant.register().clone();
+                        intermediate_constants.push(intermediate_constant);
 
                         Constant::Register(pointer)
                     }
@@ -2020,7 +2302,10 @@ impl<'ctx, W: Write> Generator<'ctx, W> {
 
                 // This was probably already handled, but it can't hurt
                 if is_external {
-                    self.context.use_external_value(&Value::Constant(Constant::Type(struct_type)));
+                    self.context.use_external(
+                        struct_type.path(self.context).clone(),
+                        Constant::Type(struct_type),
+                    );
                 }
 
                 let mut initializer_members = initializer_members.to_vec();

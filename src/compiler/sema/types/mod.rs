@@ -53,7 +53,6 @@ pub struct FunctionSignature {
 
 impl FunctionSignature {
     pub fn new(return_type: TypeHandle, parameter_types: Box<[TypeHandle]>, is_variadic: bool) -> Self {
-
         Self {
             return_type,
             parameter_types,
@@ -242,10 +241,6 @@ impl TypeHandle {
         context.type_path(self)
     }
 
-    pub fn llvm_syntax(self, context: &GlobalContext) -> &str {
-        context.type_llvm_syntax(self)
-    }
-
     pub fn map_pointer_semantics<F>(self, context: &mut GlobalContext, f: F) -> Self
     where
         F: FnOnce(TypeHandle, PointerSemantics) -> PointerSemantics,
@@ -274,25 +269,6 @@ pub enum ConversionOperation {
     PointerToInteger,
     IntegerToPointer,
     BitwiseCast,
-}
-
-impl std::fmt::Display for ConversionOperation {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::Truncate => write!(f, "trunc"),
-            Self::ZeroExtend => write!(f, "zext"),
-            Self::SignExtend => write!(f, "sext"),
-            Self::FloatTruncate => write!(f, "fptrunc"),
-            Self::FloatExtend => write!(f, "fpext"),
-            Self::FloatToUnsigned => write!(f, "fptoui"),
-            Self::FloatToSigned => write!(f, "fptosi"),
-            Self::UnsignedToFloat => write!(f, "uitofp"),
-            Self::SignedToFloat => write!(f, "sitofp"),
-            Self::PointerToInteger => write!(f, "ptrtoint"),
-            Self::IntegerToPointer => write!(f, "inttoptr"),
-            Self::BitwiseCast => write!(f, "bitcast"),
-        }
-    }
 }
 
 #[derive(Copy, Clone, Debug)]

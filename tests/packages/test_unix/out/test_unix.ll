@@ -1,12 +1,28 @@
 source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\\test_unix\\main.cupr"
 
+declare i32 @getpid()
+
+declare i32 @printf(i8*, ...)
+
+declare i32 @fork()
+
+declare i32 @wait(i32*)
+
+@.const.test_unix.0 = private unnamed_addr constant [32 x i8] c"1. I am the parent with PID %d\0A\00"
+
+@.const.test_unix.1 = private unnamed_addr constant [31 x i8] c"2. I am the child with PID %d\0A\00"
+
+@.const.test_unix.2 = private unnamed_addr constant [25 x i8] c"3. My parent has PID %d\0A\00"
+
+@.const.test_unix.3 = private unnamed_addr constant [24 x i8] c"4. My child has PID %d\0A\00"
+
 define i32 @main() {
 .block.0:
 	%0 = call i32() @getpid()
 	%parent_pid = alloca i32
 	store i32 %0, i32* %parent_pid
 	%1 = load i32, i32* %parent_pid
-	%2 = call i32(i8*, ...) @printf(i8* bitcast ([32 x i8]* @.const.0 to i8*), i32 %1)
+	%2 = call i32(i8*, ...) @printf(i8* bitcast ([32 x i8]* @.const.test_unix.0 to i8*), i32 %1)
 	%3 = call i32() @fork()
 	%child_pid = alloca i32
 	store i32 %3, i32* %child_pid
@@ -18,31 +34,16 @@ define i32 @main() {
 	%child_pid-1 = alloca i32
 	store i32 %6, i32* %child_pid-1
 	%7 = load i32, i32* %child_pid-1
-	%8 = call i32(i8*, ...) @printf(i8* bitcast ([31 x i8]* @.const.1 to i8*), i32 %7)
+	%8 = call i32(i8*, ...) @printf(i8* bitcast ([31 x i8]* @.const.test_unix.1 to i8*), i32 %7)
 	%9 = load i32, i32* %parent_pid
-	%10 = call i32(i8*, ...) @printf(i8* bitcast ([25 x i8]* @.const.2 to i8*), i32 %9)
+	%10 = call i32(i8*, ...) @printf(i8* bitcast ([25 x i8]* @.const.test_unix.2 to i8*), i32 %9)
 	br label %.block.3
 .block.2:
 	%11 = call i32(i32*) @wait(i32* null)
 	%12 = load i32, i32* %child_pid
-	%13 = call i32(i8*, ...) @printf(i8* bitcast ([24 x i8]* @.const.3 to i8*), i32 %12)
+	%13 = call i32(i8*, ...) @printf(i8* bitcast ([24 x i8]* @.const.test_unix.3 to i8*), i32 %12)
 	br label %.block.3
 .block.3:
 	ret i32 0
 }
-
-@.const.0 = private unnamed_addr constant [32 x i8] c"1. I am the parent with PID %d\0A\00"
-@.const.1 = private unnamed_addr constant [31 x i8] c"2. I am the child with PID %d\0A\00"
-@.const.2 = private unnamed_addr constant [25 x i8] c"3. My parent has PID %d\0A\00"
-@.const.3 = private unnamed_addr constant [24 x i8] c"4. My child has PID %d\0A\00"
-
-; ==== External definitions from other packages ====
-
-declare i32 @getpid()
-
-declare i32 @printf(i8*, ...)
-
-declare i32 @fork()
-
-declare i32 @wait(i32*)
 

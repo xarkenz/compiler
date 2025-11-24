@@ -1,32 +1,42 @@
 use super::*;
 use std::collections::HashMap;
+use crate::ir::FunctionDefinition;
+use crate::ir::instr::{BasicBlock, Instruction, PhiInstruction, TerminatorInstruction};
+use crate::ir::value::BlockLabel;
 
-#[derive(Debug)]
 pub struct LocalContext {
+    function: FunctionDefinition,
     function_path: AbsolutePath,
-    return_type: TypeHandle,
-    break_stack: Vec<Label>,
-    continue_stack: Vec<Label>,
+    current_block: BasicBlock,
+    break_stack: Vec<BlockLabel>,
+    continue_stack: Vec<BlockLabel>,
     symbol_versions: HashMap<Box<str>, usize>,
     scope_stack: Vec<HashMap<Box<str>, Value>>,
-    current_block_label: Label,
     next_anonymous_register_id: usize,
     next_basic_block_id: usize,
 }
 
 impl LocalContext {
-    pub fn new(function_path: AbsolutePath, return_type: TypeHandle) -> Self {
+    pub fn new(function: FunctionDefinition, function_path: AbsolutePath) -> Self {
         Self {
+            function,
             function_path,
-            return_type,
+            current_block: BasicBlock::new(BlockLabel::new(".block.0".into())),
             break_stack: Vec::new(),
             continue_stack: Vec::new(),
             symbol_versions: HashMap::new(),
             scope_stack: vec![HashMap::new()],
-            current_block_label: Label::new(".block.0".into()),
             next_anonymous_register_id: 0,
             next_basic_block_id: 1,
         }
+    }
+
+    pub fn function(&self) -> &FunctionDefinition {
+        &self.function
+    }
+
+    pub fn function_mut(&mut self) -> &mut FunctionDefinition {
+        &mut self.function
     }
 
     pub fn function_path(&self) -> &AbsolutePath {
@@ -34,18 +44,44 @@ impl LocalContext {
     }
 
     pub fn return_type(&self) -> TypeHandle {
-        self.return_type
+        self.function.return_type()
     }
 
-    pub fn break_label(&self) -> Option<&Label> {
+    pub fn current_block(&self) -> &BasicBlock {
+        &self.current_block
+    }
+
+    pub fn current_block_mut(&mut self) -> &mut BasicBlock {
+        &mut self.current_block
+    }
+
+    pub fn add_phi(&mut self, phi: PhiInstruction) {
+        self.current_block.add_phi(phi);
+    }
+
+    pub fn add_instruction(&mut self, instruction: Instruction) {
+        self.current_block.add_instruction(instruction);
+    }
+
+    pub fn set_terminator(&mut self, terminator: TerminatorInstruction) {
+        self.current_block.set_terminator(terminator);
+    }
+
+    pub fn start_new_block(&mut self, label: BlockLabel) -> &BlockLabel {
+        let finished_block = std::mem::replace(&mut self.current_block, BasicBlock::new(label));
+        self.function.add_block(finished_block);
+        self.function.blocks().last().unwrap().label()
+    }
+
+    pub fn break_label(&self) -> Option<&BlockLabel> {
         self.break_stack.last()
     }
 
-    pub fn continue_label(&self) -> Option<&Label> {
+    pub fn continue_label(&self) -> Option<&BlockLabel> {
         self.continue_stack.last()
     }
 
-    pub fn push_break_label(&mut self, label: Label) {
+    pub fn push_break_label(&mut self, label: BlockLabel) {
         self.break_stack.push(label);
     }
 
@@ -53,7 +89,7 @@ impl LocalContext {
         self.break_stack.pop().expect("attempted to pop from empty break stack");
     }
 
-    pub fn push_continue_label(&mut self, label: Label) {
+    pub fn push_continue_label(&mut self, label: BlockLabel) {
         self.continue_stack.push(label);
     }
 
@@ -76,15 +112,15 @@ impl LocalContext {
             .find_map(|scope| scope.get(name))
     }
 
-    pub fn define_indirect_symbol(&mut self, name: Box<str>, pointer_type: TypeHandle, pointee_type: TypeHandle) -> Register {
+    pub fn define_indirect_symbol(&mut self, name: Box<str>, pointer_type: TypeHandle, pointee_type: TypeHandle) -> LocalRegister {
         let version = *self.symbol_versions.entry(name.clone())
             .and_modify(|version| *version += 1)
             .or_insert(0);
         let identifier = match version {
-            0 => format!("{name}"),
-            1.. => format!("{name}-{version}"),
+            0 => name.clone(),
+            1.. => format!("{name}-{version}").into_boxed_str(),
         };
-        let register = Register::new_local(identifier, pointer_type);
+        let register = LocalRegister::new(identifier, pointer_type);
         let value = Value::Indirect {
             pointer: Box::new(Value::Register(register.clone())),
             pointee_type,
@@ -95,15 +131,15 @@ impl LocalContext {
         register
     }
 
-    pub fn define_indirect_constant_symbol(&mut self, name: Box<str>, pointer_type: TypeHandle, pointee_type: TypeHandle) -> Register {
+    pub fn define_indirect_constant_symbol(&mut self, name: Box<str>, pointer_type: TypeHandle, pointee_type: TypeHandle) -> GlobalRegister {
         let version = *self.symbol_versions.entry(name.clone())
             .and_modify(|version| *version += 1)
             .or_insert(0);
         let identifier = match version {
-            0 => format!("{}.{name}", self.function_path()),
-            1.. => format!("{}.{name}-{version}", self.function_path()),
+            0 => format!("{}.{name}", self.function_path()).into_boxed_str(),
+            1.. => format!("{}.{name}-{version}", self.function_path()).into_boxed_str(),
         };
-        let register = Register::new_global(identifier, pointer_type);
+        let register = GlobalRegister::new(identifier, pointer_type);
         let value = Value::Constant(Constant::Indirect {
             pointer: Box::new(Constant::Register(register.clone())),
             pointee_type,
@@ -118,25 +154,22 @@ impl LocalContext {
         self.scope_stack.last_mut().unwrap().insert(name, value);
     }
 
-    pub fn new_anonymous_register(&mut self, value_type: TypeHandle) -> Register {
+    pub fn new_anonymous_register(&mut self, value_type: TypeHandle) -> LocalRegister {
         let id = self.next_anonymous_register_id;
         self.next_anonymous_register_id += 1;
 
-        Register::new_local(id.to_string(), value_type)
+        LocalRegister::new(id.to_string().into_boxed_str(), value_type)
     }
 
-    pub fn new_block_label(&mut self) -> Label {
+    pub fn new_block_label(&mut self) -> BlockLabel {
         let id = self.next_basic_block_id;
         self.next_basic_block_id += 1;
 
-        Label::new(format!(".block.{id}"))
+        BlockLabel::new(format!(".block.{id}").into_boxed_str())
     }
 
-    pub fn current_block_label(&self) -> &Label {
-        &self.current_block_label
-    }
-
-    pub fn set_current_block_label(&mut self, label: Label) {
-        self.current_block_label = label;
+    pub fn finish(mut self) -> FunctionDefinition {
+        self.function.add_block(self.current_block);
+        self.function
     }
 }

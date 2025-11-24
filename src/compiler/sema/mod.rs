@@ -1,5 +1,7 @@
 use crate::ast::{Node, NodeKind, PathSegment, TypeNode, TypeNodeKind};
 use crate::ast::parse::ParsedModule;
+use crate::ir::value::{Constant, GlobalRegister, IntegerValue, LocalRegister, Value};
+use crate::package::{PackageContext, PackageManager};
 use crate::target::TargetInfo;
 use crate::token::Literal;
 use std::path::Path;
@@ -12,12 +14,7 @@ pub use symbol::*;
 
 mod types;
 pub use types::*;
-
-mod value;
-pub use value::*;
-
-mod package;
-pub use package::*;
+use crate::ir::{ExternalFunction, ExternalGlobalVariable, GlobalVariableKind};
 
 pub struct GlobalContext {
     target: TargetInfo,
@@ -149,10 +146,6 @@ impl GlobalContext {
 
     pub fn type_size(&self, handle: TypeHandle) -> Option<u64> {
         self.type_registry.type_size(handle)
-    }
-
-    pub fn type_llvm_syntax(&self, handle: TypeHandle) -> &str {
-        self.type_registry.type_llvm_syntax(handle)
     }
 
     pub fn current_module(&self) -> NamespaceHandle {
@@ -402,7 +395,13 @@ impl GlobalContext {
             };
 
             if is_external {
-                self.use_external_value(&value);
+                let Value::Constant(constant) = &value else {
+                    panic!("non-constant external value should not be possible");
+                };
+                self.use_external(
+                    self.namespace_info(namespace).path().child(name),
+                    constant.clone(),
+                );
             }
 
             Ok(value)
@@ -620,11 +619,11 @@ impl GlobalContext {
                     )));
                 };
                 let value_type = self.interpret_type_node(value_type)?;
-                *global_register = Some(self.define_global_value(name, value_type, *is_mutable)?);
+                *global_register = Some(self.define_global_variable(name, value_type, *is_mutable)?);
             }
             NodeKind::Constant { name, value_type, global_register, .. } => {
                 let value_type = self.interpret_type_node(value_type)?;
-                *global_register = Some(self.define_global_value(name, value_type, false)?);
+                *global_register = Some(self.define_global_variable(name, value_type, false)?);
             }
             NodeKind::Function { name, parameters, is_variadic, return_type, global_register, is_foreign, .. } => {
                 let parameter_types = parameters
@@ -638,11 +637,15 @@ impl GlobalContext {
                 let function_type = self.get_function_type(&signature);
 
                 let identifier = if *is_foreign {
-                    name.to_string()
+                    name.clone()
                 } else {
-                    self.current_namespace_info().path().child(name.clone()).to_string()
+                    self.current_namespace_info()
+                        .path()
+                        .child(name.clone())
+                        .to_string()
+                        .into_boxed_str()
                 };
-                let register = Register::new_global(identifier, function_type);
+                let register = GlobalRegister::new(identifier, function_type);
 
                 self.current_namespace_info_mut().define(
                     name,
@@ -713,10 +716,14 @@ impl GlobalContext {
         Ok(())
     }
 
-    fn define_global_value(&mut self, name: &str, value_type: TypeHandle, is_mutable: bool) -> crate::Result<Register> {
-        let path = self.current_module_info().path().child(name);
+    fn define_global_variable(&mut self, name: &str, value_type: TypeHandle, is_mutable: bool) -> crate::Result<GlobalRegister> {
+        let identifier = self.current_module_info()
+            .path()
+            .child(name)
+            .to_string()
+            .into_boxed_str();
         let pointer_type = self.get_pointer_type(value_type, PointerSemantics::for_symbol(is_mutable));
-        let register = Register::new_global(path.to_string(), pointer_type);
+        let register = GlobalRegister::new(identifier, pointer_type);
 
         self.current_namespace_info_mut().define(
             name,
@@ -737,31 +744,65 @@ impl GlobalContext {
         Ok(())
     }
 
-    pub fn use_external_value(&mut self, value: &Value) {
-        if !self.package.use_external_value(value) {
+    pub fn use_external(&mut self, path: AbsolutePath, constant: Constant) {
+        if !self.package.register_external_path(path.clone()) {
             return;
         }
 
-        if let &Value::Constant(Constant::Type(handle)) = value {
-            if let TypeRepr::Structure { members, .. } = self.type_repr(handle) {
-                let inner_external_types: Vec<TypeHandle> = members
-                    .iter()
-                    .flat_map(|member| self.get_inner_external_types(member.member_type))
-                    .collect();
-                for inner_type in inner_external_types {
-                    self.use_external_value(&Value::Constant(Constant::Type(inner_type)));
+        let inner_external_types = match constant {
+            Constant::Type(handle) => {
+                self.package.output_mut().add_type_declaration(handle);
+
+                if let TypeRepr::Structure { members, .. } = handle.repr(self) {
+                    members
+                        .iter()
+                        .flat_map(|member| self.get_inner_external_types(member.member_type))
+                        .collect()
+                } else {
+                    // This shouldn't really happen, but we'll just finish gracefully anyway.
+                    return
                 }
             }
-        }
-        else {
-            for inner_type in self.get_inner_external_types(value.get_type()) {
-                self.use_external_value(&Value::Constant(Constant::Type(inner_type)));
+            Constant::Indirect { pointee_type, pointer } => {
+                let Constant::Register(register) = *pointer else {
+                    panic!("indirect constant is not register");
+                };
+                let register_type = register.get_type();
+                let &TypeRepr::Pointer { semantics, .. } = register_type.repr(self) else {
+                    panic!("'{}' is not a pointer type", register_type.path(self));
+                };
+                self.package.output_mut().add_external_global_variable(ExternalGlobalVariable::new(
+                    register,
+                    match semantics {
+                        PointerSemantics::Immutable |
+                        PointerSemantics::ImmutableSymbol => GlobalVariableKind::Constant,
+                        PointerSemantics::Mutable => GlobalVariableKind::Mutable,
+                    },
+                    pointee_type,
+                ));
+
+                self.get_inner_external_types(register_type)
             }
+            Constant::Register(register) => {
+                // We'll just assume it's a function until proven otherwise.
+                let register_type = register.get_type();
+                self.package.output_mut().add_external_function(ExternalFunction::new(
+                    register,
+                ));
+
+                self.get_inner_external_types(register_type)
+            }
+            _ => return
+        };
+
+        for inner_type in inner_external_types {
+            let type_path = inner_type.path(self).clone();
+            self.use_external(type_path, Constant::Type(inner_type));
         }
     }
 
     fn get_inner_external_types(&self, handle: TypeHandle) -> Vec<TypeHandle> {
-        match *self.type_repr(handle) {
+        match *handle.repr(self) {
             TypeRepr::Structure { is_external: true, .. } |
             TypeRepr::OpaqueStructure { is_external: true, .. } => {
                 vec![handle]

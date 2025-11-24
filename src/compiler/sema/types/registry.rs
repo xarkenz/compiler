@@ -7,7 +7,6 @@ struct TypeEntry {
     namespace: NamespaceHandle,
     alignment: Option<Option<u64>>,
     size: Option<Option<u64>>,
-    llvm_syntax: Option<Box<str>>,
 }
 
 pub struct TypeRegistry {
@@ -92,17 +91,11 @@ impl TypeRegistry {
             .expect("type size cannot be known before fill phase is completed")
     }
 
-    pub fn type_llvm_syntax(&self, handle: TypeHandle) -> &str {
-        self.type_entry(handle).llvm_syntax.as_ref()
-            .expect("type syntax cannot be known before fill phase is completed")
-    }
-
     pub fn create_type(&mut self, path: AbsolutePath, repr: TypeRepr, namespace: NamespaceHandle, target: &TargetInfo, fill_phase_complete: bool) -> TypeHandle {
         let handle = TypeHandle::new(self.type_table.len());
 
         let alignment = fill_phase_complete.then(|| self.calculate_alignment(&repr, target));
         let size = fill_phase_complete.then(|| self.calculate_size(&repr, target));
-        let llvm_syntax = fill_phase_complete.then(|| self.generate_type_llvm_syntax(&path.to_string(), &repr));
 
         self.type_table.push(TypeEntry {
             path,
@@ -110,7 +103,6 @@ impl TypeRegistry {
             namespace,
             alignment,
             size,
-            llvm_syntax,
         });
 
         handle
@@ -119,16 +111,11 @@ impl TypeRegistry {
     pub fn update_type_repr(&mut self, handle: TypeHandle, repr: TypeRepr, target: &TargetInfo, fill_phase_complete: bool) {
         let alignment = fill_phase_complete.then(|| self.calculate_alignment(&repr, target));
         let size = fill_phase_complete.then(|| self.calculate_size(&repr, target));
-        let llvm_syntax = fill_phase_complete.then(|| {
-            let identifier = self.type_path(handle).to_string();
-            self.generate_type_llvm_syntax(&identifier, &repr)
-        });
 
         let entry = self.type_entry_mut(handle);
         entry.repr = repr;
         entry.alignment = alignment;
         entry.size = size;
-        entry.llvm_syntax = llvm_syntax;
     }
 
     pub fn path_base_type(&self, base_type: &PathBaseType) -> Option<TypeHandle> {
@@ -285,7 +272,6 @@ impl TypeRegistry {
                 target,
                 true,
                 true,
-                true,
                 &mut dependency_stack,
             )?;
             if !dependency_stack.is_empty() {
@@ -302,15 +288,13 @@ impl TypeRegistry {
         target: &TargetInfo,
         get_alignment: bool,
         get_size: bool,
-        get_llvm_syntax: bool,
         dependency_stack: &mut Vec<TypeHandle>,
     ) -> crate::Result<()> {
         let entry = self.type_entry(handle);
         let get_alignment = get_alignment && entry.alignment.is_none();
         let get_size = get_size && entry.size.is_none();
-        let get_llvm_syntax = get_llvm_syntax && entry.llvm_syntax.is_none();
 
-        if !get_alignment && !get_size && !get_llvm_syntax {
+        if !get_alignment && !get_size {
             return Ok(());
         }
 
@@ -335,7 +319,6 @@ impl TypeRegistry {
                     target,
                     false,
                     false,
-                    get_llvm_syntax,
                     dependency_stack,
                 )?;
             }
@@ -345,7 +328,6 @@ impl TypeRegistry {
                     target,
                     get_alignment,
                     get_size && length.is_some(),
-                    get_llvm_syntax,
                     dependency_stack,
                 )?;
             }
@@ -356,7 +338,6 @@ impl TypeRegistry {
                         target,
                         get_alignment || get_size,
                         get_size,
-                        get_llvm_syntax,
                         dependency_stack,
                     )?;
                 }
@@ -368,30 +349,9 @@ impl TypeRegistry {
                         target,
                         get_alignment || get_size,
                         get_size,
-                        false,
                         dependency_stack,
                     )?;
                 }
-            }
-            TypeRepr::Function { ref signature } if get_llvm_syntax => {
-                for &parameter_type in signature.parameter_types() {
-                    self.calculate_properties_for_type(
-                        parameter_type,
-                        target,
-                        false,
-                        false,
-                        get_llvm_syntax,
-                        dependency_stack,
-                    )?;
-                }
-                self.calculate_properties_for_type(
-                    signature.return_type(),
-                    target,
-                    false,
-                    false,
-                    get_llvm_syntax,
-                    dependency_stack,
-                )?;
             }
             _ => {}
         }
@@ -405,11 +365,6 @@ impl TypeRegistry {
         if get_size {
             let size = self.calculate_size(&repr, target);
             self.type_entry_mut(handle).size = Some(size);
-        }
-        if get_llvm_syntax {
-            let identifier = self.type_path(handle).to_string();
-            let llvm_syntax = self.generate_type_llvm_syntax(&identifier, &repr);
-            self.type_entry_mut(handle).llvm_syntax = Some(llvm_syntax);
         }
 
         Ok(())
@@ -494,74 +449,6 @@ impl TypeRegistry {
         let padded_size = intermediate_size - intermediate_size % max_alignment;
 
         Some(padded_size)
-    }
-
-    fn generate_type_llvm_syntax(&self, identifier: &str, repr: &TypeRepr) -> Box<str> {
-        match *repr {
-            TypeRepr::Unresolved => "<ERROR unresolved type>".into(),
-            TypeRepr::Meta => "<ERROR meta type>".into(),
-            TypeRepr::Never => "void".into(),
-            TypeRepr::Void => "void".into(),
-            TypeRepr::Boolean => "i1".into(),
-            TypeRepr::Integer { size, .. } => {
-                format!("i{}", size * 8).into_boxed_str()
-            }
-            TypeRepr::PointerSizedInteger { .. } => {
-                panic!("unresolved pointer sized integer")
-            }
-            TypeRepr::Float32 => "float".into(),
-            TypeRepr::Float64 => "double".into(),
-            TypeRepr::Pointer { pointee_type, .. } => {
-                match self.type_llvm_syntax(pointee_type) {
-                    "void" => "{}*".into(),
-                    pointee_syntax => format!("{pointee_syntax}*").into_boxed_str()
-                }
-            }
-            TypeRepr::Array { item_type, length } => match length {
-                Some(length) => {
-                    format!("[{} x {}]", length, self.type_llvm_syntax(item_type)).into_boxed_str()
-                }
-                None => {
-                    self.type_llvm_syntax(item_type).into()
-                }
-            }
-            TypeRepr::Tuple { ref item_types } => match *item_types.as_ref() {
-                [] => "{}".into(),
-                [first_item_type, ref item_types @ ..] => {
-                    let mut syntax = format!("{{ {}", self.type_llvm_syntax(first_item_type));
-                    for &item_type in item_types {
-                        syntax.push_str(", ");
-                        syntax.push_str(self.type_llvm_syntax(item_type));
-                    }
-                    syntax.push_str(" }");
-
-                    syntax.into_boxed_str()
-                }
-            }
-            TypeRepr::Structure { .. } | TypeRepr::OpaqueStructure { .. } => {
-                format!("%\"{identifier}\"").into_boxed_str()
-            }
-            TypeRepr::Function { ref signature } => {
-                let mut syntax = format!("{}(", self.type_llvm_syntax(signature.return_type()));
-                let mut parameters_iter = signature.parameter_types().iter();
-                if let Some(&parameter) = parameters_iter.next() {
-                    syntax.push_str(self.type_llvm_syntax(parameter));
-                    for &parameter in parameters_iter {
-                        syntax.push_str(", ");
-                        syntax.push_str(self.type_llvm_syntax(parameter));
-                    }
-                    if signature.is_variadic() {
-                        syntax.push_str(", ...");
-                    }
-                }
-                else if signature.is_variadic() {
-                    syntax.push_str("...");
-                }
-                syntax.push_str(")*");
-
-                syntax.into_boxed_str()
-            }
-        }
     }
 
     pub fn finish_package(&mut self) {

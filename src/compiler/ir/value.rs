@@ -1,11 +1,243 @@
-use super::*;
+use crate::sema::*;
+use crate::target::TargetInfo;
 
-mod float;
-mod integer;
+#[repr(usize)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum IntegerType {
+    I8 = TypeHandle::I8.registry_index(),
+    U8 = TypeHandle::U8.registry_index(),
+    I16 = TypeHandle::I16.registry_index(),
+    U16 = TypeHandle::U16.registry_index(),
+    I32 = TypeHandle::I32.registry_index(),
+    U32 = TypeHandle::U32.registry_index(),
+    I64 = TypeHandle::I64.registry_index(),
+    U64 = TypeHandle::U64.registry_index(),
+    Isize = TypeHandle::ISIZE.registry_index(),
+    Usize = TypeHandle::USIZE.registry_index(),
+}
 
-pub use float::*;
-pub use integer::*;
-use crate::gen::llvm::EscapedStringDisplay;
+impl IntegerType {
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "i8" => Some(Self::I8),
+            "u8" => Some(Self::U8),
+            "i16" => Some(Self::I16),
+            "u16" => Some(Self::U16),
+            "i32" => Some(Self::I32),
+            "u32" => Some(Self::U32),
+            "i64" => Some(Self::I64),
+            "u64" => Some(Self::U64),
+            "isize" => Some(Self::Isize),
+            "usize" => Some(Self::Usize),
+            _ => None
+        }
+    }
+
+    pub fn from_handle(handle: TypeHandle) -> Option<Self> {
+        match handle {
+            TypeHandle::I8 => Some(Self::I8),
+            TypeHandle::U8 => Some(Self::U8),
+            TypeHandle::I16 => Some(Self::I16),
+            TypeHandle::U16 => Some(Self::U16),
+            TypeHandle::I32 => Some(Self::I32),
+            TypeHandle::U32 => Some(Self::U32),
+            TypeHandle::I64 => Some(Self::I64),
+            TypeHandle::U64 => Some(Self::U64),
+            TypeHandle::ISIZE => Some(Self::Isize),
+            TypeHandle::USIZE => Some(Self::Usize),
+            _ => None
+        }
+    }
+
+    pub fn as_handle(&self) -> TypeHandle {
+        TypeHandle::new(*self as usize)
+    }
+
+    pub fn size(&self, target: &TargetInfo) -> u64 {
+        match self {
+            Self::I8 | Self::U8 => 1,
+            Self::I16 | Self::U16 => 2,
+            Self::I32 | Self::U32 => 4,
+            Self::I64 | Self::U64 => 8,
+            Self::Isize | Self::Usize => target.pointer_size(),
+        }
+    }
+
+    pub fn is_signed(&self) -> bool {
+        match self {
+            Self::I8 | Self::I16 | Self::I32 | Self::I64 | Self::Isize => true,
+            Self::U8 | Self::U16 | Self::U32 | Self::U64 | Self::Usize => false,
+        }
+    }
+}
+
+impl std::fmt::Display for IntegerType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::I8 => write!(f, "i8"),
+            Self::U8 => write!(f, "u8"),
+            Self::I16 => write!(f, "i16"),
+            Self::U16 => write!(f, "u16"),
+            Self::I32 => write!(f, "i32"),
+            Self::U32 => write!(f, "u32"),
+            Self::I64 => write!(f, "i64"),
+            Self::U64 => write!(f, "u64"),
+            Self::Isize => write!(f, "isize"),
+            Self::Usize => write!(f, "usize"),
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct IntegerValue {
+    integer_type: IntegerType,
+    raw: i128,
+}
+
+impl IntegerValue {
+    pub fn new(integer_type: IntegerType, raw: i128) -> Self {
+        Self {
+            integer_type,
+            raw,
+        }
+    }
+
+    pub fn from_unknown_type(raw: i128, type_handle: TypeHandle, target: &TargetInfo) -> Option<Self> {
+        let integer_type = IntegerType::from_handle(type_handle)?;
+        let size = integer_type.size(target);
+        let signed = integer_type.is_signed();
+
+        let raw = match (size, signed) {
+            (1, true) => raw as i8 as i128,
+            (1, false) => raw as u8 as i128,
+            (2, true) => raw as i16 as i128,
+            (2, false) => raw as u16 as i128,
+            (4, true) => raw as i32 as i128,
+            (4, false) => raw as u32 as i128,
+            (8, true) => raw as i64 as i128,
+            (8, false) => raw as u64 as i128,
+            _ => return None
+        };
+
+        Some(Self {
+            integer_type,
+            raw,
+        })
+    }
+
+    pub fn raw(&self) -> i128 {
+        self.raw
+    }
+
+    pub fn integer_type(&self) -> IntegerType {
+        self.integer_type
+    }
+
+    pub fn set_integer_type(&mut self, integer_type: IntegerType) {
+        self.integer_type = integer_type;
+    }
+}
+
+impl std::fmt::Display for IntegerValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.raw)
+    }
+}
+
+#[repr(usize)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum FloatType {
+    F32 = TypeHandle::F32.registry_index(),
+    F64 = TypeHandle::F64.registry_index(),
+}
+
+impl FloatType {
+    pub fn from_name(syntax: &str) -> Option<Self> {
+        match syntax {
+            "f32" => Some(Self::F32),
+            "f64" => Some(Self::F64),
+            _ => None
+        }
+    }
+
+    pub fn from_handle(handle: TypeHandle) -> Option<Self> {
+        match handle {
+            TypeHandle::F32 => Some(Self::F32),
+            TypeHandle::F64 => Some(Self::F64),
+            _ => None
+        }
+    }
+
+    pub fn as_handle(&self) -> TypeHandle {
+        TypeHandle::new(*self as usize)
+    }
+
+    pub fn size(&self, target: &TargetInfo) -> u64 {
+        let _ = target;
+        match self {
+            Self::F32 => 4,
+            Self::F64 => 8,
+        }
+    }
+}
+
+impl std::fmt::Display for FloatType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::F32 => write!(f, "f32"),
+            Self::F64 => write!(f, "f64"),
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct FloatValue {
+    float_type: FloatType,
+    raw: f64,
+}
+
+impl FloatValue {
+    pub fn new(float_type: FloatType, raw: f64) -> Self {
+        Self {
+            float_type,
+            raw,
+        }
+    }
+
+    pub fn from_unknown_type(raw: f64, type_handle: TypeHandle, target: &TargetInfo) -> Option<Self> {
+        let float_type = FloatType::from_handle(type_handle)?;
+        let size = float_type.size(target);
+
+        let raw = match size {
+            4 => raw as f32 as f64,
+            8 => raw,
+            _ => return None
+        };
+
+        Some(Self {
+            float_type,
+            raw,
+        })
+    }
+
+    pub fn raw(&self) -> f64 {
+        self.raw
+    }
+
+    pub fn float_type(&self) -> FloatType {
+        self.float_type
+    }
+
+    pub fn set_float_type(&mut self, float_type: FloatType) {
+        self.float_type = float_type;
+    }
+}
+
+impl std::fmt::Display for FloatValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.raw)
+    }
+}
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct StringValue {
@@ -30,51 +262,19 @@ impl StringValue {
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
-
-    pub fn llvm_syntax(&self) -> String {
-        self.to_string()
-    }
-}
-
-impl std::fmt::Display for StringValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "c{}", EscapedStringDisplay(self.bytes()))
-    }
-}
-
-fn quote_identifier_if_needed(mut identifier: String) -> Box<str> {
-    let needs_quotes = identifier.contains(|ch| {
-        !matches!(ch, '0'..='9' | 'A'..='Z' | 'a'..='z' | '-' | '_' | '.' | '$')
-    });
-
-    if needs_quotes {
-        identifier = EscapedStringDisplay(&identifier).to_string();
-    }
-
-    identifier.into_boxed_str()
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Register {
+pub struct LocalRegister {
     identifier: Box<str>,
     value_type: TypeHandle,
-    is_global: bool,
 }
 
-impl Register {
-    pub fn new_global(raw_identifier: String, value_type: TypeHandle) -> Self {
+impl LocalRegister {
+    pub fn new(identifier: Box<str>, value_type: TypeHandle) -> Self {
         Self {
-            identifier: quote_identifier_if_needed(raw_identifier),
+            identifier,
             value_type,
-            is_global: true,
-        }
-    }
-
-    pub fn new_local(raw_identifier: String, value_type: TypeHandle) -> Self {
-        Self {
-            identifier: quote_identifier_if_needed(raw_identifier),
-            value_type,
-            is_global: false,
         }
     }
 
@@ -89,42 +289,19 @@ impl Register {
     pub fn set_type(&mut self, value_type: TypeHandle) {
         self.value_type = value_type;
     }
-
-    pub fn is_global(&self) -> bool {
-        self.is_global
-    }
-
-    pub fn llvm_syntax(&self) -> String {
-        if self.is_global() {
-            format!("@{}", self.identifier())
-        }
-        else {
-            format!("%{}", self.identifier())
-        }
-    }
 }
 
-impl PartialOrd for Register {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Register {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.identifier().cmp(other.identifier())
-    }
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub struct Label {
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GlobalRegister {
     identifier: Box<str>,
+    value_type: TypeHandle,
 }
 
-impl Label {
-    pub fn new(raw_identifier: String) -> Self {
+impl GlobalRegister {
+    pub fn new(identifier: Box<str>, value_type: TypeHandle) -> Self {
         Self {
-            identifier: quote_identifier_if_needed(raw_identifier),
+            identifier,
+            value_type,
         }
     }
 
@@ -132,8 +309,29 @@ impl Label {
         &self.identifier
     }
 
-    pub fn llvm_syntax(&self) -> String {
-        format!("%{}", self.identifier())
+    pub fn get_type(&self) -> TypeHandle {
+        self.value_type
+    }
+
+    pub fn set_type(&mut self, value_type: TypeHandle) {
+        self.value_type = value_type;
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct BlockLabel {
+    identifier: Box<str>,
+}
+
+impl BlockLabel {
+    pub fn new(identifier: Box<str>) -> Self {
+        Self {
+            identifier,
+        }
+    }
+
+    pub fn identifier(&self) -> &str {
+        &self.identifier
     }
 }
 
@@ -162,7 +360,7 @@ pub enum Constant {
         struct_type: TypeHandle,
         members: Vec<Constant>,
     },
-    Register(Register),
+    Register(GlobalRegister),
     Indirect {
         pointee_type: TypeHandle,
         pointer: Box<Constant>,
@@ -280,120 +478,6 @@ impl Constant {
             _ => {}
         }
     }
-
-    pub fn llvm_syntax(&self, context: &GlobalContext) -> String {
-        match self {
-            Self::Undefined(..) => {
-                "undef".to_string()
-            }
-            Self::Poison(..) => {
-                "poison".to_string()
-            }
-            Self::ZeroInitializer(..) => {
-                "zeroinitializer".to_string()
-            }
-            Self::NullPointer(..) => {
-                "null".to_string()
-            }
-            Self::Boolean(value) => {
-                value.to_string()
-            }
-            Self::Integer(value) => {
-                value.llvm_syntax()
-            }
-            Self::Float(value) => {
-                value.llvm_syntax()
-            }
-            Self::String { value, .. } => {
-                value.llvm_syntax()
-            }
-            Self::Array { items, .. } => {
-                Self::array_llvm_syntax(items, context)
-            }
-            Self::Tuple { items, .. } => {
-                Self::structure_llvm_syntax(items, context)
-            }
-            Self::Structure { members, .. } => {
-                Self::structure_llvm_syntax(members, context)
-            }
-            Self::Register(register) => {
-                register.llvm_syntax()
-            }
-            Self::Indirect { pointer, .. } => {
-                format!("<ERROR indirect constant: {}>", pointer.llvm_syntax(context))
-            }
-            Self::Convert { operation, value, result_type } => {
-                let value_type = value.get_type();
-                let value_syntax = value.llvm_syntax(context);
-                format!(
-                    "{operation} ({} {value_syntax} to {})",
-                    context.type_llvm_syntax(value_type),
-                    context.type_llvm_syntax(*result_type),
-                )
-            }
-            Self::GetElementPointer { aggregate_type, pointer, indices, .. } => {
-                let mut syntax = format!(
-                    "getelementptr inbounds ({}, {} {}",
-                    context.type_llvm_syntax(*aggregate_type),
-                    context.type_llvm_syntax(pointer.get_type()),
-                    pointer.llvm_syntax(context),
-                );
-                for index in indices {
-                    syntax.push_str(", ");
-                    syntax.push_str(context.type_llvm_syntax(index.get_type()));
-                    syntax.push(' ');
-                    syntax.push_str(&index.llvm_syntax(context));
-                }
-                syntax.push(')');
-                syntax
-            }
-            Self::Type(..) | Self::Module(..) => {
-                "<ERROR meta constant>".to_string()
-            }
-        }
-    }
-
-    fn array_llvm_syntax<'a>(items: impl IntoIterator<Item = &'a Self>, context: &GlobalContext) -> String {
-        let mut items = items.into_iter();
-        if let Some(item) = items.next() {
-            let mut syntax = String::from("[ ");
-            syntax.push_str(context.type_llvm_syntax(item.get_type()));
-            syntax.push(' ');
-            syntax.push_str(&item.llvm_syntax(context));
-            for item in items {
-                syntax.push_str(", ");
-                syntax.push_str(context.type_llvm_syntax(item.get_type()));
-                syntax.push(' ');
-                syntax.push_str(&item.llvm_syntax(context));
-            }
-            syntax.push_str(" ]");
-            syntax
-        }
-        else {
-            "[]".to_string()
-        }
-    }
-
-    fn structure_llvm_syntax<'a>(members: impl IntoIterator<Item = &'a Self>, context: &GlobalContext) -> String {
-        let mut members = members.into_iter();
-        if let Some(member) = members.next() {
-            let mut syntax = String::from("{ ");
-            syntax.push_str(context.type_llvm_syntax(member.get_type()));
-            syntax.push(' ');
-            syntax.push_str(&member.llvm_syntax(context));
-            for member in members {
-                syntax.push_str(", ");
-                syntax.push_str(context.type_llvm_syntax(member.get_type()));
-                syntax.push(' ');
-                syntax.push_str(&member.llvm_syntax(context));
-            }
-            syntax.push_str(" }");
-            syntax
-        }
-        else {
-            "{}".to_string()
-        }
-    }
 }
 
 impl From<bool> for Constant {
@@ -414,6 +498,12 @@ impl From<FloatValue> for Constant {
     }
 }
 
+impl From<GlobalRegister> for Constant {
+    fn from(register: GlobalRegister) -> Self {
+        Self::Register(register)
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum Value {
     Never,
@@ -421,7 +511,7 @@ pub enum Value {
     Continue,
     Void,
     Constant(Constant),
-    Register(Register),
+    Register(LocalRegister),
     Indirect {
         pointer: Box<Value>,
         pointee_type: TypeHandle,
@@ -516,29 +606,6 @@ impl Value {
             _ => {}
         }
     }
-
-    pub fn llvm_syntax(&self, context: &GlobalContext) -> String {
-        match self {
-            Self::Never | Self::Break | Self::Continue => {
-                "<ERROR never value>".to_string()
-            }
-            Self::Void => {
-                "<ERROR void value>".to_string()
-            }
-            Self::Constant(constant) => {
-                constant.llvm_syntax(context)
-            }
-            Self::Register(register) => {
-                register.llvm_syntax()
-            }
-            Self::Indirect { pointer, .. } => {
-                format!("<ERROR indirect value: {}>", pointer.llvm_syntax(context))
-            }
-            Self::BoundFunction { function_value, .. } => {
-                function_value.llvm_syntax(context)
-            }
-        }
-    }
 }
 
 impl From<bool> for Value {
@@ -559,8 +626,20 @@ impl From<FloatValue> for Value {
     }
 }
 
+impl From<GlobalRegister> for Value {
+    fn from(register: GlobalRegister) -> Self {
+        Self::Constant(Constant::Register(register))
+    }
+}
+
 impl From<Constant> for Value {
     fn from(constant: Constant) -> Self {
         Self::Constant(constant)
+    }
+}
+
+impl From<LocalRegister> for Value {
+    fn from(register: LocalRegister) -> Self {
+        Self::Register(register)
     }
 }

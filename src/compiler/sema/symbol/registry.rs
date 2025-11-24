@@ -1,5 +1,6 @@
 use super::*;
 use std::rc::Rc;
+use crate::package::PackageInfo;
 
 pub struct NamespaceRegistry {
     /// Table of all namespaces in existence.

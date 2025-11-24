@@ -1,16 +1,28 @@
 source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\\test_2\\main.cupr"
 
+%"::test_2::test::test::Test" = type { %"::test_2::Test"*, %"::test_2::test::Test"*, %"::test_2::thing::Thing"* }
+
+%"::test_2::Test" = type { %"::test_2::test::Test"*, %"::test_2::test::test::Test"*, %"::test_2::thing::Thing"* }
+
+%"::test_2::First" = type {}
+
+%"::test_2::test::Test" = type { %"::test_2::Test"*, %"::test_2::test::test::Test"*, %"::test_2::thing::Thing"* }
+
+%"::test_2::thing::Thing" = type { %"::test_2::Test"*, %"::test_2::First"*, %"::test_2::thing::Thing"* }
+
+declare i32 @printf(i8*, ...)
+
+@.const.test_2.0 = private unnamed_addr constant [10 x i8] c"(%d, %d)\0A\00"
+
 define i32 @main() {
 .block.0:
 	%vector = alloca [2 x i32]
 	store [2 x i32] [ i32 4, i32 8 ], [2 x i32]* %vector
 	%0 = call i32([2 x i32]*) @"<[i32; 2]>::x"([2 x i32]* %vector)
 	%1 = call i32([2 x i32]*) @"<[i32; 2]>::y"([2 x i32]* %vector)
-	%2 = call i32(i8*, ...) @printf(i8* bitcast ([10 x i8]* @.const.0 to i8*), i32 %0, i32 %1)
+	%2 = call i32(i8*, ...) @printf(i8* bitcast ([10 x i8]* @.const.test_2.0 to i8*), i32 %0, i32 %1)
 	ret i32 0
 }
-
-@.const.0 = private unnamed_addr constant [10 x i8] c"(%d, %d)\0A\00"
 
 define i32 @"<[i32; 2]>::x"([2 x i32]* %0) {
 .block.0:
@@ -32,14 +44,6 @@ define i32 @"<[i32; 2]>::y"([2 x i32]* %0) {
 	ret i32 %3
 }
 
-%"::test_2::First" = type {}
-
-%"::test_2::thing::Thing" = type { %"::test_2::Test"*, %"::test_2::First"*, %"::test_2::thing::Thing"* }
-
-%"::test_2::Test" = type { %"::test_2::test::Test"*, %"::test_2::test::test::Test"*, %"::test_2::thing::Thing"* }
-
-%"::test_2::test::Test" = type { %"::test_2::Test"*, %"::test_2::test::test::Test"*, %"::test_2::thing::Thing"* }
-
 define i32 @"::test_2::test::test::Test::do_thing"(%"::test_2::test::test::Test"* %0, i32 %1) {
 .block.0:
 	%self = alloca %"::test_2::test::test::Test"*
@@ -51,10 +55,4 @@ define i32 @"::test_2::test::test::Test::do_thing"(%"::test_2::test::test::Test"
 	%4 = mul nsw i32 %2, %3
 	ret i32 %4
 }
-
-%"::test_2::test::test::Test" = type { %"::test_2::Test"*, %"::test_2::test::Test"*, %"::test_2::thing::Thing"* }
-
-; ==== External definitions from other packages ====
-
-declare i32 @printf(i8*, ...)
 

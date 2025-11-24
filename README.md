@@ -7,13 +7,14 @@ such as `clang` or `llc`. Cupric source files use the `.cupr` file extension.
 ## Command Line Usage
 
 ```
-Usage: compiler [OPTIONS] --out <path>
+Usage: compiler <package_path>
+
+Arguments:
+  <package_path>  Compile the package inside directory <package_path>
 
 Options:
-  -s, --src <path>  Read source code from <path>
-  -o, --out <path>  Write output to <path>
-  -h, --help        Print help
-  -V, --version     Print version
+  -h, --help     Print help
+  -V, --version  Print version
 ```
 
 ## Cupric Language
@@ -27,11 +28,8 @@ only pointers, no reference types, and there is no borrow checker or memory safe
 As is customary, here is a "hello world" program in Cupric:
 
 ```rust
-// In the future, this will likely just be "import libc::puts;"
-foreign function puts(string: *[u8]) -> i32;
-
 foreign function main() -> i32 {
-    puts("Hello world!");
+    libc::puts("Hello world!");
     0
 }
 ```
