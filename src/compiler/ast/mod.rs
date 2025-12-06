@@ -436,9 +436,12 @@ pub enum LocalNodeKind {
     },
     While {
         condition: Box<LocalNode>,
-        body: Box<LocalNode>,
+        consequent: Box<LocalNode>,
+        alternative: Option<Box<LocalNode>>,
     },
-    Break,
+    Break {
+        value: Option<Box<LocalNode>>,
+    },
     Continue,
     Return {
         value: Option<Box<LocalNode>>,
@@ -534,11 +537,21 @@ impl std::fmt::Display for LocalNodeKind {
                     write!(f, " if ({condition}){consequent}")
                 }
             }
-            Self::While { condition, body } => {
-                write!(f, " while ({condition}){body}")
+            Self::While { condition, consequent, alternative } => {
+                if let Some(alternative) = alternative {
+                    write!(f, " while ({condition}){consequent} nobreak{alternative}")
+                }
+                else {
+                    write!(f, " while ({condition}){consequent}")
+                }
             }
-            Self::Break => {
-                write!(f, " break;")
+            Self::Break { value } => {
+                if let Some(value) = value {
+                    write!(f, " break {value};")
+                }
+                else {
+                    write!(f, " break;")
+                }
             }
             Self::Continue => {
                 write!(f, " continue;")
@@ -650,8 +663,13 @@ impl LocalNode {
                     consequent.requires_semicolon()
                 }
             }
-            LocalNodeKind::While { body, .. } => {
-                body.requires_semicolon()
+            LocalNodeKind::While { consequent, alternative, .. } => {
+                if let Some(alternative) = alternative {
+                    alternative.requires_semicolon()
+                }
+                else {
+                    consequent.requires_semicolon()
+                }
             }
             _ => {
                 true

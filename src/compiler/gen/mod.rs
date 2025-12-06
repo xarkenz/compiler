@@ -1,9 +1,10 @@
-use crate::ast;
+use crate::ast::*;
+use crate::ast::parse::ParsedModule;
 use crate::ir::{FunctionDefinition, GlobalVariable, GlobalVariableKind};
 use crate::ir::instr::{Instruction, PhiInstruction, TerminatorInstruction};
 use crate::ir::value::*;
 use crate::sema::*;
-use crate::token;
+use crate::token::Literal;
 
 pub struct Generator<'ctx> {
     context: &'ctx mut GlobalContext,
@@ -26,7 +27,7 @@ impl<'ctx> Generator<'ctx> {
         self.context
     }
 
-    pub fn generate_package<'a>(mut self, modules: impl IntoIterator<Item = &'a ast::parse::ParsedModule>) -> crate::Result<()> {
+    pub fn generate_package<'a>(mut self, modules: impl IntoIterator<Item = &'a ParsedModule>) -> crate::Result<()> {
         for parsed_module in modules {
             let parent_module = self.context.replace_current_module(parsed_module.namespace());
 
@@ -38,7 +39,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(())
     }
 
-    pub fn generate_global_statements<'a>(&mut self, global_statements: impl IntoIterator<Item = &'a ast::GlobalNode>) -> crate::Result<()> {
+    pub fn generate_global_statements<'a>(&mut self, global_statements: impl IntoIterator<Item = &'a GlobalNode>) -> crate::Result<()> {
         for global_statement in global_statements {
             self.generate_global_statement(global_statement)?;
         }
@@ -46,9 +47,9 @@ impl<'ctx> Generator<'ctx> {
         Ok(())
     }
 
-    pub fn generate_global_statement(&mut self, node: &ast::GlobalNode) -> crate::Result<Value> {
+    pub fn generate_global_statement(&mut self, node: &GlobalNode) -> crate::Result<Value> {
         match node.kind() {
-            ast::GlobalNodeKind::Let { value, register, .. } => {
+            GlobalNodeKind::Let { value, register, .. } => {
                 let register = register.as_ref().expect("register should be valid after fill phase");
                 if let Some(value) = value {
                     self.generate_global_let_statement(value, register)
@@ -58,7 +59,7 @@ impl<'ctx> Generator<'ctx> {
                     Ok(Value::Void)
                 }
             }
-            ast::GlobalNodeKind::Function { name, parameters, body, register, .. } => {
+            GlobalNodeKind::Function { name, parameters, body, register, .. } => {
                 let register = register.as_ref().expect("register should be valid after fill phase");
                 if let Some(body) = body {
                     self.generate_function_definition(name, parameters, body, register)
@@ -68,60 +69,60 @@ impl<'ctx> Generator<'ctx> {
                     Ok(Value::Void)
                 }
             }
-            ast::GlobalNodeKind::Structure { self_type, .. } => {
+            GlobalNodeKind::Structure { self_type, .. } => {
                 self.generate_structure_definition(*self_type)
             }
-            ast::GlobalNodeKind::Implement { self_type, statements } => {
+            GlobalNodeKind::Implement { self_type, statements } => {
                 self.generate_implement_block(self_type, statements)
             }
-            ast::GlobalNodeKind::Module { statements, namespace, .. } => {
+            GlobalNodeKind::Module { statements, namespace, .. } => {
                 self.generate_module_block(statements, *namespace)
             }
-            ast::GlobalNodeKind::ModuleFile { .. } |
-            ast::GlobalNodeKind::Import { .. } |
-            ast::GlobalNodeKind::GlobImport { .. } => {
+            GlobalNodeKind::ModuleFile { .. } |
+            GlobalNodeKind::Import { .. } |
+            GlobalNodeKind::GlobImport { .. } => {
                 // The work has already been done for us
                 Ok(Value::Void)
             }
         }
     }
 
-    pub fn generate_local_node(&mut self, node: &ast::LocalNode, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    pub fn generate_local_node(&mut self, node: &LocalNode, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         if let Ok(constant) = self.generate_constant_node(node, Some(local_context), expected_type) {
             return Ok(Value::Constant(constant));
         }
 
         let result = match node.kind() {
-            ast::LocalNodeKind::Literal(literal) => {
+            LocalNodeKind::Literal(literal) => {
                 self.generate_literal(node.span(), literal, local_context, expected_type)?
             }
-            ast::LocalNodeKind::Path { segments } => {
+            LocalNodeKind::Path { segments } => {
                 let path = self.context.get_absolute_path(node.span(), segments)?;
                 self.context.get_path_value(&path, Some(&node.span()))?
             }
-            ast::LocalNodeKind::Unary { operation, operand } => {
+            LocalNodeKind::Unary { operation, operand } => {
                 self.generate_unary_operation(*operation, operand, local_context, expected_type)?
             }
-            ast::LocalNodeKind::Binary { operation, lhs, rhs } => {
+            LocalNodeKind::Binary { operation, lhs, rhs } => {
                 self.generate_binary_operation(*operation, lhs, rhs, local_context, expected_type)?
             }
-            ast::LocalNodeKind::Call { callee, arguments } => {
+            LocalNodeKind::Call { callee, arguments } => {
                 self.generate_call_operation(callee, arguments, local_context)?
             }
-            ast::LocalNodeKind::ArrayLiteral { items } => {
+            LocalNodeKind::ArrayLiteral { items } => {
                 self.generate_array_literal(node.span(), items, local_context, expected_type)?
             }
-            ast::LocalNodeKind::TupleLiteral { items } => {
+            LocalNodeKind::TupleLiteral { items } => {
                 self.generate_tuple_literal(node.span(), items, local_context, expected_type)?
             }
-            ast::LocalNodeKind::StructureLiteral { structure_type: type_name, members } => {
+            LocalNodeKind::StructureLiteral { structure_type: type_name, members } => {
                 self.generate_structure_literal(node.span(), type_name, members, local_context)?
             }
-            ast::LocalNodeKind::Grouping { content } => {
+            LocalNodeKind::Grouping { content } => {
                 // Fine to bypass validation steps since this is literally just parentheses
                 return self.generate_local_node(content, local_context, expected_type);
             }
-            ast::LocalNodeKind::Scope { statements, tail } => {
+            LocalNodeKind::Scope { statements, tail } => {
                 local_context.enter_scope();
 
                 let mut result = Value::Void;
@@ -145,26 +146,44 @@ impl<'ctx> Generator<'ctx> {
 
                 result
             }
-            ast::LocalNodeKind::Conditional { condition, consequent, alternative } => {
+            LocalNodeKind::Conditional { condition, consequent, alternative } => {
                 self.generate_conditional(condition, consequent, alternative.as_deref(), local_context, expected_type)?
             }
-            ast::LocalNodeKind::While { condition, body } => {
-                self.generate_while_loop(condition, body, local_context)?
+            LocalNodeKind::While { condition, consequent, alternative } => {
+                self.generate_while_loop(node.span(), condition, consequent, alternative.as_deref(), local_context, expected_type)?
             }
-            ast::LocalNodeKind::Break => {
-                let break_label = local_context.break_label()
+            LocalNodeKind::Break { value } => {
+                let break_scope = local_context
+                    .break_scope()
                     .ok_or_else(|| Box::new(crate::Error::new(
                         Some(node.span()),
                         crate::ErrorKind::InvalidBreak,
                     )))?;
+                let break_type = break_scope.expected_type();
+                let break_label = break_scope.label().clone();
+
+                let break_value;
+                if let Some(value) = value {
+                    let value = self.generate_local_node(value, local_context, Some(break_type))?;
+                    break_value = self.coerce_to_rvalue(value, local_context)?;
+                }
+                else {
+                    break_value = Value::Void;
+                }
+
+                let from_label = local_context.current_block().label().clone();
+                local_context
+                    .break_scope_mut()
+                    .unwrap() // We just verified that a break scope exists
+                    .register_break(break_value, from_label);
 
                 local_context.set_terminator(TerminatorInstruction::Branch {
-                    to_label: break_label.clone(),
+                    to_label: break_label,
                 });
 
                 Value::Break
             }
-            ast::LocalNodeKind::Continue => {
+            LocalNodeKind::Continue => {
                 let continue_label = local_context.continue_label()
                     .ok_or_else(|| Box::new(crate::Error::new(
                         Some(node.span()),
@@ -177,7 +196,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Continue
             }
-            ast::LocalNodeKind::Return { value } => {
+            LocalNodeKind::Return { value } => {
                 let return_type = local_context.return_type();
 
                 let return_value;
@@ -213,7 +232,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Never
             }
-            ast::LocalNodeKind::Let { name, value_type, is_mutable, value, .. } => {
+            LocalNodeKind::Let { name, value_type, is_mutable, value, .. } => {
                 self.generate_local_let_statement(node.span(), name, value_type.as_deref(), *is_mutable, value.as_deref(), local_context)?
             }
             _ => {
@@ -363,9 +382,9 @@ impl<'ctx> Generator<'ctx> {
         Ok(Value::Register(result))
     }
 
-    fn generate_literal(&mut self, span: crate::Span, literal: &token::Literal, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_literal(&mut self, span: crate::Span, literal: &Literal, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let result = match *literal {
-            token::Literal::Name(ref name) => {
+            Literal::Name(ref name) => {
                 if let Some(value) = local_context.find_symbol(name) {
                     value.clone()
                 }
@@ -381,7 +400,7 @@ impl<'ctx> Generator<'ctx> {
                         })?
                 }
             }
-            token::Literal::Integer(value, suffix) => {
+            Literal::Integer(value, suffix) => {
                 let value_type = match suffix {
                     Some(suffix) => suffix.as_handle(),
                     None => expected_type.unwrap_or(TypeHandle::I32),
@@ -398,7 +417,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::from(value)
             }
-            token::Literal::Float(value, suffix) => {
+            Literal::Float(value, suffix) => {
                 let value_type = match suffix {
                     Some(suffix) => suffix.as_handle(),
                     None => expected_type.unwrap_or(TypeHandle::F64),
@@ -415,15 +434,15 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::from(value)
             }
-            token::Literal::Boolean(value) => {
+            Literal::Boolean(value) => {
                 Value::from(value)
             }
-            token::Literal::NullPointer => {
+            Literal::NullPointer => {
                 Value::Constant(Constant::NullPointer(expected_type.unwrap_or_else(|| {
                     self.context.get_pointer_type(TypeHandle::VOID, PointerSemantics::Immutable)
                 })))
             }
-            token::Literal::String(ref value) => {
+            Literal::String(ref value) => {
                 let constant = Constant::String {
                     array_type: self.context.get_array_type(TypeHandle::U8, Some(value.len() as u64)),
                     value: value.clone(),
@@ -438,7 +457,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Constant(Constant::Register(pointer))
             }
-            token::Literal::PrimitiveType(primitive_type) => {
+            Literal::PrimitiveType(primitive_type) => {
                 Value::Constant(Constant::Type(primitive_type.handle))
             }
         };
@@ -446,7 +465,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(result)
     }
 
-    fn generate_array_literal(&mut self, span: crate::Span, items: &[ast::LocalNode], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_array_literal(&mut self, span: crate::Span, items: &[LocalNode], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let Some(array_type) = expected_type else {
             return Err(Box::new(crate::Error::new(
                 Some(span),
@@ -524,7 +543,7 @@ impl<'ctx> Generator<'ctx> {
         })
     }
 
-    fn generate_tuple_literal(&mut self, span: crate::Span, items: &[ast::LocalNode], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_tuple_literal(&mut self, span: crate::Span, items: &[LocalNode], local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let Some(tuple_type) = expected_type else {
             return Err(Box::new(crate::Error::new(
                 Some(span),
@@ -610,7 +629,7 @@ impl<'ctx> Generator<'ctx> {
         })
     }
 
-    fn generate_structure_literal(&mut self, span: crate::Span, type_name: &ast::LocalNode, initializer_members: &[(Box<str>, ast::LocalNode)], local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_structure_literal(&mut self, span: crate::Span, type_name: &LocalNode, initializer_members: &[(Box<str>, LocalNode)], local_context: &mut LocalContext) -> crate::Result<Value> {
         let struct_type = self.context.interpret_node_as_type(type_name)?;
 
         let TypeRepr::Structure {
@@ -733,14 +752,14 @@ impl<'ctx> Generator<'ctx> {
         })
     }
 
-    fn generate_unary_operation(&mut self, operation: ast::UnaryOperation, operand_node: &ast::LocalNode, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_unary_operation(&mut self, operation: UnaryOperation, operand_node: &LocalNode, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let result = match operation {
-            ast::UnaryOperation::Positive => {
+            UnaryOperation::Positive => {
                 let operand = self.generate_local_node(operand_node, local_context, expected_type)?;
 
                 self.coerce_to_rvalue(operand, local_context)?
             }
-            ast::UnaryOperation::Negative => {
+            UnaryOperation::Negative => {
                 let operand = self.generate_local_node(operand_node, local_context, expected_type)?;
                 let operand = self.coerce_to_rvalue(operand, local_context)?;
                 let result = local_context.new_anonymous_register(expected_type.unwrap_or_else(|| operand.get_type()));
@@ -752,7 +771,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::UnaryOperation::BitwiseNot => {
+            UnaryOperation::BitwiseNot => {
                 let operand = self.generate_local_node(operand_node, local_context, expected_type)?;
                 let operand = self.coerce_to_rvalue(operand, local_context)?;
                 let result = local_context.new_anonymous_register(expected_type.unwrap_or_else(|| operand.get_type()));
@@ -764,7 +783,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::UnaryOperation::LogicalNot => {
+            UnaryOperation::LogicalNot => {
                 let operand = self.generate_local_node(operand_node, local_context, Some(TypeHandle::BOOL))?;
                 let operand = self.coerce_to_rvalue(operand, local_context)?;
                 let result = local_context.new_anonymous_register(TypeHandle::BOOL);
@@ -776,7 +795,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::UnaryOperation::Reference => {
+            UnaryOperation::Reference => {
                 let operand = self.generate_local_node(operand_node, local_context, None)?;
 
                 if let Value::Indirect { mut pointer, .. } = operand {
@@ -790,7 +809,7 @@ impl<'ctx> Generator<'ctx> {
                     )));
                 }
             }
-            ast::UnaryOperation::Dereference => {
+            UnaryOperation::Dereference => {
                 let expected_type = expected_type.map(|expected_type| {
                     self.context.get_pointer_type(expected_type, PointerSemantics::Immutable)
                 });
@@ -821,8 +840,8 @@ impl<'ctx> Generator<'ctx> {
                     )));
                 }
             }
-            ast::UnaryOperation::GetSize => {
-                let ast::LocalNodeKind::Type(type_node) = operand_node.kind() else {
+            UnaryOperation::GetSize => {
+                let LocalNodeKind::Type(type_node) = operand_node.kind() else {
                     // If parsing rules are followed, this should not occur
                     panic!("non-type operand for 'sizeof'");
                 };
@@ -839,8 +858,8 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::from(IntegerValue::new(IntegerType::Usize, size as i128))
             }
-            ast::UnaryOperation::GetAlign => {
-                let ast::LocalNodeKind::Type(type_node) = operand_node.kind() else {
+            UnaryOperation::GetAlign => {
+                let LocalNodeKind::Type(type_node) = operand_node.kind() else {
                     // If parsing rules are followed, this should not occur
                     panic!("non-type operand for 'alignof'");
                 };
@@ -862,12 +881,12 @@ impl<'ctx> Generator<'ctx> {
         Ok(result)
     }
 
-    fn generate_binary_operation(&mut self, operation: ast::BinaryOperation, lhs_node: &ast::LocalNode, rhs_node: &ast::LocalNode, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_binary_operation(&mut self, operation: BinaryOperation, lhs_node: &LocalNode, rhs_node: &LocalNode, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let result = match operation {
-            ast::BinaryOperation::Subscript => {
+            BinaryOperation::Subscript => {
                 self.generate_subscript_operation(lhs_node, rhs_node, local_context)?
             }
-            ast::BinaryOperation::Access => {
+            BinaryOperation::Access => {
                 let lhs = self.generate_local_node(lhs_node, local_context, None)?;
 
                 if let &TypeRepr::Pointer { pointee_type, .. } = lhs.get_type().repr(self.context) {
@@ -883,8 +902,8 @@ impl<'ctx> Generator<'ctx> {
                     self.generate_member_access(lhs, rhs_node, local_context)?
                 }
             }
-            ast::BinaryOperation::Convert => {
-                let ast::LocalNodeKind::Type(type_node) = rhs_node.kind() else {
+            BinaryOperation::Convert => {
+                let LocalNodeKind::Type(type_node) = rhs_node.kind() else {
                     // If parsing rules are followed, this should not occur
                     panic!("non-type rhs for 'as'");
                 };
@@ -896,7 +915,7 @@ impl<'ctx> Generator<'ctx> {
 
                 self.explicitly_convert(value, target_type, type_node.span(), local_context)?
             }
-            ast::BinaryOperation::Add => {
+            BinaryOperation::Add => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::Add {
@@ -907,7 +926,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::Subtract => {
+            BinaryOperation::Subtract => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::Subtract {
@@ -918,7 +937,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::Multiply => {
+            BinaryOperation::Multiply => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::Multiply {
@@ -929,7 +948,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::Divide => {
+            BinaryOperation::Divide => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::Divide {
@@ -940,7 +959,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::Remainder => {
+            BinaryOperation::Remainder => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::Remainder {
@@ -951,7 +970,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::ShiftLeft => {
+            BinaryOperation::ShiftLeft => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::ShiftLeft {
@@ -962,7 +981,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::ShiftRight => {
+            BinaryOperation::ShiftRight => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::ShiftRight {
@@ -973,7 +992,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::BitwiseAnd => {
+            BinaryOperation::BitwiseAnd => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::And {
@@ -984,7 +1003,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::BitwiseOr => {
+            BinaryOperation::BitwiseOr => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::Or {
@@ -995,7 +1014,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::BitwiseXor => {
+            BinaryOperation::BitwiseXor => {
                 let (result, lhs, rhs) = self.generate_arithmetic_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::Xor {
@@ -1006,7 +1025,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::Equal => {
+            BinaryOperation::Equal => {
                 let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
                 local_context.add_instruction(Instruction::CompareEqual {
@@ -1017,7 +1036,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::NotEqual => {
+            BinaryOperation::NotEqual => {
                 let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
                 local_context.add_instruction(Instruction::CompareNotEqual {
@@ -1028,7 +1047,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::LessThan => {
+            BinaryOperation::LessThan => {
                 let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
                 local_context.add_instruction(Instruction::CompareLessThan {
@@ -1039,7 +1058,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::LessEqual => {
+            BinaryOperation::LessEqual => {
                 let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
                 local_context.add_instruction(Instruction::CompareLessEqual {
@@ -1050,7 +1069,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::GreaterThan => {
+            BinaryOperation::GreaterThan => {
                 let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
                 local_context.add_instruction(Instruction::CompareGreaterThan {
@@ -1061,7 +1080,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::GreaterEqual => {
+            BinaryOperation::GreaterEqual => {
                 let (result, lhs, rhs) = self.generate_comparison_operands(lhs_node, rhs_node, local_context)?;
 
                 local_context.add_instruction(Instruction::CompareGreaterEqual {
@@ -1072,7 +1091,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::LogicalAnd => {
+            BinaryOperation::LogicalAnd => {
                 let lhs = self.generate_local_node(lhs_node, local_context, Some(TypeHandle::BOOL))?;
                 let lhs = self.coerce_to_rvalue(lhs, local_context)?;
 
@@ -1106,7 +1125,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::LogicalOr => {
+            BinaryOperation::LogicalOr => {
                 let lhs = self.generate_local_node(lhs_node, local_context, Some(TypeHandle::BOOL))?;
                 let lhs = self.coerce_to_rvalue(lhs, local_context)?;
 
@@ -1140,7 +1159,7 @@ impl<'ctx> Generator<'ctx> {
 
                 Value::Register(result)
             }
-            ast::BinaryOperation::Assign => {
+            BinaryOperation::Assign => {
                 let lhs = self.generate_local_node(lhs_node, local_context, expected_type)?;
                 let (pointer, pointee_type) = lhs.into_mutable_lvalue(lhs_node.span(), self.context)?;
                 let rhs = self.generate_local_node(rhs_node, local_context, Some(pointee_type))?;
@@ -1153,7 +1172,7 @@ impl<'ctx> Generator<'ctx> {
 
                 rhs
             }
-            ast::BinaryOperation::AddAssign => {
+            BinaryOperation::AddAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::Add {
@@ -1169,7 +1188,7 @@ impl<'ctx> Generator<'ctx> {
 
                 result
             }
-            ast::BinaryOperation::SubtractAssign => {
+            BinaryOperation::SubtractAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::Subtract {
@@ -1185,7 +1204,7 @@ impl<'ctx> Generator<'ctx> {
 
                 result
             }
-            ast::BinaryOperation::MultiplyAssign => {
+            BinaryOperation::MultiplyAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::Multiply {
@@ -1201,7 +1220,7 @@ impl<'ctx> Generator<'ctx> {
 
                 result
             }
-            ast::BinaryOperation::DivideAssign => {
+            BinaryOperation::DivideAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::Divide {
@@ -1217,7 +1236,7 @@ impl<'ctx> Generator<'ctx> {
 
                 result
             }
-            ast::BinaryOperation::RemainderAssign => {
+            BinaryOperation::RemainderAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::Remainder {
@@ -1233,7 +1252,7 @@ impl<'ctx> Generator<'ctx> {
 
                 result
             }
-            ast::BinaryOperation::ShiftLeftAssign => {
+            BinaryOperation::ShiftLeftAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::ShiftLeft {
@@ -1249,7 +1268,7 @@ impl<'ctx> Generator<'ctx> {
 
                 result
             }
-            ast::BinaryOperation::ShiftRightAssign => {
+            BinaryOperation::ShiftRightAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::ShiftRight {
@@ -1265,7 +1284,7 @@ impl<'ctx> Generator<'ctx> {
 
                 result
             }
-            ast::BinaryOperation::BitwiseAndAssign => {
+            BinaryOperation::BitwiseAndAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::And {
@@ -1281,7 +1300,7 @@ impl<'ctx> Generator<'ctx> {
 
                 result
             }
-            ast::BinaryOperation::BitwiseOrAssign => {
+            BinaryOperation::BitwiseOrAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::Or {
@@ -1297,7 +1316,7 @@ impl<'ctx> Generator<'ctx> {
 
                 result
             }
-            ast::BinaryOperation::BitwiseXorAssign => {
+            BinaryOperation::BitwiseXorAssign => {
                 let (result, pointer, lhs, rhs) = self.generate_assignment_operands(lhs_node, rhs_node, local_context, expected_type)?;
 
                 local_context.add_instruction(Instruction::Xor {
@@ -1318,7 +1337,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(result)
     }
 
-    fn generate_subscript_operation(&mut self, lhs_node: &ast::LocalNode, rhs_node: &ast::LocalNode, local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_subscript_operation(&mut self, lhs_node: &LocalNode, rhs_node: &LocalNode, local_context: &mut LocalContext) -> crate::Result<Value> {
         let lhs = self.generate_local_node(lhs_node, local_context, None)?;
         let rhs = self.generate_local_node(rhs_node, local_context, None)?;
         let rhs = self.coerce_to_rvalue(rhs, local_context)?;
@@ -1436,7 +1455,7 @@ impl<'ctx> Generator<'ctx> {
         }
     }
 
-    fn fold_subscript_operation(&mut self, lhs_node: &ast::LocalNode, rhs_node: &ast::LocalNode, constant_id: &mut usize, local_context: Option<&LocalContext>) -> crate::Result<(Constant, Vec<GlobalVariable>)> {
+    fn fold_subscript_operation(&mut self, lhs_node: &LocalNode, rhs_node: &LocalNode, constant_id: &mut usize, local_context: Option<&LocalContext>) -> crate::Result<(Constant, Vec<GlobalVariable>)> {
         let (lhs, mut intermediate_constants) = self.fold_as_constant(lhs_node, constant_id, local_context, None)?;
         let (rhs, mut constants) = self.fold_as_constant(rhs_node, constant_id, local_context, None)?;
         intermediate_constants.append(&mut constants);
@@ -1519,7 +1538,7 @@ impl<'ctx> Generator<'ctx> {
         Ok((constant, intermediate_constants))
     }
 
-    fn generate_member_access(&mut self, lhs: Value, member_name_node: &ast::LocalNode, local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_member_access(&mut self, lhs: Value, member_name_node: &LocalNode, local_context: &mut LocalContext) -> crate::Result<Value> {
         let lhs_type = lhs.get_type();
 
         let cannot_access_error = |context: &GlobalContext| {
@@ -1599,7 +1618,7 @@ impl<'ctx> Generator<'ctx> {
         }
     }
 
-    fn generate_arithmetic_operands(&mut self, lhs_node: &ast::LocalNode, rhs_node: &ast::LocalNode, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(LocalRegister, Value, Value)> {
+    fn generate_arithmetic_operands(&mut self, lhs_node: &LocalNode, rhs_node: &LocalNode, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(LocalRegister, Value, Value)> {
         let lhs = self.generate_local_node(lhs_node, local_context, expected_type)?;
         let lhs = self.coerce_to_rvalue(lhs, local_context)?;
 
@@ -1611,7 +1630,7 @@ impl<'ctx> Generator<'ctx> {
         Ok((result, lhs, rhs))
     }
 
-    fn generate_comparison_operands(&mut self, lhs_node: &ast::LocalNode, rhs_node: &ast::LocalNode, local_context: &mut LocalContext) -> crate::Result<(LocalRegister, Value, Value)> {
+    fn generate_comparison_operands(&mut self, lhs_node: &LocalNode, rhs_node: &LocalNode, local_context: &mut LocalContext) -> crate::Result<(LocalRegister, Value, Value)> {
         let lhs = self.generate_local_node(lhs_node, local_context, None)?;
         let lhs = self.coerce_to_rvalue(lhs, local_context)?;
 
@@ -1623,7 +1642,7 @@ impl<'ctx> Generator<'ctx> {
         Ok((result, lhs, rhs))
     }
 
-    fn generate_assignment_operands(&mut self, lhs_node: &ast::LocalNode, rhs_node: &ast::LocalNode, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(LocalRegister, Value, Value, Value)> {
+    fn generate_assignment_operands(&mut self, lhs_node: &LocalNode, rhs_node: &LocalNode, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<(LocalRegister, Value, Value, Value)> {
         let lhs = self.generate_local_node(lhs_node, local_context, expected_type)?;
         let (pointer, pointee_type) = lhs.into_mutable_lvalue(lhs_node.span(), self.context)?;
 
@@ -1641,11 +1660,11 @@ impl<'ctx> Generator<'ctx> {
         Ok((result, pointer, Value::Register(lhs), rhs))
     }
 
-    fn generate_call_operation(&mut self, callee_node: &ast::LocalNode, arguments: &[ast::LocalNode], local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_call_operation(&mut self, callee_node: &LocalNode, arguments: &[LocalNode], local_context: &mut LocalContext) -> crate::Result<Value> {
         // Determine which kind of call operation this is
         let callee = match callee_node.kind() {
             // Method call operation in the format `value.method(..)`
-            ast::LocalNodeKind::Binary { operation: ast::BinaryOperation::Access, lhs, rhs } => {
+            LocalNodeKind::Binary { operation: BinaryOperation::Access, lhs, rhs } => {
                 let method_name = rhs.as_name()?;
                 let self_value = self.generate_local_node(lhs, local_context, None)?;
 
@@ -1804,7 +1823,7 @@ impl<'ctx> Generator<'ctx> {
         }
     }
 
-    fn generate_conditional(&mut self, condition: &ast::LocalNode, consequent: &ast::LocalNode, alternative: Option<&ast::LocalNode>, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
+    fn generate_conditional(&mut self, condition: &LocalNode, consequent: &LocalNode, alternative: Option<&LocalNode>, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         let condition = self.generate_local_node(condition, local_context, Some(TypeHandle::BOOL))?;
         let condition = self.coerce_to_rvalue(condition, local_context)?;
 
@@ -1888,7 +1907,7 @@ impl<'ctx> Generator<'ctx> {
         }
     }
 
-    fn generate_while_loop(&mut self, condition: &ast::LocalNode, body: &ast::LocalNode, local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_while_loop(&mut self, span: crate::Span, condition: &LocalNode, consequent: &LocalNode, alternative: Option<&LocalNode>, local_context: &mut LocalContext, expected_type: Option<TypeHandle>) -> crate::Result<Value> {
         // TODO: handling never, break/continue vs. return
         let condition_label = local_context.new_block_label();
 
@@ -1901,36 +1920,85 @@ impl<'ctx> Generator<'ctx> {
         let condition = self.generate_local_node(condition, local_context, Some(TypeHandle::BOOL))?;
         let condition = self.coerce_to_rvalue(condition, local_context)?;
 
-        let body_label = local_context.new_block_label();
-        let tail_label = local_context.new_block_label();
+        let consequent_label = local_context.new_block_label();
+        let alternative_label = local_context.new_block_label();
 
-        local_context.push_break_label(tail_label.clone());
-        local_context.push_continue_label(condition_label.clone());
+        let (tail_label, expected_type) = match alternative {
+            Some(..) => (
+                local_context.new_block_label(),
+                expected_type.ok_or_else(|| Box::new(crate::Error::new(
+                    Some(span),
+                    crate::ErrorKind::CannotInferType,
+                )))?,
+            ),
+            None => (
+                alternative_label.clone(),
+                TypeHandle::VOID,
+            ),
+        };
+
+        local_context.enter_break_scope(tail_label.clone(), expected_type);
+        local_context.enter_continue_scope(condition_label.clone());
 
         local_context.set_terminator(TerminatorInstruction::ConditionalBranch {
             condition,
-            consequent_label: body_label.clone(),
-            alternative_label: tail_label.clone(),
+            consequent_label: consequent_label.clone(),
+            alternative_label: alternative_label.clone(),
         });
 
-        local_context.start_new_block(body_label);
+        local_context.start_new_block(consequent_label);
 
-        let body_value = self.generate_local_node(body, local_context, Some(TypeHandle::VOID))?;
-        if body_value.get_type() != TypeHandle::NEVER {
+        let consequent_value = self.generate_local_node(consequent, local_context, Some(TypeHandle::VOID))?;
+        if consequent_value.get_type() != TypeHandle::NEVER {
             local_context.set_terminator(TerminatorInstruction::Branch {
                 to_label: condition_label.clone(),
             });
         }
 
-        local_context.start_new_block(tail_label);
+        let value = if let Some(alternative) = alternative {
+            local_context.start_new_block(alternative_label);
 
-        local_context.pop_break_label();
-        local_context.pop_continue_label();
+            // Safe to unwrap(), we explicitly created this scope
+            let break_scope = local_context.break_scope().unwrap();
+            let mut phi_inputs = Vec::with_capacity(break_scope.breaks().len() + 1);
+            phi_inputs.extend_from_slice(break_scope.breaks());
 
-        Ok(Value::Void)
+            let alternative_value = self.generate_local_node(alternative, local_context, Some(expected_type))?;
+            if alternative_value.get_type() != TypeHandle::NEVER {
+                let alternative_value = self.coerce_to_rvalue(alternative_value, local_context)?;
+
+                let from_label = local_context.current_block().label().clone();
+                phi_inputs.push((alternative_value, from_label));
+
+                local_context.set_terminator(TerminatorInstruction::Branch {
+                    to_label: tail_label.clone(),
+                });
+            }
+
+            local_context.start_new_block(tail_label);
+
+            let result = local_context.new_anonymous_register(expected_type);
+
+            local_context.add_phi(PhiInstruction {
+                result: result.clone(),
+                inputs: phi_inputs.into_boxed_slice(),
+            });
+
+            Value::Register(result)
+        }
+        else {
+            local_context.start_new_block(tail_label);
+
+            Value::Void
+        };
+
+        local_context.exit_break_scope();
+        local_context.exit_continue_scope();
+
+        Ok(value)
     }
 
-    fn generate_local_let_statement(&mut self, span: crate::Span, name: &str, type_node: Option<&ast::TypeNode>, is_mutable: bool, value: Option<&ast::LocalNode>, local_context: &mut LocalContext) -> crate::Result<Value> {
+    fn generate_local_let_statement(&mut self, span: crate::Span, name: &str, type_node: Option<&TypeNode>, is_mutable: bool, value: Option<&LocalNode>, local_context: &mut LocalContext) -> crate::Result<Value> {
         let value_type = match type_node {
             Some(type_node) => {
                 Some(self.context.interpret_type_node(type_node)?)
@@ -1978,7 +2046,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(Value::Void)
     }
 
-    fn generate_global_let_statement(&mut self, value: &ast::LocalNode, global_register: &GlobalRegister) -> crate::Result<Value> {
+    fn generate_global_let_statement(&mut self, value: &LocalNode, global_register: &GlobalRegister) -> crate::Result<Value> {
         // The fill phase has done most of the work for us already
         let TypeRepr::Pointer { pointee_type, semantics } = *self.context.type_repr(global_register.get_type()) else {
             panic!("invalid global value register type");
@@ -1999,7 +2067,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(Value::Void)
     }
 
-    fn generate_function_definition(&mut self, name: &str, parameters: &[ast::FunctionParameterNode], body: &ast::LocalNode, function_register: &GlobalRegister) -> crate::Result<Value> {
+    fn generate_function_definition(&mut self, name: &str, parameters: &[FunctionParameterNode], body: &LocalNode, function_register: &GlobalRegister) -> crate::Result<Value> {
         // The fill phase has done a lot of the initial work for us already
         let TypeRepr::Function { signature } = self.context.type_repr(function_register.get_type()) else {
             panic!("invalid global value register type");
@@ -2053,7 +2121,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(Value::Void)
     }
 
-    fn generate_implement_block(&mut self, self_type: &ast::TypeNode, statements: &[ast::GlobalNode]) -> crate::Result<Value> {
+    fn generate_implement_block(&mut self, self_type: &TypeNode, statements: &[GlobalNode]) -> crate::Result<Value> {
         let self_type = self.context.interpret_type_node(self_type)?;
 
         self.context.set_self_type(self_type);
@@ -2067,7 +2135,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(Value::Void)
     }
 
-    fn generate_module_block(&mut self, statements: &[ast::GlobalNode], namespace: NamespaceHandle) -> crate::Result<Value> {
+    fn generate_module_block(&mut self, statements: &[GlobalNode], namespace: NamespaceHandle) -> crate::Result<Value> {
         let parent_module = self.context.replace_current_module(namespace);
 
         for statement in statements {
@@ -2079,7 +2147,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(Value::Void)
     }
 
-    pub fn generate_constant_node(&mut self, node: &ast::LocalNode, local_context: Option<&LocalContext>, expected_type: Option<TypeHandle>) -> crate::Result<Constant> {
+    pub fn generate_constant_node(&mut self, node: &LocalNode, local_context: Option<&LocalContext>, expected_type: Option<TypeHandle>) -> crate::Result<Constant> {
         let mut constant_id = self.next_anonymous_constant_id;
         let (constant, intermediate_constants) = self.fold_as_constant(node, &mut constant_id,  local_context, expected_type)?;
         self.next_anonymous_constant_id = constant_id;
@@ -2091,7 +2159,7 @@ impl<'ctx> Generator<'ctx> {
         Ok(constant)
     }
 
-    pub fn fold_as_constant(&mut self, node: &ast::LocalNode, constant_id: &mut usize, local_context: Option<&LocalContext>, expected_type: Option<TypeHandle>) -> crate::Result<(Constant, Vec<GlobalVariable>)> {
+    pub fn fold_as_constant(&mut self, node: &LocalNode, constant_id: &mut usize, local_context: Option<&LocalContext>, expected_type: Option<TypeHandle>) -> crate::Result<(Constant, Vec<GlobalVariable>)> {
         let mut new_intermediate_constant = |constant: Constant, context: &mut GlobalContext| {
             let pointer = GlobalRegister::new(
                 format!(".const.{}.{constant_id}", context.package().info().name()).as_bytes().into(),
@@ -2108,9 +2176,9 @@ impl<'ctx> Generator<'ctx> {
         let mut intermediate_constants = Vec::new();
 
         let constant = match node.kind() {
-            ast::LocalNodeKind::Literal(literal) => {
+            LocalNodeKind::Literal(literal) => {
                 match *literal {
-                    token::Literal::Name(ref name) => {
+                    Literal::Name(ref name) => {
                         let value = if let Some(value) = local_context.and_then(|ctx| ctx.find_symbol(name)) {
                             value.clone()
                         }
@@ -2138,7 +2206,7 @@ impl<'ctx> Generator<'ctx> {
                             )));
                         }
                     }
-                    token::Literal::Integer(value, suffix) => {
+                    Literal::Integer(value, suffix) => {
                         let value_type = match suffix {
                             Some(suffix) => suffix.as_handle(),
                             None => expected_type.unwrap_or(TypeHandle::I32),
@@ -2155,7 +2223,7 @@ impl<'ctx> Generator<'ctx> {
 
                         Constant::from(value)
                     }
-                    token::Literal::Float(value, suffix) => {
+                    Literal::Float(value, suffix) => {
                         let value_type = match suffix {
                             Some(suffix) => suffix.as_handle(),
                             None => expected_type.unwrap_or(TypeHandle::F64),
@@ -2172,15 +2240,15 @@ impl<'ctx> Generator<'ctx> {
 
                         Constant::from(value)
                     }
-                    token::Literal::Boolean(value) => {
+                    Literal::Boolean(value) => {
                         Constant::from(value)
                     }
-                    token::Literal::NullPointer => {
+                    Literal::NullPointer => {
                         Constant::NullPointer(expected_type.unwrap_or_else(|| {
                             self.context.get_pointer_type(TypeHandle::VOID, PointerSemantics::Immutable)
                         }))
                     }
-                    token::Literal::String(ref value) => {
+                    Literal::String(ref value) => {
                         let constant = Constant::String {
                             array_type: self.context.get_array_type(TypeHandle::U8, Some(value.len() as u64)),
                             value: value.clone(),
@@ -2191,12 +2259,12 @@ impl<'ctx> Generator<'ctx> {
 
                         Constant::Register(pointer)
                     }
-                    token::Literal::PrimitiveType(primitive_type) => {
+                    Literal::PrimitiveType(primitive_type) => {
                         Constant::Type(primitive_type.handle)
                     }
                 }
             }
-            ast::LocalNodeKind::Path { segments } => {
+            LocalNodeKind::Path { segments } => {
                 let path = self.context.get_absolute_path(node.span(), segments)?;
                 match self.context.get_path_value(&path, Some(&node.span()))? {
                     Value::Constant(constant) => constant,
@@ -2208,7 +2276,7 @@ impl<'ctx> Generator<'ctx> {
                     )))
                 }
             }
-            ast::LocalNodeKind::ArrayLiteral { items } => {
+            LocalNodeKind::ArrayLiteral { items } => {
                 if let Some(expected_type) = expected_type {
                     let &TypeRepr::Array { item_type, .. } = expected_type.repr(self.context) else {
                         return Err(Box::new(crate::Error::new(
@@ -2239,7 +2307,7 @@ impl<'ctx> Generator<'ctx> {
                     )));
                 }
             }
-            ast::LocalNodeKind::StructureLiteral { structure_type, members: initializer_members } => {
+            LocalNodeKind::StructureLiteral { structure_type, members: initializer_members } => {
                 let struct_type = self.context.interpret_node_as_type(structure_type)?;
 
                 let TypeRepr::Structure {
@@ -2314,15 +2382,15 @@ impl<'ctx> Generator<'ctx> {
                     struct_type,
                 }
             }
-            ast::LocalNodeKind::Binary { operation, lhs, rhs } => match operation {
-                ast::BinaryOperation::Subscript => {
+            LocalNodeKind::Binary { operation, lhs, rhs } => match operation {
+                BinaryOperation::Subscript => {
                     let (value, mut constants) = self.fold_subscript_operation(lhs, rhs, constant_id, local_context)?;
                     intermediate_constants.append(&mut constants);
 
                     value
                 }
-                ast::BinaryOperation::Convert => {
-                    let ast::LocalNodeKind::Type(type_node) = rhs.kind() else {
+                BinaryOperation::Convert => {
+                    let LocalNodeKind::Type(type_node) = rhs.kind() else {
                         // If parsing rules are followed, this should not occur
                         panic!("non-type rhs for 'as'");
                     };
@@ -2375,7 +2443,7 @@ impl<'ctx> Generator<'ctx> {
                     )));
                 }
             }
-            ast::LocalNodeKind::Grouping { content } => {
+            LocalNodeKind::Grouping { content } => {
                 // Fine to bypass validation steps since this is literally just parentheses
                 return self.fold_as_constant(content, constant_id, local_context, expected_type);
             }

@@ -1,20 +1,20 @@
 source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\\test_collections\\main.cupr"
 
-%"::test_collections::LinkedListNode" = type { {}*, %"::test_collections::LinkedListNode"* }
+%"::test_collections::BTree" = type { i64, i64, i32({}*, {}*)*, %"::test_collections::BTreeNode"* }
 
 %"::test_collections::BTreeNodeKey" = type { {}*, %"::test_collections::BTreeNode"* }
 
 %"::test_collections::LinkedList" = type { %"::test_collections::LinkedListNode"* }
 
-%"::test_collections::AVLTreeNode" = type { {}*, %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"*, i32 }
+%"::test_collections::AVLTree" = type { %"::test_collections::AVLTreeNode"*, i32({}*, {}*)* }
 
-%"::test_collections::BTreeLeaf" = type { i1, i64, {}** }
+%"::test_collections::AVLTreeNode" = type { {}*, %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"*, i32 }
 
 %"::test_collections::BTreeNode" = type { i1, i64, %"::test_collections::BTreeNodeKey"*, %"::test_collections::BTreeNode"* }
 
-%"::test_collections::AVLTree" = type { %"::test_collections::AVLTreeNode"*, i32({}*, {}*)* }
+%"::test_collections::BTreeLeaf" = type { i1, i64, {}** }
 
-%"::test_collections::BTree" = type { i64, i64, i32({}*, {}*)*, %"::test_collections::BTreeNode"* }
+%"::test_collections::LinkedListNode" = type { {}*, %"::test_collections::LinkedListNode"* }
 
 declare i32 @printf(i8*, ...)
 
@@ -91,10 +91,10 @@ define i32 @"<i32>::cmp"(i32* %0, i32* %1) {
 .block.5:
 	br label %.block.6
 .block.6:
-		%13 = phi i32 [ 1, %.block.4 ], [ 0, %.block.5 ]
+	%13 = phi i32 [ 1, %.block.4 ], [ 0, %.block.5 ]
 	br label %.block.3
 .block.3:
-		%14 = phi i32 [ %7, %.block.1 ], [ %13, %.block.6 ]
+	%14 = phi i32 [ %7, %.block.1 ], [ %13, %.block.6 ]
 	ret i32 %14
 }
 
@@ -132,7 +132,7 @@ define {}* @"::test_collections::LinkedList::front"(%"::test_collections::Linked
 	%9 = load {}*, {}** %8
 	br label %.block.3
 .block.3:
-		%10 = phi {}* [ null, %.block.1 ], [ %9, %.block.2 ]
+	%10 = phi {}* [ null, %.block.1 ], [ %9, %.block.2 ]
 	ret {}* %10
 }
 
@@ -199,7 +199,7 @@ define {}* @"::test_collections::LinkedList::pop_front"(%"::test_collections::Li
 	%18 = load {}*, {}** %value
 	br label %.block.3
 .block.3:
-		%19 = phi {}* [ null, %.block.1 ], [ %18, %.block.2 ]
+	%19 = phi {}* [ null, %.block.1 ], [ %18, %.block.2 ]
 	ret {}* %19
 }
 
@@ -239,7 +239,7 @@ define i32 @"::test_collections::AVLTreeNode::get_height"(%"::test_collections::
 	%6 = load i32, i32* %5
 	br label %.block.3
 .block.3:
-		%7 = phi i32 [ %3, %.block.1 ], [ %6, %.block.2 ]
+	%7 = phi i32 [ %3, %.block.1 ], [ %6, %.block.2 ]
 	ret i32 %7
 }
 
@@ -408,10 +408,10 @@ define %"::test_collections::AVLTreeNode"* @"::test_collections::AVLTreeNode::ba
 	%60 = load %"::test_collections::AVLTreeNode"*, %"::test_collections::AVLTreeNode"** %self
 	br label %.block.12
 .block.12:
-		%61 = phi %"::test_collections::AVLTreeNode"* [ %58, %.block.11 ], [ %60, %.block.9 ]
+	%61 = phi %"::test_collections::AVLTreeNode"* [ %58, %.block.11 ], [ %60, %.block.9 ]
 	br label %.block.7
 .block.7:
-		%62 = phi %"::test_collections::AVLTreeNode"* [ %34, %.block.6 ], [ %61, %.block.12 ]
+	%62 = phi %"::test_collections::AVLTreeNode"* [ %34, %.block.6 ], [ %61, %.block.12 ]
 	ret %"::test_collections::AVLTreeNode"* %62
 }
 
@@ -764,7 +764,7 @@ define void @"::test_collections::max_percolate_down"({}** %0, i64 %1, i32({}*, 
 	%30 = icmp sgt i32 %29, 0
 	br label %.block.7
 .block.7:
-		%31 = phi i1 [ true, %.block.5 ], [ %30, %.block.6 ]
+	%31 = phi i1 [ true, %.block.5 ], [ %30, %.block.6 ]
 	br i1 %31, label %.block.8, label %.block.9
 .block.8:
 	%32 = load i64, i64* %left
@@ -773,7 +773,7 @@ define void @"::test_collections::max_percolate_down"({}** %0, i64 %1, i32({}*, 
 	%33 = load i64, i64* %right
 	br label %.block.10
 .block.10:
-		%34 = phi i64 [ %32, %.block.8 ], [ %33, %.block.9 ]
+	%34 = phi i64 [ %32, %.block.8 ], [ %33, %.block.9 ]
 	%max = alloca i64
 	store i64 %34, i64* %max
 	%35 = load i32({}*, {}*)*, i32({}*, {}*)** %comparator
@@ -1010,7 +1010,7 @@ define i32 @main() {
 .block.14:
 	br label %.block.15
 .block.15:
-		%42 = phi i8* [ bitcast ([4 x i8]* @.const.test_collections.13 to i8*), %.block.13 ], [ bitcast ([3 x i8]* @.const.test_collections.14 to i8*), %.block.14 ]
+	%42 = phi i8* [ bitcast ([4 x i8]* @.const.test_collections.13 to i8*), %.block.13 ], [ bitcast ([3 x i8]* @.const.test_collections.14 to i8*), %.block.14 ]
 	%is_contained = alloca i8*
 	store i8* %42, i8** %is_contained
 	%43 = load i64, i64* %i-2

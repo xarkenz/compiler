@@ -619,7 +619,7 @@ pub fn fmt_phi(
         .expect("inputs cannot be empty");
     write!(
         f,
-        "\t{} = phi {} [ {}, {} ]",
+        "{} = phi {} [ {}, {} ]",
         result.llvm(context),
         result.get_type().llvm(context),
         value.llvm(context),

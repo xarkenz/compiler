@@ -2,9 +2,9 @@ source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\
 
 %"::std::string::Str" = type { i8*, i64 }
 
-%"::std::string::MutStr" = type { i8*, i64 }
-
 %"::std::string::String" = type { %"::std::string::MutStr", i64 }
+
+%"::std::string::MutStr" = type { i8*, i64 }
 
 declare void @free(i8*)
 
@@ -51,6 +51,47 @@ define { i8*, i64 } @"::std::string::Str::raw_parts"(%"::std::string::Str"* %0) 
 	store i64 %6, i64* %9
 	%10 = load { i8*, i64 }, { i8*, i64 }* %7
 	ret { i8*, i64 } %10
+}
+
+define i8* @"::std::string::Str::find"(%"::std::string::Str"* %0, i8 %1) {
+.block.0:
+	%self = alloca %"::std::string::Str"*
+	store %"::std::string::Str"* %0, %"::std::string::Str"** %self
+	%ch = alloca i8
+	store i8 %1, i8* %ch
+	%index = alloca i64
+	store i64 0, i64* %index
+	br label %.block.1
+.block.1:
+	%2 = load i64, i64* %index
+	%3 = load %"::std::string::Str"*, %"::std::string::Str"** %self
+	%4 = getelementptr inbounds %"::std::string::Str", %"::std::string::Str"* %3, i32 0, i32 1
+	%5 = load i64, i64* %4
+	%6 = icmp ult i64 %2, %5
+	br i1 %6, label %.block.2, label %.block.3
+.block.2:
+	%7 = load %"::std::string::Str"*, %"::std::string::Str"** %self
+	%8 = getelementptr inbounds %"::std::string::Str", %"::std::string::Str"* %7, i32 0, i32 0
+	%9 = load i64, i64* %index
+	%10 = load i8*, i8** %8
+	%11 = getelementptr inbounds i8, i8* %10, i64 %9
+	%ptr = alloca i8*
+	store i8* %11, i8** %ptr
+	%12 = load i8*, i8** %ptr
+	%13 = load i8, i8* %12
+	%14 = load i8, i8* %ch
+	%15 = icmp eq i8 %13, %14
+	br i1 %15, label %.block.5, label %.block.6
+.block.5:
+	%16 = load i8*, i8** %ptr
+	br label %.block.4
+.block.6:
+	br label %.block.1
+.block.3:
+	br label %.block.4
+.block.4:
+	%17 = phi i8* [ %16, %.block.5 ], [ null, %.block.3 ]
+	ret i8* %17
 }
 
 define %"::std::string::Str" @"::std::string::MutStr::as_str"(%"::std::string::MutStr"* %0) {

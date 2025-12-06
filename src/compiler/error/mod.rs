@@ -145,6 +145,7 @@ pub enum ErrorKind {
     },
     ExpectedStatement,
     UnexpectedElse,
+    UnexpectedNoBreak,
     InvalidGlobPath,
     CannotMutateValue {
         type_name: String,
@@ -209,6 +210,7 @@ pub enum ErrorKind {
     },
     UnknownArrayType,
     UnknownTupleType,
+    CannotInferType,
     NoSuchMethod {
         type_name: String,
         method_name: String,
@@ -304,6 +306,7 @@ impl std::fmt::Display for ErrorKind {
             Self::ExpectedClosingBracket { bracket } => write!(f, "expected closing '{bracket}'"),
             Self::ExpectedStatement => write!(f, "expected a statement"),
             Self::UnexpectedElse => write!(f, "unexpected 'else' without previous 'if'"),
+            Self::UnexpectedNoBreak => write!(f, "unexpected 'nobreak' without previous 'while'"),
             Self::InvalidGlobPath => write!(f, "the '*' for a glob path must be located at the end of the path"),
             Self::CannotMutateValue { type_name } => write!(f, "cannot mutate value of type '{type_name}' as it is not 'mut'"),
             Self::ExpectedLValue => write!(f, "expected an lvalue"),
@@ -329,6 +332,7 @@ impl std::fmt::Display for ErrorKind {
             Self::IncompatibleValueType { value, type_name } => write!(f, "'{value}' cannot be used as a value of type '{type_name}'"),
             Self::UnknownArrayType => write!(f, "unable to infer array type"),
             Self::UnknownTupleType => write!(f, "unable to infer tuple type"),
+            Self::CannotInferType => write!(f, "unable to infer the type of this expression"),
             Self::NoSuchMethod { type_name, method_name } => write!(f, "{type_name} has no method '{method_name}' (to call a member, wrap it in parentheses)"),
             Self::InvalidStructIdentifier => write!(f, "invalid syntax for struct type"),
             Self::NonStructSymbol { name } => write!(f, "cannot use '{name}' as a struct type"),

@@ -4,12 +4,45 @@ use crate::ir::FunctionDefinition;
 use crate::ir::instr::{BasicBlock, Instruction, PhiInstruction, TerminatorInstruction};
 use crate::ir::value::BlockLabel;
 
+#[derive(Clone)]
+pub struct BreakScope {
+    label: BlockLabel,
+    expected_type: TypeHandle,
+    breaks: Vec<(Value, BlockLabel)>,
+}
+
+impl BreakScope {
+    pub fn new(label: BlockLabel, expected_type: TypeHandle) -> Self {
+        Self {
+            label,
+            expected_type,
+            breaks: Vec::new(),
+        }
+    }
+
+    pub fn label(&self) -> &BlockLabel {
+        &self.label
+    }
+
+    pub fn expected_type(&self) -> TypeHandle {
+        self.expected_type
+    }
+
+    pub fn breaks(&self) -> &[(Value, BlockLabel)] {
+        &self.breaks
+    }
+
+    pub fn register_break(&mut self, value: Value, from_label: BlockLabel) {
+        self.breaks.push((value, from_label));
+    }
+}
+
 pub struct LocalContext {
     function: FunctionDefinition,
     function_path: AbsolutePath,
     current_block: BasicBlock,
-    break_stack: Vec<BlockLabel>,
-    continue_stack: Vec<BlockLabel>,
+    break_scope_stack: Vec<BreakScope>,
+    continue_scope_stack: Vec<BlockLabel>,
     symbol_versions: HashMap<Box<str>, usize>,
     scope_stack: Vec<HashMap<Box<str>, Value>>,
     next_anonymous_register_id: usize,
@@ -22,8 +55,8 @@ impl LocalContext {
             function,
             function_path,
             current_block: BasicBlock::new(BlockLabel::new(b".block.0".as_slice().into())),
-            break_stack: Vec::new(),
-            continue_stack: Vec::new(),
+            break_scope_stack: Vec::new(),
+            continue_scope_stack: Vec::new(),
             symbol_versions: HashMap::new(),
             scope_stack: vec![HashMap::new()],
             next_anonymous_register_id: 0,
@@ -73,28 +106,32 @@ impl LocalContext {
         self.function.blocks().last().unwrap().label()
     }
 
-    pub fn break_label(&self) -> Option<&BlockLabel> {
-        self.break_stack.last()
+    pub fn break_scope(&self) -> Option<&BreakScope> {
+        self.break_scope_stack.last()
+    }
+
+    pub fn break_scope_mut(&mut self) -> Option<&mut BreakScope> {
+        self.break_scope_stack.last_mut()
     }
 
     pub fn continue_label(&self) -> Option<&BlockLabel> {
-        self.continue_stack.last()
+        self.continue_scope_stack.last()
     }
 
-    pub fn push_break_label(&mut self, label: BlockLabel) {
-        self.break_stack.push(label);
+    pub fn enter_break_scope(&mut self, label: BlockLabel, expected_type: TypeHandle) {
+        self.break_scope_stack.push(BreakScope::new(label, expected_type));
     }
 
-    pub fn pop_break_label(&mut self) {
-        self.break_stack.pop().expect("attempted to pop from empty break stack");
+    pub fn exit_break_scope(&mut self) {
+        self.break_scope_stack.pop().expect("attempted to exit a nonexistent break scope");
     }
 
-    pub fn push_continue_label(&mut self, label: BlockLabel) {
-        self.continue_stack.push(label);
+    pub fn enter_continue_scope(&mut self, label: BlockLabel) {
+        self.continue_scope_stack.push(label);
     }
 
-    pub fn pop_continue_label(&mut self) {
-        self.continue_stack.pop().expect("attempted to pop from empty continue stack");
+    pub fn exit_continue_scope(&mut self) {
+        self.continue_scope_stack.pop().expect("attempted to exit a nonexistent continue scope");
     }
 
     pub fn enter_scope(&mut self) {

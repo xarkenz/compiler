@@ -4,11 +4,11 @@ source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\
 
 %"::test_2::thing::Thing" = type { %"::test_2::Test"*, %"::test_2::First"*, %"::test_2::thing::Thing"* }
 
-%"::test_2::test::test::Test" = type { %"::test_2::Test"*, %"::test_2::test::Test"*, %"::test_2::thing::Thing"* }
-
 %"::test_2::Test" = type { %"::test_2::test::Test"*, %"::test_2::test::test::Test"*, %"::test_2::thing::Thing"* }
 
 %"::test_2::test::Test" = type { %"::test_2::Test"*, %"::test_2::test::test::Test"*, %"::test_2::thing::Thing"* }
+
+%"::test_2::test::test::Test" = type { %"::test_2::Test"*, %"::test_2::test::Test"*, %"::test_2::thing::Thing"* }
 
 declare i32 @printf(i8*, ...)
 

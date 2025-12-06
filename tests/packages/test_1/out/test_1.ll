@@ -1,16 +1,16 @@
 source_filename = "\\\\?\\C:\\Users\\seane\\Projects\\compiler\\tests\\packages\\test_1\\main.cupr"
 
-%"::test_1::Student" = type { i8*, i32, [4 x i32] }
-
 %"::std::string::Str" = type { i8*, i64 }
-
-%"::test_1::Node" = type { i8*, %"::test_1::Node"* }
-
-%"::std::string::MutStr" = type { i8*, i64 }
 
 %"::std::string::String" = type { %"::std::string::MutStr", i64 }
 
+%"::test_1::Student" = type { i8*, i32, [4 x i32] }
+
+%"::test_1::Node" = type { i8*, %"::test_1::Node"* }
+
 %"::libc::stdio::CFile" = type opaque
+
+%"::std::string::MutStr" = type { i8*, i64 }
 
 declare %"::libc::stdio::CFile"* @fopen(i8*, i8*)
 

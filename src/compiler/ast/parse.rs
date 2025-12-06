@@ -389,22 +389,61 @@ impl<'a, T: BufRead> Parser<'a, T> {
                     self.scan_token()?;
                     let condition = self.parse_expression(None, &[Token::ParenRight], true)?;
                     self.scan_token()?;
-                    let body = self.parse_expression(None, allowed_ends, strict_ends)?;
+                    let consequent_ends: Vec<Token> = allowed_ends
+                        .iter()
+                        .cloned()
+                        .chain(std::iter::once(Token::NoBreak))
+                        .collect();
+                    let consequent = self.parse_expression(None, &consequent_ends, strict_ends)?;
+
+                    let end_span;
+                    let alternative;
+                    if let Some(Token::NoBreak) = self.current_token() {
+                        self.scan_token()?;
+                        let expression = self.parse_expression(None, allowed_ends, strict_ends)?;
+                        end_span = expression.span();
+                        alternative = Some(expression);
+                    }
+                    else {
+                        end_span = consequent.span();
+                        alternative = None;
+                    }
 
                     Box::new(LocalNode::new(
-                        start_span.expand_to(body.span()),
+                        start_span.expand_to(end_span),
                         LocalNodeKind::While {
                             condition,
-                            body,
+                            consequent,
+                            alternative,
                         },
                     ))
+                }
+                Token::NoBreak => {
+                    return Err(Box::new(crate::Error::new(
+                        Some(start_span),
+                        crate::ErrorKind::UnexpectedNoBreak,
+                    )));
                 }
                 Token::Break => {
                     // Break expression
                     self.scan_token()?;
+                    let span;
+                    let value;
+                    if allowed_ends.contains(self.get_token()?) {
+                        span = start_span;
+                        value = None;
+                    }
+                    else {
+                        let expression = self.parse_expression(None, allowed_ends, strict_ends)?;
+                        span = start_span.expand_to(expression.span());
+                        value = Some(expression);
+                    }
+
                     Box::new(LocalNode::new(
-                        start_span,
-                        LocalNodeKind::Break,
+                        span,
+                        LocalNodeKind::Break {
+                            value,
+                        },
                     ))
                 }
                 Token::Continue => {

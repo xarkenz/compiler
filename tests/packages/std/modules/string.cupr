@@ -17,6 +17,21 @@ implement Str {
     }
 }
 
+implement Str {
+    function find(self: *Self, ch: u8) -> *u8 {
+        let mut index = 0_usize;
+        while (index < self.length) {
+            let ptr = &self.ptr[index];
+            if (*ptr == ch) {
+                break ptr;
+            }
+        }
+        nobreak {
+            null
+        }
+    }
+}
+
 struct MutStr {
     ptr: *mut [u8],
     length: usize,
